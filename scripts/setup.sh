@@ -92,9 +92,76 @@ for region in "${REGIONS[@]}"; do
     kind create cluster --config "${kind_config_path}" --name "${K8S_CLUSTER_NAME}"
 
     echo "🏷️  Labeling nodes in '${K8S_CLUSTER_NAME}'..."
-    kubectl label node -l postgres.node.kubernetes.io node-role.kubernetes.io/postgres=
-    kubectl label node -l infra.node.kubernetes.io node-role.kubernetes.io/infra=
-    kubectl label node -l app.node.kubernetes.io node-role.kubernetes.io/app=
+    kubectl label node -l postgres.node.kubernetes.io node-role.kubernetes.io/postgres= --context "$(get_cluster_context "${region}")"
+    kubectl label node -l infra.node.kubernetes.io node-role.kubernetes.io/infra= --context "$(get_cluster_context "${region}")"
+    kubectl label node -l app.node.kubernetes.io node-role.kubernetes.io/app= --context "$(get_cluster_context "${region}")"
+
+    echo "🛠️  Installing MetalLB ${METALLB_VERSION} in '${K8S_CLUSTER_NAME}'..."
+    # Enable strict ARP for kube-proxy
+    kubectl get configmap kube-proxy -n kube-system -o yaml --context "$(get_cluster_context "${region}")" | \
+    sed -e "s/strictARP: false/strictARP: true/" | \
+    kubectl replace -f - --context "$(get_cluster_context "${region}")"
+
+    # Install MetalLB
+    kubectl apply -f "https://raw.githubusercontent.com/metallb/metallb/${METALLB_VERSION}/config/manifests/metallb-native.yaml" --context "$(get_cluster_context "${region}")"
+
+    # Wait for MetalLB to be ready
+    echo "⏳ Waiting for MetalLB to be ready in '${K8S_CLUSTER_NAME}'..."
+    kubectl wait --namespace metallb-system \
+                --for=condition=ready pod \
+                --selector=app=metallb \
+                --timeout=120s \
+                --context "$(get_cluster_context "${region}")"
+
+    # Determine the IP range for MetalLB based on the region index
+    # to avoid conflicts on the shared 'kind' network.
+    # We specifically look for the IPv4 subnet.
+    KIND_NET_SUBNET=$($CONTAINER_PROVIDER network inspect kind -f '{{range .IPAM.Config}}{{.Subnet}}{{"\n"}}{{end}}' | grep '\.' | head -n 1)
+    SUBNET_IP=$(echo $KIND_NET_SUBNET | cut -d/ -f1)
+    SUBNET_MASK=$(echo $KIND_NET_SUBNET | cut -d/ -f2)
+    
+    # Find the index of the current region in the REGIONS array
+    region_index=0
+    for i in "${!REGIONS[@]}"; do
+       if [[ "${REGIONS[$i]}" == "${region}" ]]; then
+           region_index=$i
+           break
+       fi
+    done
+
+    if [ "$SUBNET_MASK" -ge 24 ]; then
+        # For /24 or smaller, use the first 3 octets and partition the 4th
+        SUBNET_PREFIX=$(echo $SUBNET_IP | cut -d. -f1,2,3)
+        START_IP=$((200 + region_index * 25))
+        END_IP=$((START_IP + 24))
+        IP_RANGE="${SUBNET_PREFIX}.${START_IP}-${SUBNET_PREFIX}.${END_IP}"
+    else
+        # For /16, use the first 2 octets and vary the 3rd octet
+        SUBNET_PREFIX=$(echo $SUBNET_IP | cut -d. -f1,2)
+        THIRD_OCTET=$((255 - region_index))
+        IP_RANGE="${SUBNET_PREFIX}.${THIRD_OCTET}.200-${SUBNET_PREFIX}.${THIRD_OCTET}.250"
+    fi
+    
+    echo "🌐 Configuring MetalLB in '${K8S_CLUSTER_NAME}' with IP range: ${IP_RANGE}"
+    cat <<EOF | kubectl apply --context "$(get_cluster_context "${region}")" -f -
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: kind-pool
+  namespace: metallb-system
+spec:
+  addresses:
+  - ${IP_RANGE}
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: kind-advertisement
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+  - kind-pool
+EOF
 
     echo "🌐 Connecting RustFS to the Kind network..."
     $CONTAINER_PROVIDER network connect kind "${RUSTFS_CONTAINER_NAME}"

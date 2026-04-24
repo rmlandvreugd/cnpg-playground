@@ -1,0 +1,93 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: echo
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo
+  namespace: echo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: echo
+  template:
+    metadata:
+      labels:
+        app: echo
+    spec:
+      containers:
+        - name: echo
+          image: ghcr.io/mendhak/http-https-echo:40
+          # args:
+          #   - -listen=:8080
+          #   - -text="hello there"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: https
+              containerPort: 8443
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo-internal
+  namespace: echo
+spec:
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+  selector:
+    app: echo
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    metallb.universe.tf/address-pool: kind-pool
+    metallb.universe.tf/allow-shared-ip: "echo-lb"
+  name: echo-http
+  namespace: echo
+spec:
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+  selector:
+    app: echo
+  type: LoadBalancer
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    metallb.universe.tf/address-pool: kind-pool
+    metallb.universe.tf/allow-shared-ip: "echo-lb"
+  name: echo-https
+  namespace: echo
+spec:
+  ports:
+    - name: https
+      port: 443
+      targetPort: https
+      protocol: TCP
+  selector:
+    app: echo
+  type: LoadBalancer

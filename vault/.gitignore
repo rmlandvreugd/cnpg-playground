@@ -1,0 +1,5 @@
+data/
+logs/
+certs/
+.root_token
+.unseal_key

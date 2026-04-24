@@ -67,6 +67,14 @@ RUSTFS_BASE_PORT=${RUSTFS_BASE_PORT:-9001}
 RUSTFS_ROOT_USER="${RUSTFS_ROOT_USER:-cnpg}"
 RUSTFS_ROOT_PASSWORD="${RUSTFS_ROOT_PASSWORD:-Cl0udNativePGRocks}"
 
+# Vault Configuration
+VAULT_IMAGE="${VAULT_IMAGE:-hashicorp/vault:2.0}"
+VAULT_CONTAINER_NAME="${VAULT_CONTAINER_NAME:-vault}"
+VAULT_PORT=${VAULT_PORT:-8200}
+
+# MetalLB Configuration
+METALLB_VERSION="${METALLB_VERSION:-v0.15.3}"
+
 # --- Common Prerequisite Checks ---
 REQUIRED_COMMANDS="kind kubectl git grep sed"
 for cmd in $REQUIRED_COMMANDS; do
