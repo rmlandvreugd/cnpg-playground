@@ -1,0 +1,103 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: pg-local
+spec:
+  instances: 3
+  imageName: ghcr.io/cloudnative-pg/postgresql:18-standard-trixie
+
+  storage:
+    size: 1Gi
+
+  # See https://cloudnative-pg.io/documentation/current/storage/#volume-for-wal
+  walStorage:
+    size: 1Gi
+
+  # See https://cloudnative-pg.io/documentation/current/scheduling/#isolating-postgresql-workloads
+  affinity:
+    nodeSelector:
+      node-role.kubernetes.io/postgres: ""
+    tolerations:
+    - key: node-role.kubernetes.io/postgres
+      operator: Exists
+      effect: NoSchedule
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+    podAntiAffinityType: required
+
+  # See https://cloudnative-pg.io/documentation/current/bootstrap/#bootstrap-an-empty-cluster-initdb
+  bootstrap:
+    initdb:
+      dataChecksums: true
+
+  postgresql:
+    # See https://cloudnative-pg.io/documentation/current/postgresql_conf/#the-postgresql-section
+    parameters:
+      # Some very basic Postgres settings
+      max_connections: '100'
+      log_checkpoints: 'on'
+      log_lock_waits: 'on'
+      pg_stat_statements.max: '10000'
+      pg_stat_statements.track: 'all'
+      hot_standby_feedback: 'on'
+      # Container images work fine with sysv shared memory
+      shared_memory_type: 'sysv'
+      dynamic_shared_memory_type: 'sysv'
+
+  plugins:
+  - name: barman-cloud.cloudnative-pg.io
+    isWALArchiver: true
+    parameters:
+      barmanObjectName: objectstore-local
+      serverName: pg-local
+
+  # See https://cloudnative-pg.io/documentation/current/replica_cluster/#distributed-topology
+  # replica:
+  #   self: pg-local
+  #   primary: pg-eu
+  #   source: pg-eu
+
+  # externalClusters:
+  # - name: pg-eu
+  #   plugin:
+  #     name: barman-cloud.cloudnative-pg.io
+  #     parameters:
+  #       barmanObjectName: objectstore-eu
+  #       serverName: pg-eu
+  # - name: pg-local
+  #   plugin:
+  #     name: barman-cloud.cloudnative-pg.io
+  #     parameters:
+  #       barmanObjectName: objectstore-local
+  #       serverName: pg-local
+---
+# See https://cloudnative-pg.io/documentation/current/backup/#scheduled-backups
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: pg-local-backup
+spec:
+  method: plugin
+  schedule: '0 0 0 * * *'
+  backupOwnerReference: self
+  cluster:
+    name: pg-local
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+  immediate: true
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: pooler-local-rw
+spec:
+  cluster:
+    name: pg-local
+
+  instances: 2
+  type: rw
+  pgbouncer:
+    poolMode: session
+    parameters:
+      max_client_conn: "1000"
+      default_pool_size: "10"
