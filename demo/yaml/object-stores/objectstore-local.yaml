@@ -1,17 +1,17 @@
 apiVersion: barmancloud.cnpg.io/v1
 kind: ObjectStore
 metadata:
-  name: minio-local
+  name: objectstore-local
 spec:
   configuration:
     destinationPath: s3://backups/
-    endpointURL: http://minio-local:9000
+    endpointURL: http://objectstore-local:9000
     s3Credentials:
       accessKeyId:
-        name: minio-local
+        name: objectstore-local
         key: ACCESS_KEY_ID
       secretAccessKey:
-        name: minio-local
+        name: objectstore-local
         key: ACCESS_SECRET_KEY
     wal:
       compression: gzip
