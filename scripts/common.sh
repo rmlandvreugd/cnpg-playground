@@ -135,3 +135,16 @@ get_traefik_lb_ip() {
 ip_to_dashed() {
     echo "$1" | tr '.' '-'
 }
+
+# Returns the first IPv4 subnet of a container network.
+# Docker stores it under .IPAM.Config[].Subnet; Podman under .Subnets[].Subnet.
+get_kind_ipv4_subnet() {
+    local network="${1:-kind}"
+    if [ "$CONTAINER_PROVIDER" = "podman" ]; then
+        $CONTAINER_PROVIDER network inspect "$network" \
+            -f '{{range .Subnets}}{{.Subnet}}{{"\n"}}{{end}}' | grep '\.' | head -n 1
+    else
+        $CONTAINER_PROVIDER network inspect "$network" \
+            -f '{{range .IPAM.Config}}{{.Subnet}}{{"\n"}}{{end}}' | grep '\.' | head -n 1
+    fi
+}
