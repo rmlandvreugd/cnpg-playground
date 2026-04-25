@@ -2,6 +2,8 @@
 #
 # This script deploys a standalone HashiCorp Vault container in "dev mode"
 # with persistent storage and TLS, connected to the 'kind' Docker network.
+# It also wires Vault into all running Kubernetes clusters via a K8s Service
+# and Traefik TCP IngressRoute for passthrough access on port 8200.
 #
 # Copyright The CloudNativePG Contributors
 #
@@ -78,7 +80,6 @@ ${CONTAINER_PROVIDER} run -d \
     -config=/vault/config/vault-config.hcl
 
 echo "⏳ Waiting for Vault to start and generate root token..."
-# Wait for logs to contain the root token
 MAX_RETRIES=15
 COUNT=0
 UNSEAL_KEY=""
@@ -113,6 +114,23 @@ echo "🗝️ Root Token: ${ROOT_TOKEN}"
 echo "🌐 Connecting vault to the Kind network..."
 $CONTAINER_PROVIDER network connect kind "${VAULT_CONTAINER_NAME}"
 
+VAULT_IP=$(${CONTAINER_PROVIDER} inspect "${VAULT_CONTAINER_NAME}" \
+    --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
+echo "🔧 Wiring Vault (${VAULT_IP}) into Kubernetes clusters..."
+detect_running_regions
+for region in "${REGIONS[@]}"; do
+    CONTEXT_NAME=$(get_cluster_context "${region}")
+    echo "   -> Configuring vault namespace and service in ${CONTEXT_NAME}..."
+    kubectl --context "${CONTEXT_NAME}" create ns vault --dry-run=client -o yaml \
+        | kubectl --context "${CONTEXT_NAME}" apply -f -
+    VAULT_IP="${VAULT_IP}" envsubst '${VAULT_IP}' \
+        < "${GIT_REPO_ROOT}/vault/traefik/service.yaml.tpl" \
+        | kubectl --context "${CONTEXT_NAME}" apply -f -
+    kubectl --context "${CONTEXT_NAME}" apply \
+        -f "${GIT_REPO_ROOT}/vault/traefik/ingressroute-tcp.yaml"
+    echo "   ✅ Vault TCP route active on :8200 in ${region}"
+done
+
 # Store the root token for other scripts
 echo "${UNSEAL_KEY}" > "${VAULT_DIR}/.unseal_key"
 chmod 600 "${VAULT_DIR}/.unseal_key"
@@ -120,8 +138,6 @@ echo "${ROOT_TOKEN}" > "${VAULT_DIR}/.root_token"
 chmod 600 "${VAULT_DIR}/.root_token"
 
 # Store the CA certificate for vault CLI usage
-# In -dev-tls mode, Vault generates vault-ca.pem in the cert-dir
-# Wait for the CA file to appear
 COUNT=0
 while [ $COUNT -lt 10 ]; do
     if [ -f "${VAULT_CERT_DIR}/vault-ca.pem" ]; then

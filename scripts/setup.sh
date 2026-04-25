@@ -72,6 +72,7 @@ for region in "${REGIONS[@]}"; do
     echo "--------------------------------------------------"
 
     K8S_CLUSTER_NAME=$(get_cluster_name "${region}")
+    CONTEXT_NAME=$(get_cluster_context "${region}")
     RUSTFS_CONTAINER_NAME="${RUSTFS_BASE_NAME}-${region}"
 
     echo "📦 Creating RustFS container '${RUSTFS_CONTAINER_NAME}' on host port ${current_objectstore_port}..."
@@ -165,6 +166,22 @@ EOF
 
     echo "🌐 Connecting RustFS to the Kind network..."
     $CONTAINER_PROVIDER network connect kind "${RUSTFS_CONTAINER_NAME}"
+
+    TRAEFIK_IP=$(echo "$IP_RANGE" | cut -d- -f1)
+    TRAEFIK_IP_DASHED=$(ip_to_dashed "${TRAEFIK_IP}")
+    echo "🔧 Installing Traefik ${TRAEFIK_VERSION} in '${K8S_CLUSTER_NAME}'..."
+    kubectl --context "${CONTEXT_NAME}" apply -f \
+        "https://raw.githubusercontent.com/traefik/traefik/${TRAEFIK_VERSION}/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml"
+    kubectl kustomize "${GIT_REPO_ROOT}/traefik" \
+        | kubectl --context "${CONTEXT_NAME}" apply -f -
+    kubectl --context "${CONTEXT_NAME}" -n traefik \
+        rollout status deployment traefik --timeout=90s
+
+    echo "🌐 Applying Traefik dashboard IngressRoute..."
+    TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
+        < "${GIT_REPO_ROOT}/traefik/ingressroute-dashboard.yaml.tpl" \
+        | kubectl --context "${CONTEXT_NAME}" apply -f -
+    echo "✅ Traefik dashboard: http://traefik.${TRAEFIK_IP_DASHED}.sslip.io"
 
     echo "✅ Resource provisioning for '${region}' complete."
 

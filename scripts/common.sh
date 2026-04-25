@@ -76,7 +76,7 @@ VAULT_PORT=${VAULT_PORT:-8200}
 METALLB_VERSION="${METALLB_VERSION:-v0.15.3}"
 
 # --- Common Prerequisite Checks ---
-REQUIRED_COMMANDS="kind kubectl git grep sed"
+REQUIRED_COMMANDS="kind kubectl git grep sed envsubst"
 for cmd in $REQUIRED_COMMANDS; do
     if ! command -v "$cmd" &> /dev/null; then
         echo "❌ Error: Missing required command: $cmd"
@@ -105,3 +105,33 @@ KUBE_CONFIG_PATH="${GIT_REPO_ROOT}/k8s/kube-config.yaml"
 
 # source funcs_regions.sh
 source $(git rev-parse --show-toplevel)/scripts/funcs_regions.sh
+
+# --- Traefik Configuration ---
+TRAEFIK_VERSION="${TRAEFIK_VERSION:-v3.3.0}"
+TRAEFIK_IMAGE="${TRAEFIK_IMAGE:-traefik:v3.3}"
+
+# Waits up to <timeout> seconds for the Traefik LoadBalancer IP to be assigned.
+# Prints the IP on success; returns 1 on timeout.
+get_traefik_lb_ip() {
+    local context="$1"
+    local max_wait="${2:-60}"
+    local elapsed=0
+    while [ "$elapsed" -lt "$max_wait" ]; do
+        local ip
+        ip=$(kubectl --context "$context" -n traefik get svc traefik \
+            -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+        if [ -n "$ip" ]; then
+            echo "$ip"
+            return 0
+        fi
+        sleep 2
+        elapsed=$((elapsed + 2))
+    done
+    return 1
+}
+
+# Converts dotted IP to dashed notation for sslip.io hostnames.
+# Example: 172.18.255.200 → 172-18-255-200
+ip_to_dashed() {
+    echo "$1" | tr '.' '-'
+}
