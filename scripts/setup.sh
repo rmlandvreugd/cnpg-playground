@@ -117,7 +117,7 @@ for region in "${REGIONS[@]}"; do
     # Determine the IP range for MetalLB based on the region index
     # to avoid conflicts on the shared 'kind' network.
     # We specifically look for the IPv4 subnet.
-    KIND_NET_SUBNET=$($CONTAINER_PROVIDER network inspect kind -f '{{range .IPAM.Config}}{{.Subnet}}{{"\n"}}{{end}}' | grep '\.' | head -n 1)
+    KIND_NET_SUBNET=$(get_kind_ipv4_subnet kind)
     SUBNET_IP=$(echo $KIND_NET_SUBNET | cut -d/ -f1)
     SUBNET_MASK=$(echo $KIND_NET_SUBNET | cut -d/ -f2)
     
