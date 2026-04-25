@@ -77,16 +77,29 @@ then
   kubectl rollout status deployment -n cnpg-system cnpg-controller-manager
 fi
 
-    echo "-----------------------------------------------------------------------------------------------------------------"
-    echo " ⏩ To forward the Grafana service for region: ${region} to your localhost"
-    echo " Wait for the Grafana service to be created and then forward the service"
-    echo ""
-    echo " kubectl port-forward service/grafana-service ${port}:3000 -n grafana --context ${CONTEXT_NAME}"
-    echo ""
-    echo " You can then connect to the Grafana GUI using"
-    echo " http://localhost:${port}"
-    echo " The default password for the user admin is 'admin'. You will be prompted to change the password on the first login."
-    echo "-----------------------------------------------------------------------------------------------------------------"    
+    if TRAEFIK_LB_IP=$(get_traefik_lb_ip "${CONTEXT_NAME}" 30); then
+        TRAEFIK_IP_DASHED=$(ip_to_dashed "${TRAEFIK_LB_IP}")
+        TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
+            < "${GIT_REPO_ROOT}/monitoring/grafana/ingressroute.yaml.tpl" \
+            | kubectl --context "${CONTEXT_NAME}" apply -f -
+        echo "-----------------------------------------------------------------------------------------------------------------"
+        echo " 📈 Grafana is available at:"
+        echo " http://grafana.${TRAEFIK_IP_DASHED}.sslip.io"
+        echo " The default password for the user admin is 'admin'."
+        echo "-----------------------------------------------------------------------------------------------------------------"
+    else
+        echo "⚠️  Traefik not found in ${CONTEXT_NAME} — falling back to port-forward"
+        echo "-----------------------------------------------------------------------------------------------------------------"
+        echo " ⏩ To forward the Grafana service for region: ${region} to your localhost"
+        echo " Wait for the Grafana service to be created and then forward the service"
+        echo ""
+        echo " kubectl port-forward service/grafana-service ${port}:3000 -n grafana --context ${CONTEXT_NAME}"
+        echo ""
+        echo " You can then connect to the Grafana GUI using"
+        echo " http://localhost:${port}"
+        echo " The default password for the user admin is 'admin'. You will be prompted to change the password on the first login."
+        echo "-----------------------------------------------------------------------------------------------------------------"
+    fi
     # increment target port by 1
     ((port++))
 done

@@ -69,4 +69,13 @@ for region in "${REGIONS[@]}"; do
     echo
     echo "🔹 Secrets:"
     kubectl --context "${CONTEXT_NAME}" get secrets
+    echo
+    echo "🔹 Ingress URLs:"
+    if TRAEFIK_LB_IP=$(get_traefik_lb_ip "${CONTEXT_NAME}" 5); then
+        TRAEFIK_IP_DASHED=$(ip_to_dashed "${TRAEFIK_LB_IP}")
+        echo "  Traefik dashboard: http://traefik.${TRAEFIK_IP_DASHED}.sslip.io"
+        echo "  Grafana:           http://grafana.${TRAEFIK_IP_DASHED}.sslip.io"
+    else
+        echo "  ⚠️  Traefik not found — run setup.sh and monitoring/setup.sh first"
+    fi
 done
