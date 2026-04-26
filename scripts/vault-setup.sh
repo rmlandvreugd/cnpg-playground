@@ -53,8 +53,17 @@ mkdir -p "${VAULT_DATA_DIR}" "${VAULT_LOG_DIR}" "${VAULT_CERT_DIR}"
 
 # Use ACLs to grant the container's vault user (UID 100) permissions on the host
 echo "🔐 Setting ACLs for Vault container user (UID 100)..."
-sudo setfacl -R -m u:100:rwx "${VAULT_DIR}"
-sudo setfacl -R -d -m u:100:rwx "${VAULT_DIR}"
+if [ "$CONTAINER_PROVIDER" = "podman" ]; then
+    # Podman rootless remaps UIDs: container UID N → subuid_start + N - 1 on host.
+    # Vault runs as UID 100 inside the container.
+    SUBUID_START=$(grep "^$(id -un):" /etc/subuid | head -n1 | cut -d: -f2)
+    VAULT_HOST_UID=$((SUBUID_START + 99))
+    sudo setfacl -R -m "u:${VAULT_HOST_UID}:rwx" "${VAULT_DIR}"
+    sudo setfacl -R -d -m "u:${VAULT_HOST_UID}:rwx" "${VAULT_DIR}"
+else
+    sudo setfacl -R -m u:100:rwx "${VAULT_DIR}"
+    sudo setfacl -R -d -m u:100:rwx "${VAULT_DIR}"
+fi
 
 # Run the container
 # We use -dev for automatic unseal and root token generation.
@@ -63,6 +72,7 @@ sudo setfacl -R -d -m u:100:rwx "${VAULT_DIR}"
 # We use SKIP_CHOWN=true to avoid permission issues with mounted volumes.
 ${CONTAINER_PROVIDER} run -d \
     --name "${VAULT_CONTAINER_NAME}" \
+    --network bridge \
     -p "${VAULT_PORT}:${VAULT_PORT}" \
     -e SKIP_CHOWN=true \
     -v "${VAULT_CONFIG_DIR}:/vault/config" \
