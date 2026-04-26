@@ -67,8 +67,8 @@ done
 cd "${git_repo_root}"
 export KUBECONFIG=${kube_config_path}
 
-# Determine regions from arguments, or use defaults
-set_regions "$@"
+# Determine regions from arguments, or auto-detect running clusters
+detect_running_regions "$@"
 
 # Begin deployment, one region at a time
 for region in "${REGIONS[@]}"; do
