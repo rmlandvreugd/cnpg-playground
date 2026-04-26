@@ -49,13 +49,14 @@ if ${CONTAINER_PROVIDER} ps -a --format '{{.Names}}' | grep -q "^${VAULT_CONTAIN
 fi
 
 # Ensure directories exist
-mkdir -p "${VAULT_DATA_DIR}" "${VAULT_LOG_DIR}" "${VAULT_CERT_DIR}"
+sudo mkdir -p "${VAULT_DATA_DIR}" "${VAULT_LOG_DIR}" "${VAULT_CERT_DIR}"
 
 # Use ACLs to grant the container's vault user (UID 100) permissions on the host
 echo "🔐 Setting ACLs for Vault container user (UID 100)..."
 if [ "$CONTAINER_PROVIDER" = "podman" ]; then
-    # Podman rootless remaps UIDs: container UID N → subuid_start + N - 1 on host.
-    # Vault runs as UID 100 inside the container.
+    # podman unshare sudo chown -R 100:100 "${VAULT_DIR}"
+    # Clear stale/malformed ACL entries from previous runs
+    sudo setfacl -R -b "${VAULT_DIR}"
     SUBUID_START=$(grep "^$(id -un):" /etc/subuid | head -n1 | cut -d: -f2)
     VAULT_HOST_UID=$((SUBUID_START + 99))
     sudo setfacl -R -m "u:${VAULT_HOST_UID}:rwx" "${VAULT_DIR}"
@@ -70,9 +71,17 @@ fi
 # We use -config to point to our persistent storage.
 # We use -dev-tls and -dev-tls-cert-dir to enable TLS and store generated certs.
 # We use SKIP_CHOWN=true to avoid permission issues with mounted volumes.
+# Podman on SELinux-enabled hosts tries to relabel bind-mount xattrs; if the
+# filesystem does not support xattrs that fails. Disable labeling instead.
+SECURITY_OPTS=""
+if [ "$CONTAINER_PROVIDER" = "podman" ]; then
+    SECURITY_OPTS="--security-opt label=disable"
+fi
+
 ${CONTAINER_PROVIDER} run -d \
     --name "${VAULT_CONTAINER_NAME}" \
     --network bridge \
+    ${SECURITY_OPTS} \
     -p "${VAULT_PORT}:${VAULT_PORT}" \
     -e SKIP_CHOWN=true \
     -v "${VAULT_CONFIG_DIR}:/vault/config" \
@@ -124,28 +133,28 @@ echo "🗝️ Root Token: ${ROOT_TOKEN}"
 echo "🌐 Connecting vault to the Kind network..."
 $CONTAINER_PROVIDER network connect kind "${VAULT_CONTAINER_NAME}"
 
-VAULT_IP=$(${CONTAINER_PROVIDER} inspect "${VAULT_CONTAINER_NAME}" \
-    --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
-echo "🔧 Wiring Vault (${VAULT_IP}) into Kubernetes clusters..."
-detect_running_regions
-for region in "${REGIONS[@]}"; do
-    CONTEXT_NAME=$(get_cluster_context "${region}")
-    echo "   -> Configuring vault namespace and service in ${CONTEXT_NAME}..."
-    kubectl --context "${CONTEXT_NAME}" create ns vault --dry-run=client -o yaml \
-        | kubectl --context "${CONTEXT_NAME}" apply -f -
-    VAULT_IP="${VAULT_IP}" envsubst '${VAULT_IP}' \
-        < "${GIT_REPO_ROOT}/vault/traefik/service.yaml.tpl" \
-        | kubectl --context "${CONTEXT_NAME}" apply -f -
-    kubectl --context "${CONTEXT_NAME}" apply \
-        -f "${GIT_REPO_ROOT}/vault/traefik/ingressroute-tcp.yaml"
-    echo "   ✅ Vault TCP route active on :8200 in ${region}"
-done
+# VAULT_IP=$(${CONTAINER_PROVIDER} inspect "${VAULT_CONTAINER_NAME}" \
+#     --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
+# echo "🔧 Wiring Vault (${VAULT_IP}) into Kubernetes clusters..."
+# detect_running_regions
+# for region in "${REGIONS[@]}"; do
+#     CONTEXT_NAME=$(get_cluster_context "${region}")
+#     echo "   -> Configuring vault namespace and service in ${CONTEXT_NAME}..."
+#     kubectl --context "${CONTEXT_NAME}" create ns vault --dry-run=client -o yaml \
+#         | kubectl --context "${CONTEXT_NAME}" apply -f -
+#     VAULT_IP="${VAULT_IP}" envsubst '${VAULT_IP}' \
+#         < "${GIT_REPO_ROOT}/vault/traefik/service.yaml.tpl" \
+#         | kubectl --context "${CONTEXT_NAME}" apply -f -
+#     kubectl --context "${CONTEXT_NAME}" apply \
+#         -f "${GIT_REPO_ROOT}/vault/traefik/ingressroute-tcp.yaml"
+#     echo "   ✅ Vault TCP route active on :8200 in ${region}"
+# done
 
 # Store the root token for other scripts
-echo "${UNSEAL_KEY}" > "${VAULT_DIR}/.unseal_key"
-chmod 600 "${VAULT_DIR}/.unseal_key"
-echo "${ROOT_TOKEN}" > "${VAULT_DIR}/.root_token"
-chmod 600 "${VAULT_DIR}/.root_token"
+echo "${UNSEAL_KEY}" | sudo tee "${VAULT_DIR}/.unseal_key" > /dev/null
+sudo chmod 600 "${VAULT_DIR}/.unseal_key"
+echo "${ROOT_TOKEN}" | sudo tee "${VAULT_DIR}/.root_token" > /dev/null
+sudo chmod 600 "${VAULT_DIR}/.root_token"
 
 # Store the CA certificate for vault CLI usage
 COUNT=0
