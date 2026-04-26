@@ -78,7 +78,9 @@ for region in "${REGIONS[@]}"; do
     echo "📦 Creating RustFS container '${RUSTFS_CONTAINER_NAME}' on host port ${current_objectstore_port}..."
     $CONTAINER_PROVIDER volume create "${RUSTFS_CONTAINER_NAME}" > /dev/null
     $CONTAINER_PROVIDER run \
-        --name "${RUSTFS_CONTAINER_NAME}" -d -p "${current_objectstore_port}:9001" \
+        --name "${RUSTFS_CONTAINER_NAME}" -d \
+        --network bridge \
+        -p "${current_objectstore_port}:9001" \
         -v "${RUSTFS_CONTAINER_NAME}:/data" \
         -e "RUSTFS_ACCESS_KEY=${RUSTFS_ROOT_USER}" \
         -e "RUSTFS_SECRET_KEY=${RUSTFS_ROOT_PASSWORD}" \
