@@ -8,7 +8,7 @@ spec:
     - web
   routes:
     - kind: Rule
-      match: Host(`traefik.${TRAEFIK_IP_DASHED}.sslip.io`)
+      match: Host(`traefik.${TRAEFIK_IP_DASHED}.sslip.io`) && (PathPrefix(`/dashboard`) || PathPrefix(`/api`))
       services:
         - name: api@internal
           kind: TraefikService
