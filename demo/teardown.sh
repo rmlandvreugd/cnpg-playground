@@ -35,8 +35,11 @@ demo_yaml_path=${git_repo_root}/demo/yaml
 cd "${git_repo_root}"
 export KUBECONFIG=${kube_config_path}
 
+# Determine regions from arguments, or auto-detect running clusters
+detect_running_regions "$@"
+
 # Delete deployment, one region at a time
-for region in eu us; do
+for region in "${REGIONS[@]}"; do
 
    CONTEXT_NAME=$(get_cluster_context "${region}")
 
@@ -61,6 +64,6 @@ for region in eu us; do
      kubectl --context ${CONTEXT_NAME} delete --ignore-not-found=true -f -
 
    # Remove backup data
-   docker exec objectstore-${region} rm -rf /data/backups/pg-${region}
+   ${CONTAINER_PROVIDER} exec objectstore-${region} rm -rf /data/backups/pg-${region}
 
 done
