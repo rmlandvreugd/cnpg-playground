@@ -46,13 +46,13 @@ sudo rm -rf "${VAULT_DIR}/certs"
 # Remove the unseal key file
 if [ -f "${VAULT_DIR}/.unseal_key" ]; then
     echo "🧹 Removing .unseal_key file..."
-    rm -f "${VAULT_DIR}/.unseal_key"
+    sudo rm -f "${VAULT_DIR}/.unseal_key"
 fi
 
 # Remove the root token file
 if [ -f "${VAULT_DIR}/.root_token" ]; then
     echo "🧹 Removing .root_token file..."
-    rm -f "${VAULT_DIR}/.root_token"
+    sudo rm -f "${VAULT_DIR}/.root_token"
 fi
 
 echo "✅ Vault teardown complete!"
