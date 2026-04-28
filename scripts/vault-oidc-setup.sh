@@ -17,26 +17,28 @@ VAULT_HOST="vault.${HOST_IP_DASHED}.sslip.io"
 # Obtain admin token via userpass (demonstrates admin credentials, not root token)
 echo "🔐 Logging in as ${VAULT_ADMIN_USER}..."
 ADMIN_TOKEN=$(${CONTAINER_PROVIDER} exec \
+    -e VAULT_ADDR="https://127.0.0.1:${VAULT_PORT}" \
+    -e VAULT_CACERT=/vault/certs/vault-ca.pem \
     "${VAULT_CONTAINER_NAME}" \
     vault write -field=token \
-    -address="https://127.0.0.1:${VAULT_PORT}" \
-    -ca-cert=/vault/certs/vault-ca.pem \
     auth/userpass/login/"${VAULT_ADMIN_USER}" \
     password="${VAULT_ADMIN_PASSWORD}")
 
 _vcmd() {
     ${CONTAINER_PROVIDER} exec \
+        -e VAULT_ADDR="https://127.0.0.1:${VAULT_PORT}" \
+        -e VAULT_CACERT=/vault/certs/vault-ca.pem \
         -e VAULT_TOKEN="${ADMIN_TOKEN}" \
         "${VAULT_CONTAINER_NAME}" \
-        vault -address="https://127.0.0.1:${VAULT_PORT}" \
-              -ca-cert=/vault/certs/vault-ca.pem "$@"
+        vault "$@"
 }
 _vcmd_stdin() {
     ${CONTAINER_PROVIDER} exec -i \
+        -e VAULT_ADDR="https://127.0.0.1:${VAULT_PORT}" \
+        -e VAULT_CACERT=/vault/certs/vault-ca.pem \
         -e VAULT_TOKEN="${ADMIN_TOKEN}" \
         "${VAULT_CONTAINER_NAME}" \
-        vault -address="https://127.0.0.1:${VAULT_PORT}" \
-              -ca-cert=/vault/certs/vault-ca.pem "$@"
+        vault "$@"
 }
 
 echo "🔓 Enabling OIDC auth method..."
@@ -46,11 +48,11 @@ _vcmd auth enable oidc
 echo "📋 Configuring OIDC provider (Dex)..."
 sudo cat "${DEX_DIR}/tls/ca-chain.pem" \
     | ${CONTAINER_PROVIDER} exec -i \
+        -e VAULT_ADDR="https://127.0.0.1:${VAULT_PORT}" \
+        -e VAULT_CACERT=/vault/certs/vault-ca.pem \
         -e VAULT_TOKEN="${ADMIN_TOKEN}" \
         "${VAULT_CONTAINER_NAME}" \
         vault write auth/oidc/config \
-        -address="https://127.0.0.1:${VAULT_PORT}" \
-        -ca-cert=/vault/certs/vault-ca.pem \
         oidc_discovery_url="https://${DEX_HOST}:${DEX_PORT}/dex" \
         oidc_discovery_ca_pem=@- \
         oidc_client_id="${DEX_OIDC_CLIENT_ID}" \
