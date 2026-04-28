@@ -18,6 +18,6 @@ staticClients:
 enablePasswordDB: true
 staticPasswords:
 - email: "user@example.com"
-  hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+  hash: "${DEX_STATIC_PASSWORD_HASH}"
   username: "dexuser"
   userID: "user-12345"
