@@ -14,6 +14,3 @@ spec:
     - name: websecure
       port: 443
       targetPort: websecure
-    - name: vault
-      port: 8200
-      targetPort: vault

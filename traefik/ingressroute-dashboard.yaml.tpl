@@ -5,10 +5,12 @@ metadata:
   namespace: traefik
 spec:
   entryPoints:
-    - web
+    - websecure
   routes:
     - kind: Rule
       match: Host(`traefik.${TRAEFIK_IP_DASHED}.sslip.io`) && (PathPrefix(`/dashboard`) || PathPrefix(`/api`))
       services:
         - name: api@internal
           kind: TraefikService
+  tls:
+    secretName: traefik-dashboard-tls

@@ -26,7 +26,6 @@ spec:
             - --entrypoints.web.address=:80
             - --entrypoints.websecure.address=:443
             - --entrypoints.traefik.address=:8080
-            - --entrypoints.vault.address=:8200
             - --providers.kubernetescrd=true
             - --providers.kubernetescrd.allowCrossNamespace=true
             - --api.dashboard=true
@@ -42,8 +41,6 @@ spec:
               containerPort: 443
             - name: traefik
               containerPort: 8080
-            - name: vault
-              containerPort: 8200
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
