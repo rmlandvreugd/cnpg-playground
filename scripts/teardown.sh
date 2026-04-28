@@ -19,7 +19,8 @@
 #
 
 # Source the common setup script
-source "$(dirname "$0")/common.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/common.sh"
 
 # --- Main Logic ---
 # Determine regions from arguments, or auto-detect if none are provided
@@ -72,6 +73,12 @@ for region in "${REGIONS[@]}"; do
         kubectl config delete-cluster "${K8S_CLUSTER_NAME}" --kubeconfig "${KUBE_CONFIG_PATH}" > /dev/null 2>&1 || true
     fi
 done
+
+echo "--------------------------------------------------"
+echo "🔥 Tearing down shared services..."
+echo "--------------------------------------------------"
+"${SCRIPT_DIR}/vault-teardown.sh"
+"${SCRIPT_DIR}/dex-teardown.sh"
 
 echo ""
 echo "✅ Cleanup complete!"

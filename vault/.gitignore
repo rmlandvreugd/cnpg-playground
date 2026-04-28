@@ -1,5 +1,6 @@
 data/
 logs/
 certs/
+pki/
 .root_token
 .unseal_key
