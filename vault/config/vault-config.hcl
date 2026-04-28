@@ -2,6 +2,8 @@ storage "file" {
   path = "/vault/data"
 }
 
+cluster_addr = "https://127.0.0.1:8202"
+
 disable_mlock = true
 
 log_level = "info"
