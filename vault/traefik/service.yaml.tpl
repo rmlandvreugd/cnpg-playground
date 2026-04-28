@@ -9,8 +9,8 @@ spec:
       port: 8200
       targetPort: 8200
     - name: api-plain
-      port: 8201
-      targetPort: 8201
+      port: 8202
+      targetPort: 8202
 ---
 apiVersion: v1
 kind: Endpoints
@@ -24,4 +24,4 @@ subsets:
       - name: api
         port: 8200
       - name: api-plain
-        port: 8201
+        port: 8202

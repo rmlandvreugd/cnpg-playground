@@ -62,7 +62,7 @@ jq -r '.data.issuing_ca'             <<< "${CERT_JSON}" | sudo tee "${DEX_TLS_DI
 jq -r '.data.ca_chain | join("\n")'  <<< "${CERT_JSON}" | sudo tee "${DEX_TLS_DIR}/ca-chain.pem" > /dev/null
 
 sudo chmod 644 "${DEX_TLS_DIR}/dex.crt" "${DEX_TLS_DIR}/ca.crt" "${DEX_TLS_DIR}/ca-chain.pem"
-sudo chmod 600 "${DEX_TLS_DIR}/dex.key"
+sudo chmod 640 "${DEX_TLS_DIR}/dex.key"
 
 # Generate Dex config from template
 echo "📝 Generating Dex config..."
@@ -83,8 +83,8 @@ ${CONTAINER_PROVIDER} run -d \
     --network bridge \
     ${SECURITY_OPTS} \
     -p "${DEX_PORT}:${DEX_PORT}" \
-    -v "${DEX_CONFIG_DIR}/dex-config.yaml:/etc/dex/config.yaml:ro" \
-    -v "${DEX_TLS_DIR}:/etc/dex/tls:ro" \
+    -v "${DEX_CONFIG_DIR}/dex-config.yaml:/etc/dex/config.yaml" \
+    -v "${DEX_TLS_DIR}:/etc/dex/tls" \
     "${DEX_IMAGE}" dex serve /etc/dex/config.yaml
 
 # Poll OIDC discovery endpoint for readiness
