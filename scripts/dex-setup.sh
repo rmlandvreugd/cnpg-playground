@@ -99,4 +99,7 @@ while [ $COUNT -lt $MAX_RETRIES ]; do
     sleep 5
     COUNT=$((COUNT + 1))
 done
-[ $COUNT -eq $MAX_RETRIES ] && { echo "❌ Dex did not become ready."; exit 1; }
+if [ $COUNT -eq $MAX_RETRIES ]; then
+    echo "❌ Dex did not become ready."
+    exit 1
+fi
