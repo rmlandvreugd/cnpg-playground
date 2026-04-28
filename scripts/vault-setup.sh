@@ -96,8 +96,7 @@ ${CONTAINER_PROVIDER} run -d \
     server -dev \
     -dev-listen-address="0.0.0.0:${VAULT_PORT}" \
     -dev-tls \
-    -dev-tls-cert-dir=/vault/certs \
-    -config=/vault/config/vault-config.hcl
+    -dev-tls-cert-dir=/vault/certs
 
 echo "⏳ Waiting for Vault to start and generate root token..."
 MAX_RETRIES=15
