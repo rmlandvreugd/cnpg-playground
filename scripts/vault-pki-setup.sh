@@ -13,17 +13,19 @@ ROOT_TOKEN=$(sudo cat "${VAULT_DIR}/.root_token")
 
 _vcmd() {
     ${CONTAINER_PROVIDER} exec \
+        -e VAULT_ADDR="https://127.0.0.1:${VAULT_PORT}" \
+        -e VAULT_CACERT=/vault/certs/vault-ca.pem \
         -e VAULT_TOKEN="${ROOT_TOKEN}" \
         "${VAULT_CONTAINER_NAME}" \
-        vault -address="https://127.0.0.1:${VAULT_PORT}" \
-              -ca-cert=/vault/certs/vault-ca.pem "$@"
+        vault "$@"
 }
 _vcmd_stdin() {
     ${CONTAINER_PROVIDER} exec -i \
+        -e VAULT_ADDR="https://127.0.0.1:${VAULT_PORT}" \
+        -e VAULT_CACERT=/vault/certs/vault-ca.pem \
         -e VAULT_TOKEN="${ROOT_TOKEN}" \
         "${VAULT_CONTAINER_NAME}" \
-        vault -address="https://127.0.0.1:${VAULT_PORT}" \
-              -ca-cert=/vault/certs/vault-ca.pem "$@"
+        vault "$@"
 }
 
 sudo mkdir -p "${VAULT_PKI_DIR}"

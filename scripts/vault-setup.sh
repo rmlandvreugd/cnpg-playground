@@ -155,41 +155,50 @@ fi
 
 # Enable audit device to log all operations to a file
 echo "📋 Enabling Vault audit logging..."
-${CONTAINER_PROVIDER} exec -e VAULT_TOKEN="${ROOT_TOKEN}" "${VAULT_CONTAINER_NAME}" \
+${CONTAINER_PROVIDER} exec \
+    -e VAULT_ADDR="https://127.0.0.1:${VAULT_PORT}" \
+    -e VAULT_CACERT=/vault/certs/vault-ca.pem \
+    -e VAULT_TOKEN="${ROOT_TOKEN}" \
+    "${VAULT_CONTAINER_NAME}" \
     vault audit enable \
-    -address="https://127.0.0.1:${VAULT_PORT}" \
-    -ca-cert=/vault/certs/vault-ca.pem \
     file file_path=/vault/logs/audit.log
 
 echo "👤 Enabling userpass auth and creating admin user..."
 ${CONTAINER_PROVIDER} exec \
+    -e VAULT_ADDR="https://127.0.0.1:${VAULT_PORT}" \
+    -e VAULT_CACERT=/vault/certs/vault-ca.pem \
     -e VAULT_TOKEN="${ROOT_TOKEN}" \
     "${VAULT_CONTAINER_NAME}" \
     vault auth enable \
-    -address="https://127.0.0.1:${VAULT_PORT}" \
-    -ca-cert=/vault/certs/vault-ca.pem \
     userpass
 
 echo 'path "*" { capabilities = ["create","read","update","delete","list","sudo"] }' \
     | ${CONTAINER_PROVIDER} exec -i \
+        -e VAULT_ADDR="https://127.0.0.1:${VAULT_PORT}" \
+        -e VAULT_CACERT=/vault/certs/vault-ca.pem \
         -e VAULT_TOKEN="${ROOT_TOKEN}" \
         "${VAULT_CONTAINER_NAME}" \
-        vault policy write admin \
-        -address="https://127.0.0.1:${VAULT_PORT}" \
-        -ca-cert=/vault/certs/vault-ca.pem \
-        -
+        vault policy write \
+        admin -
 
 ${CONTAINER_PROVIDER} exec \
+    -e VAULT_ADDR="https://127.0.0.1:${VAULT_PORT}" \
+    -e VAULT_CACERT=/vault/certs/vault-ca.pem \
     -e VAULT_TOKEN="${ROOT_TOKEN}" \
     "${VAULT_CONTAINER_NAME}" \
     vault write \
-    -address="https://127.0.0.1:${VAULT_PORT}" \
-    -ca-cert=/vault/certs/vault-ca.pem \
     auth/userpass/users/"${VAULT_ADMIN_USER}" \
     password="${VAULT_ADMIN_PASSWORD}" \
     policies=admin
 
 echo "✅ Userpass admin created: ${VAULT_ADMIN_USER}"
+echo "🔎 Verifying Vault CLI connectivity..."
+${CONTAINER_PROVIDER} exec \
+    -e VAULT_ADDR="https://127.0.0.1:${VAULT_PORT}" \
+    -e VAULT_CACERT=/vault/certs/vault-ca.pem \
+    -e VAULT_TOKEN="${ROOT_TOKEN}" \
+    "${VAULT_CONTAINER_NAME}" \
+    vault status > /dev/null
 
 echo "💻 To use Vault CLI, run:"
 echo "export VAULT_ADDR='https://127.0.0.1:${VAULT_PORT}'"
