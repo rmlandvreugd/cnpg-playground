@@ -30,7 +30,8 @@
 #
 
 # Source the common setup script
-source "$(dirname "$0")/common.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/common.sh"
 
 echo "✅ Prerequisites met. Using '$CONTAINER_PROVIDER' as the container provider."
 
@@ -54,6 +55,14 @@ echo
 # --- Script Setup ---
 # Determine regions from arguments, or use defaults
 set_regions "$@"
+
+echo "=================================================="
+echo "🔐 Phase 0: Bootstrapping external services"
+echo "=================================================="
+"${SCRIPT_DIR}/vault-setup.sh"
+"${SCRIPT_DIR}/vault-pki-setup.sh"
+"${SCRIPT_DIR}/dex-setup.sh"
+echo
 
 # Setup a single, shared Kubeconfig for all clusters
 export KUBECONFIG="${KUBE_CONFIG_PATH}"
@@ -166,8 +175,52 @@ spec:
   - kind-pool
 EOF
 
-    echo "🌐 Connecting RustFS to the Kind network..."
+    echo "🌐 Connecting containers to the Kind network..."
     $CONTAINER_PROVIDER network connect kind "${RUSTFS_CONTAINER_NAME}"
+    $CONTAINER_PROVIDER network connect kind "${VAULT_CONTAINER_NAME}" 2>/dev/null || true
+    $CONTAINER_PROVIDER network connect kind "${DEX_CONTAINER_NAME}"   2>/dev/null || true
+
+    # Wire Vault into K8s (namespace + headless Service/Endpoints)
+    echo "🔧 Wiring Vault into Kubernetes cluster '${K8S_CLUSTER_NAME}'..."
+    kubectl --context "${CONTEXT_NAME}" create ns vault --dry-run=client -o yaml \
+        | kubectl --context "${CONTEXT_NAME}" apply -f -
+    VAULT_IP=$(${CONTAINER_PROVIDER} inspect "${VAULT_CONTAINER_NAME}" \
+        --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
+    VAULT_IP="${VAULT_IP}" envsubst '${VAULT_IP}' \
+        < "${GIT_REPO_ROOT}/vault/traefik/service.yaml.tpl" \
+        | kubectl --context "${CONTEXT_NAME}" apply -f -
+
+    # cert-manager
+    echo "🔧 Installing cert-manager ${CERT_MANAGER_VERSION} in '${K8S_CLUSTER_NAME}'..."
+    kubectl apply \
+        -f "https://github.com/cert-manager/cert-manager/releases/download/${CERT_MANAGER_VERSION}/cert-manager.yaml" \
+        --context "${CONTEXT_NAME}"
+    echo "⏳ Waiting for cert-manager to be ready..."
+    kubectl wait --namespace cert-manager \
+        --for=condition=ready pod \
+        --selector=app.kubernetes.io/instance=cert-manager \
+        --timeout=120s --context "${CONTEXT_NAME}"
+
+    # Secrets in cert-manager namespace
+    echo "🔑 Creating cert-manager secrets for Vault PKI..."
+    APPROLE_ROLE_ID=$(sudo cat "${GIT_REPO_ROOT}/vault/.approle_role_id")
+    APPROLE_SECRET_ID=$(sudo cat "${GIT_REPO_ROOT}/vault/.approle_secret_id")
+    kubectl create secret generic vault-approle \
+        --namespace cert-manager --context "${CONTEXT_NAME}" \
+        --from-literal=secretId="${APPROLE_SECRET_ID}" \
+        --dry-run=client -o yaml | kubectl apply --context "${CONTEXT_NAME}" -f -
+    kubectl create secret generic vault-tls-ca \
+        --namespace cert-manager --context "${CONTEXT_NAME}" \
+        --from-file=ca.crt="${GIT_REPO_ROOT}/vault/certs/vault-ca.pem" \
+        --dry-run=client -o yaml | kubectl apply --context "${CONTEXT_NAME}" -f -
+
+    # ClusterIssuer
+    echo "📋 Applying vault-pki ClusterIssuer..."
+    VAULT_HTTP_PORT="${VAULT_HTTP_PORT}" \
+    VAULT_APPROLE_ROLE_ID="${APPROLE_ROLE_ID}" \
+    envsubst '${VAULT_HTTP_PORT} ${VAULT_APPROLE_ROLE_ID}' \
+        < "${GIT_REPO_ROOT}/vault/cert-manager/clusterissuer.yaml.tpl" \
+        | kubectl --context "${CONTEXT_NAME}" apply -f -
 
     TRAEFIK_IP=$(echo "$IP_RANGE" | cut -d- -f1)
     TRAEFIK_IP_DASHED=$(ip_to_dashed "${TRAEFIK_IP}")
@@ -179,11 +232,20 @@ EOF
     kubectl --context "${CONTEXT_NAME}" -n traefik \
         rollout status deployment traefik --timeout=90s
 
-    echo "🌐 Applying Traefik dashboard IngressRoute..."
+    # Traefik dashboard TLS certificate
+    echo "📜 Issuing Traefik dashboard TLS certificate..."
+    TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
+        < "${GIT_REPO_ROOT}/traefik/certificate-dashboard.yaml.tpl" \
+        | kubectl --context "${CONTEXT_NAME}" apply -f -
+    kubectl wait --for=condition=Ready certificate/traefik-dashboard-cert \
+        -n traefik --timeout=120s --context "${CONTEXT_NAME}"
+
+    # Traefik dashboard HTTPS IngressRoute
+    echo "🌐 Applying Traefik dashboard IngressRoute (HTTPS)..."
     TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
         < "${GIT_REPO_ROOT}/traefik/ingressroute-dashboard.yaml.tpl" \
         | kubectl --context "${CONTEXT_NAME}" apply -f -
-    echo "✅ Traefik dashboard: http://traefik.${TRAEFIK_IP_DASHED}.sslip.io"
+    echo "✅ Traefik dashboard: https://traefik.${TRAEFIK_IP_DASHED}.sslip.io"
 
     echo "✅ Resource provisioning for '${region}' complete."
 
@@ -192,6 +254,12 @@ EOF
     all_objectstore_names+=("${RUSTFS_CONTAINER_NAME}")
     ((current_objectstore_port++))
 done
+
+echo "=================================================="
+echo "🔑 Configuring Vault OIDC auth (once, post-loop)..."
+echo "=================================================="
+"${SCRIPT_DIR}/vault-oidc-setup.sh"
+echo
 
 # --- Phase 2: Distribute RustFS Secrets to all Clusters ---
 echo

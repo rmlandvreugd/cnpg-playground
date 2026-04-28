@@ -72,11 +72,26 @@ VAULT_IMAGE="${VAULT_IMAGE:-hashicorp/vault:2.0}"
 VAULT_CONTAINER_NAME="${VAULT_CONTAINER_NAME:-vault}"
 VAULT_PORT=${VAULT_PORT:-8200}
 
+# Vault admin credentials
+VAULT_ADMIN_USER="${VAULT_ADMIN_USER:-vault-admin}"
+VAULT_ADMIN_PASSWORD="${VAULT_ADMIN_PASSWORD:-admin-password-123}"
+VAULT_HTTP_PORT="${VAULT_HTTP_PORT:-8201}"
+
+# Dex
+DEX_IMAGE="${DEX_IMAGE:-ghcr.io/dexidp/dex:v2.45.1}"
+DEX_CONTAINER_NAME="${DEX_CONTAINER_NAME:-dex}"
+DEX_PORT="${DEX_PORT:-5556}"
+DEX_OIDC_CLIENT_ID="${DEX_OIDC_CLIENT_ID:-vault-client}"
+DEX_OIDC_CLIENT_SECRET="${DEX_OIDC_CLIENT_SECRET:-vault-oidc-secret}"
+
+# cert-manager
+CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION:-v1.20.2}"
+
 # MetalLB Configuration
 METALLB_VERSION="${METALLB_VERSION:-v0.15.3}"
 
 # --- Common Prerequisite Checks ---
-REQUIRED_COMMANDS="kind kubectl git grep sed envsubst"
+REQUIRED_COMMANDS="kind kubectl git grep sed envsubst jq"
 for cmd in $REQUIRED_COMMANDS; do
     if ! command -v "$cmd" &> /dev/null; then
         echo "❌ Error: Missing required command: $cmd"

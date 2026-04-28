@@ -83,6 +83,7 @@ ${CONTAINER_PROVIDER} run -d \
     --network bridge \
     ${SECURITY_OPTS} \
     -p "${VAULT_PORT}:${VAULT_PORT}" \
+    -p "${VAULT_HTTP_PORT}:${VAULT_HTTP_PORT}" \
     -e SKIP_CHOWN=true \
     -v "${VAULT_CONFIG_DIR}:/vault/config" \
     -v "${VAULT_DATA_DIR}:/vault/data" \
@@ -130,26 +131,6 @@ echo "✅ Vault is up and running!"
 echo "🔑 Unseal Key: ${UNSEAL_KEY}"
 echo "🗝️ Root Token: ${ROOT_TOKEN}"
 
-echo "🌐 Connecting vault to the Kind network..."
-$CONTAINER_PROVIDER network connect kind "${VAULT_CONTAINER_NAME}"
-
-# VAULT_IP=$(${CONTAINER_PROVIDER} inspect "${VAULT_CONTAINER_NAME}" \
-#     --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
-# echo "🔧 Wiring Vault (${VAULT_IP}) into Kubernetes clusters..."
-# detect_running_regions
-# for region in "${REGIONS[@]}"; do
-#     CONTEXT_NAME=$(get_cluster_context "${region}")
-#     echo "   -> Configuring vault namespace and service in ${CONTEXT_NAME}..."
-#     kubectl --context "${CONTEXT_NAME}" create ns vault --dry-run=client -o yaml \
-#         | kubectl --context "${CONTEXT_NAME}" apply -f -
-#     VAULT_IP="${VAULT_IP}" envsubst '${VAULT_IP}' \
-#         < "${GIT_REPO_ROOT}/vault/traefik/service.yaml.tpl" \
-#         | kubectl --context "${CONTEXT_NAME}" apply -f -
-#     kubectl --context "${CONTEXT_NAME}" apply \
-#         -f "${GIT_REPO_ROOT}/vault/traefik/ingressroute-tcp.yaml"
-#     echo "   ✅ Vault TCP route active on :8200 in ${region}"
-# done
-
 # Store the root token for other scripts
 echo "${UNSEAL_KEY}" | sudo tee "${VAULT_DIR}/.unseal_key" > /dev/null
 sudo chmod 600 "${VAULT_DIR}/.unseal_key"
@@ -179,6 +160,36 @@ ${CONTAINER_PROVIDER} exec -e VAULT_TOKEN="${ROOT_TOKEN}" "${VAULT_CONTAINER_NAM
     -address="https://127.0.0.1:${VAULT_PORT}" \
     -ca-cert=/vault/certs/vault-ca.pem \
     file file_path=/vault/logs/audit.log
+
+echo "👤 Enabling userpass auth and creating admin user..."
+${CONTAINER_PROVIDER} exec \
+    -e VAULT_TOKEN="${ROOT_TOKEN}" \
+    "${VAULT_CONTAINER_NAME}" \
+    vault auth enable \
+    -address="https://127.0.0.1:${VAULT_PORT}" \
+    -ca-cert=/vault/certs/vault-ca.pem \
+    userpass
+
+echo 'path "*" { capabilities = ["create","read","update","delete","list","sudo"] }' \
+    | ${CONTAINER_PROVIDER} exec -i \
+        -e VAULT_TOKEN="${ROOT_TOKEN}" \
+        "${VAULT_CONTAINER_NAME}" \
+        vault policy write admin \
+        -address="https://127.0.0.1:${VAULT_PORT}" \
+        -ca-cert=/vault/certs/vault-ca.pem \
+        -
+
+${CONTAINER_PROVIDER} exec \
+    -e VAULT_TOKEN="${ROOT_TOKEN}" \
+    "${VAULT_CONTAINER_NAME}" \
+    vault write \
+    -address="https://127.0.0.1:${VAULT_PORT}" \
+    -ca-cert=/vault/certs/vault-ca.pem \
+    auth/userpass/users/"${VAULT_ADMIN_USER}" \
+    password="${VAULT_ADMIN_PASSWORD}" \
+    policies=admin
+
+echo "✅ Userpass admin created: ${VAULT_ADMIN_USER}"
 
 echo "💻 To use Vault CLI, run:"
 echo "export VAULT_ADDR='https://127.0.0.1:${VAULT_PORT}'"
