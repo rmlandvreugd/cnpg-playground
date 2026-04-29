@@ -8,5 +8,6 @@ spec:
   issuerRef:
     name: vault-pki
     kind: ClusterIssuer
+  commonName: traefik.${TRAEFIK_IP_DASHED}.sslip.io
   dnsNames:
   - traefik.${TRAEFIK_IP_DASHED}.sslip.io
