@@ -54,7 +54,7 @@ sudo cat "${DEX_DIR}/tls/ca-chain.pem" \
         "${VAULT_CONTAINER_NAME}" \
         vault write auth/oidc/config \
         oidc_discovery_url="https://${DEX_HOST}:${DEX_PORT}/dex" \
-        oidc_discovery_ca_pem=@- \
+        oidc_discovery_ca_pem=- \
         oidc_client_id="${DEX_OIDC_CLIENT_ID}" \
         oidc_client_secret="${DEX_OIDC_CLIENT_SECRET}" \
         default_role="oidc-user"
