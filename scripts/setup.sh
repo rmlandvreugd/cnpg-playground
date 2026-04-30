@@ -61,6 +61,7 @@ echo "🔐 Phase 0: Bootstrapping external services"
 echo "=================================================="
 "${SCRIPT_DIR}/vault-setup.sh"
 "${SCRIPT_DIR}/vault-pki-setup.sh"
+"${SCRIPT_DIR}/vault-eso-setup.sh"
 "${SCRIPT_DIR}/dex-setup.sh"
 echo
 
@@ -221,6 +222,12 @@ EOF
     envsubst '${VAULT_HTTP_PORT} ${VAULT_APPROLE_ROLE_ID}' \
         < "${GIT_REPO_ROOT}/vault/cert-manager/clusterissuer.yaml.tpl" \
         | kubectl --context "${CONTEXT_NAME}" apply -f -
+
+    # ESO install + ClusterSecretStore for this cluster
+    echo "🔌 Setting up ESO in '${K8S_CLUSTER_NAME}'..."
+    export REGION="${region}"
+    export CONTEXT_NAME="${CONTEXT_NAME}"
+    "${SCRIPT_DIR}/eso-setup.sh"
 
     TRAEFIK_IP=$(echo "$IP_RANGE" | cut -d- -f1)
     TRAEFIK_IP_DASHED=$(ip_to_dashed "${TRAEFIK_IP}")

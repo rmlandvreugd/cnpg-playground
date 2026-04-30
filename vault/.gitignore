@@ -4,3 +4,5 @@ certs/
 pki/
 .root_token
 .unseal_key
+.*_role_id
+.*_secret_id
