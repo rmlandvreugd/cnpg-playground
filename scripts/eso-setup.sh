@@ -43,24 +43,16 @@ sudo chmod 640 "${VAULT_DIR}/.eso_${REGION}_role_id" \
 
 echo "✅ AppRole eso-${REGION} created (role_id: ${ROLE_ID})"
 
-# --- Install ESO ---
-echo "📦 Installing ESO ${ESO_VERSION} in '${CONTEXT_NAME}'..."
-kubectl create namespace "${ESO_NAMESPACE}" \
-    --context "${CONTEXT_NAME}" \
-    --dry-run=client -o yaml \
-    | kubectl apply --context "${CONTEXT_NAME}" -f -
-kubectl apply --server-side \
-    -f "https://raw.githubusercontent.com/external-secrets/external-secrets/${ESO_VERSION}/deploy/crds/bundle.yaml" \
-    --context "${CONTEXT_NAME}"
-kubectl apply --server-side -n "${ESO_NAMESPACE}" \
-    -f "https://github.com/external-secrets/external-secrets/releases/download/${ESO_VERSION}/external-secrets.yaml" \
-    --context "${CONTEXT_NAME}"
-
-echo "⏳ Waiting for ESO controller to be ready..."
-kubectl rollout status deployment external-secrets \
-    -n "${ESO_NAMESPACE}" \
-    --timeout=120s \
-    --context "${CONTEXT_NAME}"
+# --- Install ESO via Helm (only method that supports a custom namespace) ---
+echo "📦 Installing ESO ${ESO_VERSION} in '${CONTEXT_NAME}' (namespace: ${ESO_NAMESPACE})..."
+helm upgrade --install external-secrets external-secrets/external-secrets \
+    --repo https://charts.external-secrets.io \
+    --namespace "${ESO_NAMESPACE}" \
+    --create-namespace \
+    --version "${ESO_VERSION#v}" \
+    --wait \
+    --timeout 120s \
+    --kube-context "${CONTEXT_NAME}"
 
 # --- K8s secrets for ClusterSecretStore ---
 echo "🔑 Creating vault-ca-cert Secret in ${ESO_NAMESPACE}..."
