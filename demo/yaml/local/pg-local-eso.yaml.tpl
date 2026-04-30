@@ -34,7 +34,8 @@ spec:
       owner: app
       secret:
         name: pg-local-app
-      postInitSQL:
+      postInitApplicationSQL:
+        - CREATE ROLE IF NOT EXISTS readonly LOGIN
         - GRANT CONNECT ON DATABASE app TO readonly
         - GRANT USAGE ON SCHEMA public TO readonly
         - GRANT SELECT ON ALL TABLES IN SCHEMA public TO readonly
