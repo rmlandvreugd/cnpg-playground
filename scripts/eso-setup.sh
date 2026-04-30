@@ -61,15 +61,7 @@ kubectl wait --for=condition=Established \
     --timeout=60s \
     --context "${CONTEXT_NAME}"
 
-# --- K8s secrets for ClusterSecretStore ---
-echo "🔑 Creating vault-ca-cert Secret in ${ESO_NAMESPACE}..."
-kubectl create secret generic vault-ca-cert \
-    --namespace "${ESO_NAMESPACE}" \
-    --context "${CONTEXT_NAME}" \
-    --from-file=ca.crt="${VAULT_DIR}/certs/vault-ca.pem" \
-    --dry-run=client -o yaml \
-    | kubectl apply --context "${CONTEXT_NAME}" -f -
-
+# --- K8s secret for ClusterSecretStore AppRole credentials ---
 echo "🔑 Creating vault-approle-creds Secret in ${ESO_NAMESPACE}..."
 kubectl create secret generic vault-approle-creds \
     --namespace "${ESO_NAMESPACE}" \
@@ -82,8 +74,8 @@ kubectl create secret generic vault-approle-creds \
 # --- ClusterSecretStore ---
 echo "📋 Applying ClusterSecretStore (vault-approle)..."
 ESO_NAMESPACE="${ESO_NAMESPACE}" \
-VAULT_PORT="${VAULT_PORT}" \
-envsubst '${ESO_NAMESPACE} ${VAULT_PORT}' \
+VAULT_HTTP_PORT="${VAULT_HTTP_PORT}" \
+envsubst '${ESO_NAMESPACE} ${VAULT_HTTP_PORT}' \
     < "${GIT_REPO_ROOT}/vault/eso/clustersecretstore.yaml.tpl" \
     | kubectl --context "${CONTEXT_NAME}" apply -f -
 
