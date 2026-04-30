@@ -32,7 +32,7 @@ source "$(git rev-parse --show-toplevel)/scripts/common.sh"
 
 PGADMIN_DIR="${GIT_REPO_ROOT}/pgadmin"
 CNPG_DEMO_NAMESPACE="${CNPG_DEMO_NAMESPACE:-demo-local-db}"
-PGADMIN_EMAIL="${PGADMIN_EMAIL:-admin@pgadmin.local}"
+PGADMIN_EMAIL="${PGADMIN_EMAIL:-admin@example.com}"
 
 detect_running_regions "$@"
 
