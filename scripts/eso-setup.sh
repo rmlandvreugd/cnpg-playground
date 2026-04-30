@@ -48,6 +48,9 @@ echo "📦 Installing ESO ${ESO_VERSION} in '${CONTEXT_NAME}'..."
 kubectl apply --server-side \
     -f "https://raw.githubusercontent.com/external-secrets/external-secrets/${ESO_VERSION}/deploy/crds/bundle.yaml" \
     --context "${CONTEXT_NAME}"
+kubectl apply --server-side \
+    -f "https://github.com/external-secrets/external-secrets/releases/download/${ESO_VERSION}/external-secrets.yaml" \
+    --context "${CONTEXT_NAME}"
 
 echo "⏳ Waiting for ESO controller to be ready..."
 kubectl rollout status deployment external-secrets \
