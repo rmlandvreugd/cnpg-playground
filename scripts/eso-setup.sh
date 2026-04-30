@@ -38,17 +38,21 @@ SECRET_ID=$(_vcmd write -field=secret_id -f "auth/approle/role/eso-${REGION}/sec
 
 echo "${ROLE_ID}"   | sudo tee "${VAULT_DIR}/.eso_${REGION}_role_id"   > /dev/null
 echo "${SECRET_ID}" | sudo tee "${VAULT_DIR}/.eso_${REGION}_secret_id" > /dev/null
-sudo chmod 600 "${VAULT_DIR}/.eso_${REGION}_role_id" \
+sudo chmod 640 "${VAULT_DIR}/.eso_${REGION}_role_id" \
                "${VAULT_DIR}/.eso_${REGION}_secret_id"
 
 echo "✅ AppRole eso-${REGION} created (role_id: ${ROLE_ID})"
 
 # --- Install ESO ---
 echo "📦 Installing ESO ${ESO_VERSION} in '${CONTEXT_NAME}'..."
+kubectl create namespace "${ESO_NAMESPACE}" \
+    --context "${CONTEXT_NAME}" \
+    --dry-run=client -o yaml \
+    | kubectl apply --context "${CONTEXT_NAME}" -f -
 kubectl apply --server-side \
     -f "https://raw.githubusercontent.com/external-secrets/external-secrets/${ESO_VERSION}/deploy/crds/bundle.yaml" \
     --context "${CONTEXT_NAME}"
-kubectl apply --server-side \
+kubectl apply --server-side -n "${ESO_NAMESPACE}" \
     -f "https://github.com/external-secrets/external-secrets/releases/download/${ESO_VERSION}/external-secrets.yaml" \
     --context "${CONTEXT_NAME}"
 
