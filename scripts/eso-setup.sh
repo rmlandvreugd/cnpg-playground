@@ -45,7 +45,7 @@ echo "✅ AppRole eso-${REGION} created (role_id: ${ROLE_ID})"
 
 # --- Install ESO via Helm (only method that supports a custom namespace) ---
 echo "📦 Installing ESO ${ESO_VERSION} in '${CONTEXT_NAME}' (namespace: ${ESO_NAMESPACE})..."
-helm upgrade --install external-secrets external-secrets/external-secrets \
+helm upgrade --install external-secrets external-secrets \
     --repo https://charts.external-secrets.io \
     --namespace "${ESO_NAMESPACE}" \
     --create-namespace \
