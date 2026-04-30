@@ -54,6 +54,13 @@ helm upgrade --install external-secrets external-secrets \
     --timeout 120s \
     --kube-context "${CONTEXT_NAME}"
 
+echo "⏳ Waiting for ESO CRDs to be established..."
+kubectl wait --for=condition=Established \
+    crd/clustersecretstores.external-secrets.io \
+    crd/externalsecrets.external-secrets.io \
+    --timeout=60s \
+    --context "${CONTEXT_NAME}"
+
 # --- K8s secrets for ClusterSecretStore ---
 echo "🔑 Creating vault-ca-cert Secret in ${ESO_NAMESPACE}..."
 kubectl create secret generic vault-ca-cert \
