@@ -99,7 +99,7 @@ CNPG_DEMO_NAMESPACE="${CNPG_DEMO_NAMESPACE:-demo-local-db}"
 METALLB_VERSION="${METALLB_VERSION:-v0.15.3}"
 
 # --- Common Prerequisite Checks ---
-REQUIRED_COMMANDS="kind kubectl git grep sed envsubst jq"
+REQUIRED_COMMANDS="kind kubectl helm git grep sed envsubst jq"
 for cmd in $REQUIRED_COMMANDS; do
     if ! command -v "$cmd" &> /dev/null; then
         echo "❌ Error: Missing required command: $cmd"
