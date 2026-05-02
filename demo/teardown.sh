@@ -28,6 +28,11 @@ git_repo_root=$(git rev-parse --show-toplevel)
 # Source the common setup script
 source ${git_repo_root}/scripts/common.sh
 
+trunk=0
+if [ "${TRUNK:-}" = "true" ]; then
+   trunk=1
+fi
+
 kube_config_path=${git_repo_root}/k8s/kube-config.yaml
 demo_yaml_path=${git_repo_root}/demo/yaml
 
@@ -51,17 +56,15 @@ for region in "${REGIONS[@]}"; do
    kubectl delete --context ${CONTEXT_NAME} --ignore-not-found=true -f \
      ${demo_yaml_path}/object-stores
 
-   # Delete Barman Cloud Plugin
-   kubectl delete --context ${CONTEXT_NAME} --ignore-not-found=true -f \
-      https://github.com/cloudnative-pg/plugin-barman-cloud/releases/latest/download/manifest.yaml
-
-   # Delete cert-manager
-   kubectl delete --context ${CONTEXT_NAME} --ignore-not-found=true -f \
-      https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
-
-   # Delete CNPG operator
-   kubectl cnpg install generate --control-plane | \
-     kubectl --context ${CONTEXT_NAME} delete --ignore-not-found=true -f -
+   if [ $trunk -eq 1 ]; then
+     kubectl delete --context "${CONTEXT_NAME}" --ignore-not-found=true -f \
+       https://raw.githubusercontent.com/cloudnative-pg/plugin-barman-cloud/refs/heads/main/manifest.yaml
+     kubectl delete --context "${CONTEXT_NAME}" --ignore-not-found=true -f \
+       https://raw.githubusercontent.com/cloudnative-pg/artifacts/main/manifests/operator-manifest.yaml
+   else
+     helm_uninstall_if_present barman-cloud cnpg-system "${CONTEXT_NAME}"
+     helm_uninstall_if_present cnpg-operator cnpg-system "${CONTEXT_NAME}"
+   fi
 
    # Remove backup data
    ${CONTAINER_PROVIDER} exec objectstore-${region} rm -rf /data/backups/pg-${region}
