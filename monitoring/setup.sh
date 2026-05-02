@@ -41,18 +41,14 @@ for region in "${REGIONS[@]}"; do
     K8S_CLUSTER_NAME=$(get_cluster_name "${region}")
     CONTEXT_NAME=$(get_cluster_context "${region}")
 
-# Deploy the Prometheus operator in the playground Kubernetes clusters
-    kubectl --context ${CONTEXT_NAME} create ns prometheus-operator || true
-    kubectl kustomize ${GIT_REPO_ROOT}/monitoring/prometheus-operator | \
-      kubectl --context ${CONTEXT_NAME} apply --force-conflicts --server-side -f -
+    echo "📊 Installing kube-prometheus-stack ${KUBE_PROMETHEUS_STACK_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
+    helm_upgrade_install kube-prometheus-stack \
+        oci://ghcr.io/prometheus-community/charts/kube-prometheus-stack \
+        prometheus-operator "${CONTEXT_NAME}" "${KUBE_PROMETHEUS_STACK_CHART_VERSION}" \
+        --values "${GIT_REPO_ROOT}/monitoring/kube-prometheus-stack-values.yaml"
 
-# We make sure that monitoring workloads are deployed in the infrastructure node.
     kubectl kustomize ${GIT_REPO_ROOT}/monitoring/prometheus-instance | \
         kubectl --context=${CONTEXT_NAME} apply --force-conflicts --server-side -f -
-    kubectl --context=${CONTEXT_NAME} -n prometheus-operator \
-      patch deployment prometheus-operator \
-      --type='merge' \
-      --patch='{"spec":{"template":{"spec":{"tolerations":[{"key":"node-role.kubernetes.io/infra","operator":"Exists","effect":"NoSchedule"}],"nodeSelector":{"node-role.kubernetes.io/infra":""}}}}}'
 
     echo "-------------------------------------------------------------"
     echo " 📈 Provisioning Grafana resources for region: ${region}"
