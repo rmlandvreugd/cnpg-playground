@@ -1,0 +1,12 @@
+prometheus:
+  enabled: false
+grafana:
+  enabled: false
+alertmanager:
+  enabled: false
+nodeExporter:
+  enabled: false
+prometheusOperator:
+  enabled: true
+kubeStateMetrics:
+  enabled: true
