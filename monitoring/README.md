@@ -66,6 +66,21 @@ You can find the dashboard under `Home > Dashboards > grafana > CloudNativePG`.
 > streaming is unavailable, but all other Grafana features work normally
 > when accessed via port-forward.
 
+## Resource Ownership
+
+| Resource | Owner |
+|---|---|
+| Prometheus Operator CRDs and controller | Helm — `kube-prometheus-stack` chart (release `kube-prometheus-stack`, namespace `prometheus-operator`) |
+| kube-state-metrics | Helm — `kube-prometheus-stack` chart |
+| `Prometheus` CR and `prometheus-operated` service | Plain manifest — `monitoring/prometheus-instance/` |
+| Grafana Operator controller | Helm — `grafana-operator` chart (release `grafana-operator`, namespace `grafana`) |
+| Grafana instance, datasource, dashboard | Plain manifests — `monitoring/grafana/` |
+| Traefik `IngressRoute` for Grafana | Plain template — `monitoring/grafana/ingressroute.yaml.tpl` |
+
+Chart versions are pinned in `scripts/common.sh` as `KUBE_PROMETHEUS_STACK_CHART_VERSION`
+and `GRAFANA_OPERATOR_CHART_VERSION`. Values overrides are in
+`monitoring/kube-prometheus-stack-values.yaml`.
+
 ## PodMonitor
 
 To enable Prometheus to scrape metrics from your PostgreSQL pods, you must

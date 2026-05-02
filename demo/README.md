@@ -24,13 +24,6 @@ To follow this demonstration, ensure the following are installed on your system:
   dashboards, make sure that you also deploy the [monitoring](../monitoring/)
   environment.
 
-2. **`cmctl` (cert-manager CLI)**: Required for secure communication between
-  the operator and the `barman-cloud` plugin, which is used for backup and
-  recovery with RustFS object stores.
-  Follow the [official `cmctl` installation guide](https://cert-manager.io/docs/reference/cmctl/#installation).
-  For detailed guidance, refer to the official
-  [`cert-manager` installation documentation](https://cert-manager.io/docs/installation/).
-
 ## Deployment
 
 Once the CNPG Playground is installed, deploy the PostgreSQL clusters across
@@ -41,9 +34,12 @@ the two regions using:
 ```
 
 This process takes a few minutes to complete.
-It installs the latest version of CloudNativePG, cert-manager, and the
-[Barman Cloud plugin](https://cloudnative-pg.io/plugin-barman-cloud/),
-followed by the deployment of the two PostgreSQL clusters.
+It installs the CloudNativePG operator and the
+[Barman Cloud plugin](https://cloudnative-pg.io/plugin-barman-cloud/) via
+Helm (pinned chart versions defined in `scripts/common.sh`), followed by
+the deployment of the two PostgreSQL clusters. cert-manager is installed by
+`scripts/setup.sh` as part of base infrastructure and does not need to be
+installed separately.
 
 If you prefer to deploy a version of the clusters that uses the legacy in-tree
 Barman Cloud code instead of the Barman Cloud Plugin, simply run:
