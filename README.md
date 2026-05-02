@@ -12,6 +12,7 @@ on a Unix-based system:
 
 - [Docker](https://www.docker.com/)
 - [Git](https://git-scm.com/)
+- [Helm](https://helm.sh/docs/intro/install/)
 - [Kubectl](https://kubernetes.io/docs/tasks/tools/)
 - [The `cnpg` plugin for `kubectl`](https://cloudnative-pg.io/documentation/current/kubectl-plugin/)
 - [Kind](https://kind.sigs.k8s.io/)
