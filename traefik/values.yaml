@@ -1,0 +1,43 @@
+nodeSelector:
+  node-role.kubernetes.io/infra: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    add:
+      - NET_BIND_SERVICE
+    drop:
+      - ALL
+
+providers:
+  kubernetesCRD:
+    enabled: true
+    allowCrossNamespace: true
+
+ingressRoute:
+  dashboard:
+    enabled: false
+
+logs:
+  general:
+    level: "INFO"
+
+additionalArguments:
+  - "--global.checknewversion=false"
+  - "--global.sendanonymoususage=false"
+  - "--ping=true"
+  - "--ping.entrypoint=traefik"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 64Mi
+  limits:
+    memory: 128Mi
+
+service:
+  type: LoadBalancer
