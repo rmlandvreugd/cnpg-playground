@@ -97,6 +97,14 @@ CNPG_DEMO_NAMESPACE="${CNPG_DEMO_NAMESPACE:-demo-local-db}"
 
 # MetalLB Configuration
 METALLB_VERSION="${METALLB_VERSION:-v0.15.3}"
+METALLB_CHART_VERSION="${METALLB_CHART_VERSION:-0.15.3}"
+CERT_MANAGER_CHART_VERSION="${CERT_MANAGER_CHART_VERSION:-v1.20.2}"
+ESO_CHART_VERSION="${ESO_CHART_VERSION:-2.4.1}"
+TRAEFIK_CHART_VERSION="${TRAEFIK_CHART_VERSION:-39.0.8}"
+CNPG_CHART_VERSION="${CNPG_CHART_VERSION:-0.28.0}"
+BARMAN_CLOUD_PLUGIN_CHART_VERSION="${BARMAN_CLOUD_PLUGIN_CHART_VERSION:-0.6.0}"
+GRAFANA_OPERATOR_CHART_VERSION="${GRAFANA_OPERATOR_CHART_VERSION:-5.22.2}"
+KUBE_PROMETHEUS_STACK_CHART_VERSION="${KUBE_PROMETHEUS_STACK_CHART_VERSION:-83.6.0}"
 
 # --- Common Prerequisite Checks ---
 REQUIRED_COMMANDS="kind kubectl helm git grep sed envsubst jq"
@@ -169,5 +177,52 @@ get_kind_ipv4_subnet() {
     else
         $CONTAINER_PROVIDER network inspect "$network" \
             -f '{{range .IPAM.Config}}{{.Subnet}}{{"\n"}}{{end}}' | grep '\.' | head -n 1
+    fi
+}
+
+helm_upgrade_install() {
+    local release="$1"
+    local chart_ref="$2"
+    local namespace="$3"
+    local context="$4"
+    local version="$5"
+    shift 5
+
+    local repo_args=()
+    if [[ "${1:-}" == "--repo-url" ]]; then
+        if [[ "${chart_ref}" == */* ]]; then
+            echo "chart_ref must be a short chart name when --repo-url is used: ${chart_ref}" >&2
+            return 1
+        fi
+        repo_args=(--repo "$2")
+        shift 2
+    fi
+
+    helm upgrade --install "${release}" "${chart_ref}" \
+        "${repo_args[@]}" \
+        --namespace "${namespace}" \
+        --create-namespace \
+        --kube-context "${context}" \
+        --version "${version}" \
+        --wait \
+        --timeout 120s \
+        "$@"
+}
+
+wait_deployment() {
+    local context="$1"
+    local namespace="$2"
+    local deployment="$3"
+    local timeout="${4:-120s}"
+    kubectl --context "${context}" -n "${namespace}" \
+        rollout status deployment "${deployment}" --timeout="${timeout}"
+}
+
+helm_uninstall_if_present() {
+    local release="$1"
+    local namespace="$2"
+    local context="$3"
+    if helm status "${release}" --namespace "${namespace}" --kube-context "${context}" &>/dev/null; then
+        helm uninstall "${release}" --namespace "${namespace}" --kube-context "${context}"
     fi
 }
