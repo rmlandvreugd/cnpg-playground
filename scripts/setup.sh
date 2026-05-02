@@ -219,13 +219,11 @@ EOF
 
     TRAEFIK_IP=$(echo "$IP_RANGE" | cut -d- -f1)
     TRAEFIK_IP_DASHED=$(ip_to_dashed "${TRAEFIK_IP}")
-    echo "🔧 Installing Traefik ${TRAEFIK_VERSION} in '${K8S_CLUSTER_NAME}'..."
-    kubectl --context "${CONTEXT_NAME}" apply -f \
-        "https://raw.githubusercontent.com/traefik/traefik/${TRAEFIK_VERSION}/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml"
-    kubectl kustomize "${GIT_REPO_ROOT}/traefik" \
-        | kubectl --context "${CONTEXT_NAME}" apply -f -
-    kubectl --context "${CONTEXT_NAME}" -n traefik \
-        rollout status deployment traefik --timeout=90s
+    echo "🔧 Installing Traefik ${TRAEFIK_CHART_VERSION} (chart) in '${K8S_CLUSTER_NAME}'..."
+    helm_upgrade_install traefik \
+        oci://ghcr.io/traefik/helm/traefik \
+        traefik "${CONTEXT_NAME}" "${TRAEFIK_CHART_VERSION}" \
+        --values "${GIT_REPO_ROOT}/traefik/values.yaml"
 
     # Traefik dashboard TLS certificate
     echo "📜 Issuing Traefik dashboard TLS certificate..."
