@@ -55,7 +55,7 @@ if [ "${TRUNK:-}" = "true" ]; then
 fi
 
 # Ensure prerequisites are met
-prereqs="kubectl kubectl-cnpg cmctl"
+prereqs="kubectl kubectl-cnpg"
 for cmd in $prereqs; do
    if [ -z "$(which $cmd)" ]; then
       echo "${error_icon} Missing command $cmd"
@@ -76,53 +76,34 @@ for region in "${REGIONS[@]}"; do
    CONTEXT_NAME=$(get_cluster_context "${region}")
    
    echo "${info_icon} Deploying in region ${region} with context ${CONTEXT_NAME}"
-   if [ $trunk -eq 1 ]
-   then
-     # Deploy CloudNativePG operator (trunk - main branch)
+   if [ $trunk -eq 1 ]; then
      echo "${info_icon} Deploying CloudNativePG operator (trunk version)"
      curl -sSfL \
        https://raw.githubusercontent.com/cloudnative-pg/artifacts/main/manifests/operator-manifest.yaml | \
-       kubectl --context ${CONTEXT_NAME} apply -f - --server-side
+       kubectl --context "${CONTEXT_NAME}" apply -f - --server-side
+     echo "${info_icon} Waiting for CloudNativePG operator to be ready..."
+     kubectl --context "${CONTEXT_NAME}" rollout status deployment \
+       -n cnpg-system cnpg-controller-manager
    else
-     # Deploy CloudNativePG operator (latest version, through the plugin)
-      echo "${info_icon} Deploying CloudNativePG operator (latest stable version)"
-     kubectl cnpg install generate --control-plane | \
-       kubectl --context ${CONTEXT_NAME} apply -f - --server-side
+     echo "${info_icon} Deploying CloudNativePG operator (chart ${CNPG_CHART_VERSION})"
+     helm_upgrade_install cnpg-operator cloudnative-pg cnpg-system "${CONTEXT_NAME}" \
+       "${CNPG_CHART_VERSION}" \
+       --repo-url https://cloudnative-pg.github.io/charts
    fi
 
-   # Wait for CNPG deployment to complete
-   echo "${info_icon} Waiting for CloudNativePG operator to be ready..."
-   kubectl --context ${CONTEXT_NAME} rollout status deployment \
-      -n cnpg-system cnpg-controller-manager
-
-   # Deploy cert-manager
-   echo "${info_icon} Deploying cert-manager..."
-   kubectl apply --context ${CONTEXT_NAME} -f \
-      https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
-
-   # Wait for cert-manager deployment to complete
-   echo "${info_icon} Waiting for cert-manager to be ready..."
-   kubectl rollout --context ${CONTEXT_NAME} status deployment \
-      -n cert-manager
-   cmctl check api --wait=2m --context ${CONTEXT_NAME}
-
-   if [ $trunk -eq 1 ]
-   then
-     # Deploy Barman Cloud Plugin (trunk)
+   if [ $trunk -eq 1 ]; then
      echo "${info_icon} Deploying Barman Cloud Plugin (trunk version)"
-     kubectl apply --context ${CONTEXT_NAME} -f \
+     kubectl apply --context "${CONTEXT_NAME}" -f \
        https://raw.githubusercontent.com/cloudnative-pg/plugin-barman-cloud/refs/heads/main/manifest.yaml
+     echo "${info_icon} Waiting for Barman Cloud Plugin to be ready..."
+     kubectl rollout --context "${CONTEXT_NAME}" status deployment \
+       -n cnpg-system barman-cloud
    else
-     # Deploy Barman Cloud Plugin (latest stable)
-     echo "${info_icon} Deploying Barman Cloud Plugin (latest stable version)"
-     kubectl apply --context ${CONTEXT_NAME} -f \
-        https://github.com/cloudnative-pg/plugin-barman-cloud/releases/latest/download/manifest.yaml
+     echo "${info_icon} Deploying Barman Cloud Plugin (chart ${BARMAN_CLOUD_PLUGIN_CHART_VERSION})"
+     helm_upgrade_install barman-cloud plugin-barman-cloud cnpg-system "${CONTEXT_NAME}" \
+       "${BARMAN_CLOUD_PLUGIN_CHART_VERSION}" \
+       --repo-url https://cloudnative-pg.github.io/charts
    fi
-
-   # Wait for Barman Cloud Plugin deployment to complete
-   echo "${info_icon} Waiting for Barman Cloud Plugin to be ready..."
-   kubectl rollout --context ${CONTEXT_NAME} status deployment \
-      -n cnpg-system barman-cloud
 
    # Create Barman object stores
    echo "${info_icon} Creating Barman Cloud object store for region ${region}..."
