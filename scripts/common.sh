@@ -205,7 +205,7 @@ helm_upgrade_install() {
         --kube-context "${context}" \
         --version "${version}" \
         --wait \
-        --timeout 120s \
+        --timeout 300s \
         "$@"
 }
 
