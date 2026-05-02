@@ -45,14 +45,9 @@ echo "✅ AppRole eso-${REGION} created (role_id: ${ROLE_ID})"
 
 # --- Install ESO via Helm (only method that supports a custom namespace) ---
 echo "📦 Installing ESO ${ESO_VERSION} in '${CONTEXT_NAME}' (namespace: ${ESO_NAMESPACE})..."
-helm upgrade --install external-secrets external-secrets \
-    --repo https://charts.external-secrets.io \
-    --namespace "${ESO_NAMESPACE}" \
-    --create-namespace \
-    --version "${ESO_VERSION#v}" \
-    --wait \
-    --timeout 120s \
-    --kube-context "${CONTEXT_NAME}"
+helm_upgrade_install external-secrets external-secrets \
+    "${ESO_NAMESPACE}" "${CONTEXT_NAME}" "${ESO_CHART_VERSION}" \
+    --repo-url https://charts.external-secrets.io
 
 echo "⏳ Waiting for ESO CRDs to be established..."
 kubectl wait --for=condition=Established \
