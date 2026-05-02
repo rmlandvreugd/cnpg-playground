@@ -109,22 +109,14 @@ for region in "${REGIONS[@]}"; do
     kubectl label node -l infra.node.kubernetes.io node-role.kubernetes.io/infra= --context "$(get_cluster_context "${region}")"
     kubectl label node -l app.node.kubernetes.io node-role.kubernetes.io/app= --context "$(get_cluster_context "${region}")"
 
-    echo "🛠️  Installing MetalLB ${METALLB_VERSION} in '${K8S_CLUSTER_NAME}'..."
+    echo "🛠️  Installing MetalLB ${METALLB_CHART_VERSION} (chart) in '${K8S_CLUSTER_NAME}'..."
     # Enable strict ARP for kube-proxy
     kubectl get configmap kube-proxy -n kube-system -o yaml --context "$(get_cluster_context "${region}")" | \
     sed -e "s/strictARP: false/strictARP: true/" | \
     kubectl replace -f - --context "$(get_cluster_context "${region}")"
-
-    # Install MetalLB
-    kubectl apply -f "https://raw.githubusercontent.com/metallb/metallb/${METALLB_VERSION}/config/manifests/metallb-native.yaml" --context "$(get_cluster_context "${region}")"
-
-    # Wait for MetalLB to be ready
-    echo "⏳ Waiting for MetalLB to be ready in '${K8S_CLUSTER_NAME}'..."
-    kubectl wait --namespace metallb-system \
-                --for=condition=ready pod \
-                --selector=app=metallb \
-                --timeout=120s \
-                --context "$(get_cluster_context "${region}")"
+    helm_upgrade_install metallb metallb metallb-system "$(get_cluster_context "${region}")" \
+        "${METALLB_CHART_VERSION}" \
+        --repo-url https://metallb.github.io/metallb
 
     # Determine the IP range for MetalLB based on the region index
     # to avoid conflicts on the shared 'kind' network.
@@ -192,15 +184,11 @@ EOF
         | kubectl --context "${CONTEXT_NAME}" apply -f -
 
     # cert-manager
-    echo "🔧 Installing cert-manager ${CERT_MANAGER_VERSION} in '${K8S_CLUSTER_NAME}'..."
-    kubectl apply \
-        -f "https://github.com/cert-manager/cert-manager/releases/download/${CERT_MANAGER_VERSION}/cert-manager.yaml" \
-        --context "${CONTEXT_NAME}"
-    echo "⏳ Waiting for cert-manager to be ready..."
-    kubectl wait --namespace cert-manager \
-        --for=condition=ready pod \
-        --selector=app.kubernetes.io/instance=cert-manager \
-        --timeout=120s --context "${CONTEXT_NAME}"
+    echo "🔧 Installing cert-manager ${CERT_MANAGER_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
+    helm_upgrade_install cert-manager \
+        oci://quay.io/jetstack/charts/cert-manager \
+        cert-manager "${CONTEXT_NAME}" "${CERT_MANAGER_CHART_VERSION}" \
+        --set crds.enabled=true
 
     # Secrets in cert-manager namespace
     echo "🔑 Creating cert-manager secrets for Vault PKI..."
