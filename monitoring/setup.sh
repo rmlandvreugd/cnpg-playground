@@ -54,13 +54,14 @@ for region in "${REGIONS[@]}"; do
     echo " 📈 Provisioning Grafana resources for region: ${region}"
     echo "-------------------------------------------------------------"
 
-# Deploying Grafana operator
-    kubectl --context ${CONTEXT_NAME} apply --force-conflicts --server-side \
-      -f https://github.com/grafana/grafana-operator/releases/latest/download/kustomize-cluster_scoped.yaml
-    kubectl --context ${CONTEXT_NAME} -n grafana \
-      patch deployment grafana-operator-controller-manager \
-      --type='merge' \
-      --patch='{"spec":{"template":{"spec":{"tolerations":[{"key":"node-role.kubernetes.io/infra","operator":"Exists","effect":"NoSchedule"}],"nodeSelector":{"node-role.kubernetes.io/infra":""}}}}}'
+    echo "📈 Installing Grafana Operator ${GRAFANA_OPERATOR_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
+    helm_upgrade_install grafana-operator \
+        oci://ghcr.io/grafana/helm-charts/grafana-operator \
+        grafana "${CONTEXT_NAME}" "${GRAFANA_OPERATOR_CHART_VERSION}" \
+        --set "nodeSelector.node-role\\.kubernetes\\.io/infra=" \
+        --set "tolerations[0].key=node-role.kubernetes.io/infra" \
+        --set "tolerations[0].operator=Exists" \
+        --set "tolerations[0].effect=NoSchedule"
 
 # Creating Grafana instance and dashboards
     kubectl kustomize ${GIT_REPO_ROOT}/monitoring/grafana/ | \
