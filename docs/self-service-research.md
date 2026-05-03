@@ -1,7 +1,7 @@
 # CNPG Self-Service Demo: Review, Research, Plan
 
-Status: research complete — ready for implementation  
-Date: 2026-05-01 (research closed 2026-05-01)  
+Status: research complete — ready for implementation
+Date: 2026-05-01 (research closed 2026-05-01; validated against codebase 2026-05-03)
 Scope: local runnable demo plus architecture docs
 
 This note turns `docs/samenvatting.md`, `docs/ontwerp.md`, and `docs/implementatie.md` into a repo-local demo direction. It records decisions, researched constraints, implementation plan, questions, and research queue. It does not assume runtime behavior that still needs proof in this playground.
@@ -45,12 +45,12 @@ Decisions from initial planning:
 - App workload should eventually include both a long-running Deployment and a `psql` Job; start with the simpler proof path if needed.
 - Do not mirror this note into `docs/self-service-research-nl.md` until the plan stabilizes.
 
-Decisions added after research closure (2026-05-01):
+Decisions added after research closure (2026-05-01) and codebase validation (2026-05-03):
 
 - Traefik v3.3.0 already includes `IngressRouteTCP` CRD (`ingressroutetcps.traefik.io`, version `v1alpha1`). No separate CRD install needed.
 - PostgreSQL `libpq` (PG14+) sends TLS SNI when connecting with a hostname and `sslmode=require`. Traefik `HostSNI(...)` passthrough routing is confirmed viable.
 - Port 5432 is reachable from the host via the MetalLB IP on rootless Podman + Kind on Linux, identically to ports 80 and 443. No special Podman or Kind configuration is required.
-- Adding the `postgres` entrypoint to Traefik requires: `--entrypoints.postgres.address=:5432` in Deployment args, a `postgres` containerPort in the Deployment, and a `postgres` port in the Traefik Service. No NET_BIND_SERVICE change is needed (5432 is unprivileged).
+- Adding the `postgres` entrypoint to Traefik requires: `--entrypoints.postgres.address=:5432` in `traefik/values.yaml` under `additionalArguments`, and a `postgres` port entry in the `ports:` section of `values.yaml` (Helm chart manages the Deployment and Service). `traefik/deployment.yaml` and `traefik/services.yaml` do not exist in this repo — Traefik is Helm-managed. No NET_BIND_SERVICE change is needed (5432 is unprivileged).
 - `pgaudit` version 18.0-2.pgdg13+1 is confirmed installed in `ghcr.io/cloudnative-pg/postgresql:18-standard-trixie`. The `.so` is at `/usr/lib/postgresql/18/lib/pgaudit.so`; extension files are at `/usr/share/postgresql/18/extension/pgaudit*`.
 - CNPG automatically adds `pgaudit` to `shared_preload_libraries` and runs `CREATE EXTENSION pgaudit` in all connectable databases when any `pgaudit.*` parameter is set. No manual `shared_preload_libraries` entry is needed.
 - `cnpg.io/reload: "true"` label on a Kubernetes Secret causes CNPG to automatically reconcile managed role passwords when the Secret changes. No `kubectl cnpg reload` is required for ESO-triggered rotation.
@@ -170,9 +170,8 @@ Grafana OSS folder-level access control via OAuth groups is not available (Enter
 Plan:
 
 - Add `postgres` entrypoint on Traefik `:5432`
-- Add to `traefik/deployment.yaml` args: `--entrypoints.postgres.address=:5432`
-- Add containerPort `5432` (name: `postgres`) to Deployment
-- Add port `5432` to `traefik/services.yaml` Traefik Service
+- Add to `traefik/values.yaml` under `additionalArguments`: `--entrypoints.postgres.address=:5432`
+- Add `postgres` port to `traefik/values.yaml` `ports:` section (Helm chart generates the Deployment containerPort and Service port from this)
 - Route `HostSNI("verstappen-rbr-ver-db.<dashed-ip>.sslip.io")`
 - Set `tls.passthrough: true`
 - Service target: `verstappen-rw` in namespace `rbr-ver-db`, port `5432`
@@ -211,7 +210,7 @@ Findings:
 - TLS passthrough with `HostSNI(...)` matching requires TLS to be enabled on the backend. CNPG handles PostgreSQL TLS by default (operator-managed). PostgreSQL clients will initiate TLS, providing SNI to Traefik.
 - `libpq` (PostgreSQL 14+) sends TLS SNI by default when connecting with a hostname and `sslmode=require`. The `sslsni` connection parameter controls it (default: enabled). psql, pgAdmin, and Vault's database engine (which uses libpq) all send SNI.
 - `HostSNI("*")` matches all TCP connections (including non-TLS). Use it as a catch-all, not for specific routing.
-- Port 5432 is above 1024 (unprivileged). No `NET_BIND_SERVICE` change is needed for the Traefik container to bind it. The existing `NET_BIND_SERVICE` grant in `traefik/deployment.yaml` remains correct and harmless.
+- Port 5432 is above 1024 (unprivileged). No `NET_BIND_SERVICE` change is needed for the Traefik container to bind it. `NET_BIND_SERVICE` is already present in `traefik/values.yaml:9` (`securityContext.capabilities.add: [NET_BIND_SERVICE]`); this remains correct and harmless.
 - Port 5432 is reachable from the host via the MetalLB IP on rootless Podman + Kind on Linux. The Podman user namespace does not block network namespace routing. All MetalLB ports route identically; 80/443 already working proves the network path.
 
 Open questions:
@@ -220,7 +219,7 @@ Open questions:
 - [RESOLVED] Does PostgreSQL client/Vault driver send SNI with `sslmode=require` and hostname? **Yes — libpq sends SNI by default (PG14+).**
 - [RESOLVED] Does rootless Podman allow host reachability to the MetalLB IP on port `5432`? **Yes — identical to ports 80/443.**
 - [RESOLVED] Should Traefik dashboard HTTP/TLS setup stay untouched and only add the `postgres` entrypoint? **Yes — add postgres entrypoint only.**
-- [UNRESOLVED] The IngressRouteTCP uses the `rbr-ver-db` namespace while living in `traefik`. Confirm `allowCrossNamespace=true` is active in this cluster before applying.
+- [RESOLVED] The IngressRouteTCP uses the `rbr-ver-db` namespace while living in `traefik`. `allowCrossNamespace: true` is confirmed in `traefik/values.yaml:18–19` under `providers.kubernetesCRD`. No runtime check needed.
 
 ### 2. Vault Database Secrets Engine
 
@@ -359,7 +358,7 @@ Later demo plan (`.pgpass` init container):
 
 - Add an init container to the pgAdmin Pod that:
   1. Runs `vault read -field=password database/creds/rbr-ver-db-admin` and `vault read -field=username database/creds/rbr-ver-db-admin`
-  2. Writes to `/pgpass/.pgpass`:  
+  2. Writes to `/pgpass/.pgpass`:
      `verstappen-rbr-ver-db.<dashed-ip>.sslip.io:5432:max:<username>:<password>`
   3. Sets `chmod 0600 /pgpass/.pgpass`
 - Mount the shared volume into the main pgAdmin container at `/pgadmin4/pgpass`
@@ -585,9 +584,11 @@ Plan:
 - Add `rotate local app` script option that updates Vault KV and annotates the `ExternalSecret`:
 
 ```bash
-kubectl annotate es pg-local-app -n rbr-ver-db \
+kubectl annotate es verstappen-app -n rbr-ver-db \
   force-sync="$(date +%s)" --overwrite
 ```
+
+Note: ExternalSecret name for the self-service cluster will be `verstappen-app` (not `pg-local-app`), matching the cluster/role naming convention.
 
 Smoke test sequence:
 1. Connect as app user with old password.
@@ -651,7 +652,7 @@ Status of the 12 research queue items:
 
 Before writing code, confirm the following from a running cluster:
 
-1. Confirm `allowCrossNamespace=true` is active in the deployed Traefik (already set in `traefik/deployment.yaml` args — verify with `kubectl get deployment traefik -n traefik -o jsonpath='{.spec.template.spec.containers[0].args}'`).
+1. ~~Confirm `allowCrossNamespace=true`~~ — **confirmed**: `traefik/values.yaml:18–19` sets `allowCrossNamespace: true` under `providers.kubernetesCRD`. No runtime check needed.
 2. Confirm the installed Grafana Operator CRD version supports `"auth.generic_oauth"` dotted key in `spec.config`.
 3. Confirm barman plugin 0.12.0 is the installed version (`kubectl get deployment -n cnpg-system | grep barman`).
 4. Decide: tenant admin `rbr-db-admin` gets Grafana `Admin`, group admin `rbr-ver-db-admin` gets `Editor`? Or both `Editor`?
@@ -669,7 +670,7 @@ Create `demo/yaml/self-service/rbr-ver-db/`:
 - `ScheduledBackup` with `backupOwnerReference: self`
 - Traefik `IngressRouteTCP` for PostgreSQL TCP passthrough
 
-Also update `traefik/deployment.yaml` and `traefik/services.yaml` to add the `postgres` entrypoint on port 5432.
+Also update `traefik/values.yaml` to add the `postgres` entrypoint on port 5432 (via `additionalArguments` and `ports:` Helm values). `traefik/deployment.yaml` and `traefik/services.yaml` do not exist — Traefik is Helm-managed.
 
 ### Phase 2: Vault Setup
 
@@ -733,17 +734,37 @@ Add or update:
 
 These questions were not resolved by the research closure and require explicit decisions before or during implementation:
 
-1. Should `SET ROLE rbr_ver_ddl_owner` be mandatory (required in pgAdmin workflow docs) or optional best practice?
-2. Should a read-only VDE role (`rbr-ver-db-readonly`) be added in phase 1, or deferred to phase 2?
-3. Should tenant admin (`rbr-db-admin`) get Grafana `Admin` and group admin (`rbr-ver-db-admin`) get `Editor`, or should both get `Editor` for the local demo?
-4. Does the installed Grafana Operator CRD version support `"auth.generic_oauth"` dotted key in `spec.config`? Verify on a running cluster before implementing phase 5.
-5. Should Dex config overlay use `envsubst` for new user password hashes, or a separate bcrypt-generation step in the setup script?
-6. For the pgAdmin `.pgpass` init container: use the `rbr-db-admin` Vault role (tenant scope) or `rbr-ver-db-admin` (group scope)?
-7. Should the rotation test (`rotate local app`) run from a psql Job in `rbr-ver` namespace, or from a local psql client?
-8. Should AppRole role names become tenant-scoped now (`eso-rbr-ver-local`) or remain region-scoped (`eso-local`)?
-9. Should `demo/self-service-setup.sh teardown` remove Vault VDE roles and policies, or keep them for inspection?
-10. Should `docs/self-service-research-nl.md` be deleted to avoid confusion, or left stale until implementation is complete?
-11. Is Loki present in the monitoring stack? If yes, pgaudit dashboard panels become feasible. Verify with `kubectl get pods -n monitoring | grep loki` after `monitoring/setup.sh` runs.
+1. Should `SET ROLE rbr_ver_ddl_owner` be mandatory (required in pgAdmin workflow docs) or optional best practice?\
+   mandatory
+2. Should a read-only VDE role (`rbr-ver-db-readonly`) be added in phase 1, or deferred to phase 2?\
+   Add
+3. Should tenant admin (`rbr-db-admin`) get Grafana `Admin` and group admin (`rbr-ver-db-admin`) get `Editor`, or should both get `Editor` for the local demo?\
+   yes
+4. Does the installed Grafana Operator CRD version support `"auth.generic_oauth"` dotted key in `spec.config`? Verify on a running cluster before implementing phase 5.\
+   Will verify when that phase comes
+5. Should Dex config overlay use `envsubst` for new user password hashes, or a separate bcrypt-generation step in the setup script?\
+   use `envsubst`
+6. For the pgAdmin `.pgpass` init container: use the `rbr-db-admin` Vault role (tenant scope) or `rbr-ver-db-admin` (group scope)?\
+   group scope
+7. Should the rotation test (`rotate local app`) run from a psql Job in `rbr-ver` namespace, or from a local psql client?\
+   psql job
+8. Should AppRole role names become tenant-scoped now (`eso-rbr-ver-local`) or remain region-scoped (`eso-local`)?\
+   tenant-scoped
+9.  Should `demo/self-service-setup.sh teardown` remove Vault VDE roles and policies, or keep them for inspection?\
+    keep them
+10. Should `docs/self-service-research-nl.md` be deleted to avoid confusion, or left stale until implementation is complete?\
+    keep, will be updated just before implementation
+11. Is Loki present in the monitoring stack? If yes, pgaudit dashboard panels become feasible. Verify with `kubectl get pods -n monitoring | grep loki` after `monitoring/setup.sh` runs.\
+    not present, needs to be integrated in `monitoring/setup.sh`
+
+Validation gaps identified 2026-05-03:
+
+12. Barman Cloud chart version 0.6.0 vs confirmed plugin 0.12.0 — `common.sh` pins `BARMAN_CLOUD_PLUGIN_CHART_VERSION=0.6.0`; research confirmed plugin binary 0.12.0 from the container image. Map chart version to binary version before implementing backup manifest. **Research needed**: check GitHub releases at `https://github.com/cloudnative-pg/plugin-barman-cloud` or run `helm show chart oci://ghcr.io/cloudnative-pg/charts/barman-cloud-cnpg-i --version 0.6.0`.
+13. Vault 2.0 VDE API — `common.sh` uses `hashicorp/vault:2.0`. Research assumed Vault 1.x. Confirm `vault write database/config/...` and `vault write database/roles/...` commands are unchanged in Vault 2.0 before implementing Phase 2. **Research needed**: check Vault 2.0 changelog for Database Secrets Engine breaking changes.
+14. VDE admin user — the `database/config/rbr-ver-max` setup requires a real PostgreSQL user (`username`, `password`). The self-service cluster will use `enableSuperuserAccess: true` with an ESO-managed superuser secret. If ESO rotates the superuser password, Vault's stored credential becomes stale. Decide: (a) disable superuser password rotation for the VDE admin user; (b) create a dedicated non-rotating Vault admin role in PostgreSQL; (c) accept manual `vault write database/config/rbr-ver-max` re-rotation after each ESO cycle.
+15. Dex overlay concrete mechanism — no overlay infrastructure exists. `dex/config/dex-config.yaml.tpl` is the only Dex config file. The research says "do not modify the base template" but this is aspirational: adding new `staticClients` and `staticPasswords` entries to the base template is safe (additive, does not break existing entries). Decide whether to: (a) add self-service entries directly to `dex-config.yaml.tpl` with new `envsubst` vars; (b) have the self-service setup script produce a merged config by appending a second template before envsubst; (c) keep base template unchanged and use a YAML-aware merge tool. Option (a) is simplest given Q5 answer ("use envsubst").
+16. RustFS reachability from `rbr-ver-db` — the existing `ObjectStore` uses endpoint `http://objectstore-local:9000`. Kubernetes internal DNS does not resolve bare container names, but the RustFS container (`objectstore-local`) is on the `kind` Docker network and the endpoint is resolved by the barman plugin running inside the Kind pod via coredns. Confirm whether coredns in `rbr-ver-db` can resolve `objectstore-local`; if not, use the container's Kind network IP directly or use the `objectstore-local` Kubernetes Service/Endpoints (which already exists in `default` or `demo-local-db` namespace for the existing demo). **Clarification needed before writing the ObjectStore manifest.**
+17. ESO AppRole scope — Q8 was answered "tenant-scoped" (`eso-rbr-ver-local`), but `scripts/eso-setup.sh` still creates `eso-${REGION}`. The self-service setup will need to create a new AppRole alongside the existing one, and decide whether to add a second `ClusterSecretStore` (`vault-approle-rbr-ver`) or reuse the existing `vault-approle` ClusterSecretStore with the same `eso-cnpg` policy on the new AppRole.
 
 ## Source Links
 
