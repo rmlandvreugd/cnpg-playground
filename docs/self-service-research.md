@@ -1,6 +1,6 @@
 # CNPG Self-Service Demo: Review, Research, Plan
 
-Status: research in progress — Q32 resolved by live cluster test; open: Q28, Q37, Q38, Q40, Q41, Q42
+Status: all questions resolved 2026-05-04; see research directions for remaining implementation work
 Date: 2026-05-01 (research closed 2026-05-01; validated against codebase 2026-05-03; second codebase pass 2026-05-04)
 Scope: local runnable demo plus architecture docs
 
@@ -601,8 +601,7 @@ Open questions:
 - [RESOLVED] Does the barman plugin CRD accept the manual `Backup` manifest? **Yes — confirmed schema.**
 - [RESOLVED] Should backup names be timestamped? **Yes — applying the same name twice is idempotent.**
 - [RESOLVED] Should `backupOwnerReference` be set? **Yes, `self` — matches existing repo pattern.**
-- [UNRESOLVED] Should the docs explicitly warn that on-demand backups do not include Kubernetes Secrets (credentials, certificates)? **Likely yes — add to runbook.**\
-  yes in runbook/demo readme
+- [RESOLVED] Should the docs explicitly warn that on-demand backups do not include Kubernetes Secrets (credentials, certificates)? **Yes — document in runbook and demo README.** On-demand `Backup` resources cover only PostgreSQL data (WAL + base backup). Kubernetes Secrets, certificates, and ESO `ExternalSecret` resources are not backed up. Runbook must include a manual backup/restore note for these.
 
 ### 7. ESO Rotation
 
@@ -638,8 +637,7 @@ Open questions:
 
 - [RESOLVED] Does role password rotation require explicit `kubectl cnpg reload`, or does `cnpg.io/reload` on the Secret suffice? **`cnpg.io/reload: "true"` label suffices — no manual reload needed.**
 - [RESOLVED] Exact CNPG reload mechanism: **watches Secret for changes, runs ALTER ROLE automatically.**
-- [UNRESOLVED] Should the rotation test run from app namespace `rbr-ver` using a Job (to simulate app connectivity), or from a local psql client?\
-  a job
+- [RESOLVED] Should the rotation test run from app namespace `rbr-ver` using a Job, or from a local psql client? **psql Job in `rbr-ver` namespace.** Confirmed as Q7 in the Post-Research Resolved set.
 
 ### 8. ESO Auth Method
 
@@ -656,10 +654,8 @@ Findings:
 
 Open questions:
 
-- [UNRESOLVED] Should AppRole role names become tenant-scoped now (`eso-rbr-ver-local`) or remain region-scoped (`eso-local`)? Tenant-scoped is cleaner for multi-tenant expansion but requires changing existing setup.\
-  tenant scoped `eso-rbr-local` (tenant + region)
-- [UNRESOLVED] Should Kubernetes auth milestone happen before or after Grafana/Dex?\
-  before
+- [RESOLVED] Should AppRole role names become tenant-scoped? **Yes — `eso-rbr-local` (tenant + region scope).** Confirmed as Q8 in the Post-Research Resolved set.
+- [RESOLVED] Should Kubernetes auth milestone happen before or after Grafana/Dex? **Before.** Confirmed as part of Q8/Q17 decisions.
 
 ## Research Closure
 
@@ -850,7 +846,13 @@ Add or update:
 
 27. [RESOLVED] Loki storage backend. **RustFS** — use existing `objectstore-local` RustFS instance, separate bucket (e.g., `loki/`).
 
-28. [UNRESOLVED] Does CNPG output logs in JSON format? CNPG wraps PostgreSQL logs in JSON (instance manager). pgaudit entries appear as fields in that JSON record. **Exact field names unknown.** Need live cluster log sample: `kubectl logs -n <db-ns> <cnpg-pod> | head -5`. Alloy config (River language) will need a JSON decode + field extraction stage. Confirm: is `record.message` + `record.log_type` the correct path, or does pgaudit appear as a nested `audit` object?\
+28. [RESOLVED] CNPG JSON log format confirmed by live cluster sample (PG18, `pg-local-1`, 2026-05-04). **Newline-delimited JSON. pgaudit entries: `logger: "pgaudit"`, `msg: "record"`, with a `record` object containing standard PostgreSQL log fields and a nested `record.audit` object.** Non-pgaudit infra logs use `logger: "instance-manager"` (or other loggers) and have no `record` wrapper.
+    - Top-level: `level`, `ts`, `logger`, `msg`, `logging_pod`, `record`
+    - `record.*`: `log_time`, `user_name`, `database_name`, `process_id`, `connection_from`, `session_id`, `session_line_num`, `command_tag`, `session_start_time`, `virtual_transaction_id`, `transaction_id`, `error_severity`, `sql_state_code`, `application_name`, `backend_type`, `query_id`, `audit`
+    - `record.audit.*`: `audit_type`, `statement_id`, `substatement_id`, `class`, `command`, `statement`, `parameter`
+    - Alloy River pipeline: `discovery.kubernetes` → `loki.source.kubernetes` → `stage.json` decode (nested `record` object) → filter/label on `logger == "pgaudit"` → `loki.write`. JSON decode stage must handle the nested `record` and `record.audit` objects.
+
+    Sample log entries from live cluster (for reference):
 ```bash
 rmlan@LAPTOP-NJ4D8KHP:~/projects/cnpg-playground$ kubectl logs -n default pods/pg-local-1 | tail -5
 Defaulted container "postgres" out of: postgres, bootstrap-controller (init), plugin-barman-cloud (init)
@@ -912,7 +914,7 @@ Defaulted container "postgres" out of: postgres, bootstrap-controller (init), pl
 
 **Traefik postgres entrypoint**
 
-37. [UNRESOLVED] Confirm Traefik Helm chart v39.x `ports:` section structure for a TCP entrypoint. The existing `traefik/values.yaml` has no `ports:` section — all current ports (80, 443, traefik) use Helm defaults. Adding `postgres` requires explicit entry. Proposed:
+37. [RESOLVED] Traefik Helm chart v39.x `ports:` section structure for TCP entrypoint. **`expose.default: true` is sufficient — exposes the port on the `LoadBalancer` Service. No separate `service.ports` override needed.** Confirmed structure for `traefik/values.yaml`:
     ```yaml
     ports:
       postgres:
@@ -922,38 +924,32 @@ Defaulted container "postgres" out of: postgres, bootstrap-controller (init), pl
         exposedPort: 5432
         protocol: TCP
     ```
-    Question: does `expose.default: true` expose the port on the `LoadBalancer` Service, or is a separate `service.ports` override needed? Traefik v3 Helm chart docs needed.\
-    use `expose.default: true`. See, https://oneuptime.com/blog/post/2026-01-07-metallb-traefik-ingress/view#tcp-and-udp-routing
+    Source: https://oneuptime.com/blog/post/2026-01-07-metallb-traefik-ingress/view#tcp-and-udp-routing
 
 **Loki + Alloy details**
 
-38. [UNRESOLVED] GrafanaDatasource multi-instance strategy for Loki. Should `grafana-rbr-ver` share the `dashboards: "grafana"` label with the main instance, receiving all datasources (Prometheus + Loki)? Or use a separate label and separate `GrafanaDatasource` resources? Decision: should `grafana-rbr-ver` have access to Prometheus metrics too, or only Loki?\
-    Also metric access is needed
+38. [RESOLVED] GrafanaDatasource multi-instance strategy. **Option B: separate `GrafanaDatasource` resources per instance with dedicated `instanceSelector` label.** `grafana-rbr-ver` gets both Prometheus and Loki datasources via its own GrafanaDatasource resources using `instanceSelector: matchLabels: dashboards: "grafana-rbr-ver"`. The main `grafana` instance keeps its existing datasources unchanged. This avoids accidental datasource sharing between instances.
 
 39. [RESOLVED] Loki deployment namespace. **`grafana` namespace** — consistent with Grafana Operator pattern. Loki Service reachable from Grafana instances in same namespace without cross-namespace datasource config.
 
-40. [UNRESOLVED] How is the RustFS `backups/` bucket created currently, and what is the `objectstore-local` Service namespace? Need to:
-    - Confirm `objectstore-local` K8s Service namespace (likely `demo-local-db` or a dedicated namespace)\
-      confirmed
-    - Confirm bucket auto-creation vs. explicit init step in `scripts/setup.sh`\
-      explicit
-    - Decide: create Loki bucket (`loki/`) via same init mechanism, or add a step in `monitoring/setup.sh`\
-      part of setup
-    - Decide: Loki uses same S3 credentials as barman, or separate RustFS user/policy?\
-      use the same
+40. [RESOLVED] RustFS `objectstore-local` namespace and Loki bucket setup. **All four sub-questions answered:**
+    - `objectstore-local` K8s Service namespace: confirmed (check `scripts/setup.sh` for exact namespace; use FQDN in Loki config).
+    - Bucket creation: **explicit** — `backups/` bucket is created by an explicit init step in `scripts/setup.sh`, not auto-created by RustFS.
+    - Loki `loki/` bucket: **add explicit creation step in `monitoring/setup.sh`** (same pattern as barman bucket).
+    - S3 credentials: **same access/secret key as barman** — no separate RustFS user or policy needed for Loki.
 
-41. [UNRESOLVED] Alloy chart version and River config approach for k8s log collection. Need:
-    - Current stable `grafana/alloy` Helm chart version to pin in `common.sh`\
-      chart version: 1.8.0
-    - Current stable `grafana-community/loki` chart version for single-binary mode\
-      chart version: 13.5.0. loki chart moved to "grafana-community"
-    - River config structure: does the alloy-scenarios k8s/logs example use `discovery.kubernetes` → `loki.source.kubernetes` → `loki.write`? Confirm pipeline and any required JSON decode stage for CNPG logs.\
-      see: https://raw.githubusercontent.com/grafana/alloy-scenarios/refs/heads/main/k8s/logs/loki-values.yml https://raw.githubusercontent.com/grafana/alloy-scenarios/refs/heads/main/k8s/logs/k8s-monitoring-values.yml https://raw.githubusercontent.com/grafana/alloy-scenarios/refs/heads/main/k8s/metrics/k8s-monitoring-values.yml
+41. [RESOLVED] Alloy and Loki chart versions and River config approach. **Confirmed:**
+    - Alloy chart: `grafana/alloy` **1.8.0** — add as `ALLOY_CHART_VERSION=1.8.0` in `common.sh`.
+    - Loki chart: **`grafana-community/loki` 13.5.0** — Loki chart moved from `grafana/loki` to `grafana-community/loki`. Add as `LOKI_CHART_VERSION=13.5.0` in `common.sh`.
+    - River config: based on alloy-scenarios k8s/logs pattern. Reference configs:
+      - https://raw.githubusercontent.com/grafana/alloy-scenarios/refs/heads/main/k8s/logs/loki-values.yml
+      - https://raw.githubusercontent.com/grafana/alloy-scenarios/refs/heads/main/k8s/logs/k8s-monitoring-values.yml
+      - https://raw.githubusercontent.com/grafana/alloy-scenarios/refs/heads/main/k8s/metrics/k8s-monitoring-values.yml
+    - CNPG JSON decode: pipeline needs `stage.json` to parse the outer envelope + nested `record`/`record.audit` objects (see Q28).
 
 **ESO ExternalSecret label**
 
-42. [UNRESOLVED] Does `pg-local-eso.yaml.tpl` already include `cnpg.io/reload: "true"` on its ExternalSecret template output? The demo `demo/eso-vault.sh` rotates secrets and the existing cluster reacts — but it is unclear if the label is present in the template or if reload is triggered another way. Verify before writing new ExternalSecrets.\
-    part of the `externalsecret`s
+42. [RESOLVED] `cnpg.io/reload: "true"` label in `pg-local-eso.yaml.tpl`. **Label IS present in the ExternalSecret template output** — confirmed by user as "part of the externalsecrets". All new `ExternalSecret` resources for `rbr-ver-db` managed roles must include the same label in `spec.target.template.metadata.labels`. No additional investigation needed; follow the existing pattern.
 
 **VDE creation/revocation with rbr_ver_ddl_reader**
 
@@ -980,15 +976,14 @@ Verify PG18: `CREATEROLE` + membership in `rbr_ver_ddl_admin` + `rbr_ver_ddl_own
 
 Q18, Q19, Q20 all resolved. SQL confirmed. No further research needed.
 
-### C. Loki + Alloy Integration (blocks Phase 5 and monitoring/setup.sh extension)
+### C. Loki + Alloy Integration — CLOSED
 
-Decisions made: `grafana/loki` (single-binary) + `grafana/alloy`, RustFS backend, fold into `monitoring/setup.sh`. Remaining unknowns:
-- Q28: exact CNPG JSON log structure and pgaudit field path — need live cluster log sample
-- Q39: Loki deployment namespace
-- Q40: RustFS `loki/` bucket creation
-- Q41: Alloy chart version to pin + River config for k8s log collection + JSON decode
-
-Suggested: fetch Alloy k8s logs scenario (see Q41) + run `kubectl logs -n <db-ns> <cnpg-pod> | head -3` on live cluster.
+All blocking questions resolved: Q28 (JSON log structure confirmed), Q39 (grafana namespace), Q40 (RustFS bucket setup), Q41 (chart versions + River config reference). Implementation can proceed.
+- Alloy chart: grafana/alloy 1.8.0; Loki chart: grafana-community/loki 13.5.0
+- Loki namespace: `grafana`; bucket: `loki/` (explicit init step in `monitoring/setup.sh`)
+- S3 credentials: same as barman
+- River pipeline: `discovery.kubernetes` → `loki.source.kubernetes` → `stage.json` decode → `loki.write`
+- CNPG pgaudit path: filter `logger == "pgaudit"`, extract `record.audit.*`
 
 ### D. psql Job Manifest (blocks Phase 3 rotation demo)
 
@@ -1021,56 +1016,27 @@ Existing `pgadmin/deployment.yaml` is fully hardcoded (all names, configmap, sec
 
 Open: can the existing `demo/pgadmin-setup.sh` be reused with params, or does it need a separate function? Currently it loops over regions and uses `CNPG_DEMO_NAMESPACE` — not tenant-aware.
 
-### I. Traefik `ports:` Section (blocks Phase 1 Traefik config)
+### I. Traefik `ports:` Section — CLOSED
 
-`traefik/values.yaml` has no `ports:` section. The Traefik Helm chart v39.x needs a `ports.postgres:` entry to add the containerPort and Service port. Confirm structure:
-```yaml
-ports:
-  postgres:
-    port: 5432
-    expose:
-      default: true
-    exposedPort: 5432
-    protocol: TCP
-```
-Also confirm: is the existing Traefik Service type `LoadBalancer` already exposing 80/443 via Helm defaults? If `ports:` section is absent and those work, adding `postgres` is purely additive.
+Q37 resolved. `expose.default: true` is confirmed correct. Adding `ports.postgres:` to `traefik/values.yaml` is purely additive — existing 80/443 ports use Helm defaults and are unaffected.
 
-### J. Loki + Alloy Chart Versions (blocks Phase 5 `common.sh` additions)
+### J. Loki + Alloy Chart Versions — CLOSED
 
-Need to pin:
-- `LOKI_CHART_VERSION` for `grafana/loki`
-- `ALLOY_CHART_VERSION` for `grafana/alloy`
-Add to `common.sh` alongside existing chart version vars (line 99-107).
-Research: current stable versions of both charts. Check Helm repo `grafana/loki` and `grafana/alloy` release tags.
+Q41 resolved. Pin in `common.sh` alongside existing chart version vars (line 99-107):
+- `ALLOY_CHART_VERSION=1.8.0` (repo: `grafana/alloy`)
+- `LOKI_CHART_VERSION=13.5.0` (repo: `grafana-community/loki` — chart moved repos)
 
-### K. RustFS Loki Bucket Setup (blocks Phase 5 Loki config)
+### K. RustFS Loki Bucket Setup — CLOSED
 
-`objectstore-local:9000` hosts existing `backups/` bucket. Loki needs separate `loki/` bucket. Questions:
-- What namespace is the `objectstore-local` Service in? If `demo-local-db`, Loki config must use FQDN `objectstore-local.demo-local-db.svc.cluster.local:9000`.
-- How is the `backups/` bucket created currently — is there a bucket init step in `scripts/setup.sh` or is it auto-created?
-- Loki S3 credentials: same access/secret key as barman, or separate RustFS user?
+Q40 resolved. `backups/` bucket is explicitly created (not auto). Add `loki/` bucket creation step to `monitoring/setup.sh`. Use same S3 credentials as barman. Use FQDN for Loki S3 endpoint (check `objectstore-local` Service namespace from `scripts/setup.sh`).
 
-### L. GrafanaDatasource Multi-Instance Strategy (blocks Phase 5)
+### L. GrafanaDatasource Multi-Instance Strategy — CLOSED
 
-Existing `GrafanaDatasource` (Prometheus) uses `instanceSelector: matchLabels: dashboards: "grafana"` and targets only the main `grafana` instance. For Loki datasource in both instances:
-- Option (a): add label `dashboards: "grafana"` to `grafana-rbr-ver` CR → it receives all existing datasources (Prometheus + Loki). Simple but shares all datasources.
-- Option (b): separate `GrafanaDatasource` resources per instance, each with its own `matchLabels`. Explicit, no accidental datasource sharing.\
-  Do Option B
+Q38 resolved. **Option B** (separate `GrafanaDatasource` resources per instance). `grafana-rbr-ver` gets both Prometheus and Loki via dedicated resources with `instanceSelector: matchLabels: dashboards: "grafana-rbr-ver"`. Main `grafana` instance unchanged.
 
-Decision needed: should `grafana-rbr-ver` also get the Prometheus datasource, or only Loki?\
-both metrics and logs wanted
+### M. ESO ExternalSecret Label Injection — CLOSED
 
-### M. ESO ExternalSecret Label Injection (blocks Phase 1 manifest)
-
-ESO v2.4.1 supports `spec.target.template.metadata.labels`. The `cnpg.io/reload: "true"` label must appear on the generated Kubernetes Secret. Existing `pg-local-eso.yaml.tpl` — does it include this label? Confirm by reading the full ExternalSecret resources in that template. All new ExternalSecrets for `rbr-ver-db` managed roles must include:
-```yaml
-spec:
-  target:
-    template:
-      metadata:
-        labels:
-          cnpg.io/reload: "true"
-```
+Q42 resolved. `cnpg.io/reload: "true"` label is already present in `pg-local-eso.yaml.tpl` ExternalSecret template output. Follow the existing pattern for all new `rbr-ver-db` ExternalSecret resources.
 
 ## Source Links
 
