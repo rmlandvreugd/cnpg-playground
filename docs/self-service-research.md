@@ -732,39 +732,185 @@ Add or update:
 
 ## Open Questions — Post-Research
 
-These questions were not resolved by the research closure and require explicit decisions before or during implementation:
+### Resolved — Initial Set (decisions recorded 2026-05-04)
 
-1. Should `SET ROLE rbr_ver_ddl_owner` be mandatory (required in pgAdmin workflow docs) or optional best practice?\
-   mandatory
-2. Should a read-only VDE role (`rbr-ver-db-readonly`) be added in phase 1, or deferred to phase 2?\
-   Add
-3. Should tenant admin (`rbr-db-admin`) get Grafana `Admin` and group admin (`rbr-ver-db-admin`) get `Editor`, or should both get `Editor` for the local demo?\
-   yes
-4. Does the installed Grafana Operator CRD version support `"auth.generic_oauth"` dotted key in `spec.config`? Verify on a running cluster before implementing phase 5.\
-   Will verify when that phase comes
-5. Should Dex config overlay use `envsubst` for new user password hashes, or a separate bcrypt-generation step in the setup script?\
-   use `envsubst`
-6. For the pgAdmin `.pgpass` init container: use the `rbr-db-admin` Vault role (tenant scope) or `rbr-ver-db-admin` (group scope)?\
-   group scope
-7. Should the rotation test (`rotate local app`) run from a psql Job in `rbr-ver` namespace, or from a local psql client?\
-   psql job
-8. Should AppRole role names become tenant-scoped now (`eso-rbr-ver-local`) or remain region-scoped (`eso-local`)?\
-   tenant-scoped
-9.  Should `demo/self-service-setup.sh teardown` remove Vault VDE roles and policies, or keep them for inspection?\
-    keep them
-10. Should `docs/self-service-research-nl.md` be deleted to avoid confusion, or left stale until implementation is complete?\
-    keep, will be updated just before implementation
-11. Is Loki present in the monitoring stack? If yes, pgaudit dashboard panels become feasible. Verify with `kubectl get pods -n monitoring | grep loki` after `monitoring/setup.sh` runs.\
-    not present, needs to be integrated in `monitoring/setup.sh`
+1. [RESOLVED] Should `SET ROLE rbr_ver_ddl_owner` be mandatory or optional best practice? **Mandatory.** Must be step 1 in pgAdmin runbook and any SQL snippet provided to users. pgAdmin has no pre-connection SQL hook; enforcement is documentation only.
 
-Validation gaps identified 2026-05-03:
+2. [RESOLVED] Should a read-only VDE role (`rbr-ver-db-readonly`) be added in phase 1? **Yes — add in phase 1.** Requires new stable PostgreSQL role `rbr_ver_ddl_reader` with SELECT privileges. See open questions 18–20 for role details.
 
-12. Barman Cloud chart version 0.6.0 vs confirmed plugin 0.12.0 — `common.sh` pins `BARMAN_CLOUD_PLUGIN_CHART_VERSION=0.6.0`; research confirmed plugin binary 0.12.0 from the container image. Map chart version to binary version before implementing backup manifest. **Research needed**: check GitHub releases at `https://github.com/cloudnative-pg/plugin-barman-cloud` or run `helm show chart oci://ghcr.io/cloudnative-pg/charts/barman-cloud-cnpg-i --version 0.6.0`.
-13. Vault 2.0 VDE API — `common.sh` uses `hashicorp/vault:2.0`. Research assumed Vault 1.x. Confirm `vault write database/config/...` and `vault write database/roles/...` commands are unchanged in Vault 2.0 before implementing Phase 2. **Research needed**: check Vault 2.0 changelog for Database Secrets Engine breaking changes.
-14. VDE admin user — the `database/config/rbr-ver-max` setup requires a real PostgreSQL user (`username`, `password`). The self-service cluster will use `enableSuperuserAccess: true` with an ESO-managed superuser secret. If ESO rotates the superuser password, Vault's stored credential becomes stale. Decide: (a) disable superuser password rotation for the VDE admin user; (b) create a dedicated non-rotating Vault admin role in PostgreSQL; (c) accept manual `vault write database/config/rbr-ver-max` re-rotation after each ESO cycle.
-15. Dex overlay concrete mechanism — no overlay infrastructure exists. `dex/config/dex-config.yaml.tpl` is the only Dex config file. The research says "do not modify the base template" but this is aspirational: adding new `staticClients` and `staticPasswords` entries to the base template is safe (additive, does not break existing entries). Decide whether to: (a) add self-service entries directly to `dex-config.yaml.tpl` with new `envsubst` vars; (b) have the self-service setup script produce a merged config by appending a second template before envsubst; (c) keep base template unchanged and use a YAML-aware merge tool. Option (a) is simplest given Q5 answer ("use envsubst").
-16. RustFS reachability from `rbr-ver-db` — the existing `ObjectStore` uses endpoint `http://objectstore-local:9000`. Kubernetes internal DNS does not resolve bare container names, but the RustFS container (`objectstore-local`) is on the `kind` Docker network and the endpoint is resolved by the barman plugin running inside the Kind pod via coredns. Confirm whether coredns in `rbr-ver-db` can resolve `objectstore-local`; if not, use the container's Kind network IP directly or use the `objectstore-local` Kubernetes Service/Endpoints (which already exists in `default` or `demo-local-db` namespace for the existing demo). **Clarification needed before writing the ObjectStore manifest.**
-17. ESO AppRole scope — Q8 was answered "tenant-scoped" (`eso-rbr-ver-local`), but `scripts/eso-setup.sh` still creates `eso-${REGION}`. The self-service setup will need to create a new AppRole alongside the existing one, and decide whether to add a second `ClusterSecretStore` (`vault-approle-rbr-ver`) or reuse the existing `vault-approle` ClusterSecretStore with the same `eso-cnpg` policy on the new AppRole.
+3. [RESOLVED] Grafana role split: tenant admin (`rbr-db-admin`) gets `Admin`, group admin (`rbr-ver-db-admin`) gets `Editor`. **Confirmed.** `org_mapping: "rbr-db-admin:rbr:Admin rbr-ver-db-admin:rbr:Editor"`.
+
+4. [DEFERRED] Grafana Operator CRD support for `"auth.generic_oauth"` dotted key in `spec.config`. **Verify on running cluster before implementing phase 5.**
+
+5. [RESOLVED] Dex config overlay mechanism. **Option (a): add self-service entries directly to `dex-config.yaml.tpl` with new `envsubst` vars.** Additive changes do not break existing Vault client or `dexuser` entry. New vars: `DEX_RBR_ADMIN_PASSWORD_HASH`, `DEX_RBR_VER_ADMIN_PASSWORD_HASH`, `DEX_UNRELATED_PASSWORD_HASH`, `DEX_GRAFANA_RBR_VER_CLIENT_SECRET`. See open question 21 for hash generation.
+
+6. [RESOLVED] pgAdmin `.pgpass` init container Vault role. **Group scope (`rbr-ver-db-admin`).** The pgAdmin instance represents the group-admin persona.
+
+7. [RESOLVED] Rotation test. **psql Job in `rbr-ver` namespace.** See open questions 22–23 for job details.
+
+8. [RESOLVED] AppRole naming. **Tenant-scoped: `eso-rbr-ver-local`.** Requires new `ClusterSecretStore` alongside existing `vault-approle`. See open question 24.
+
+9. [RESOLVED] Teardown behavior for VDE. **Keep Vault VDE roles and policies after teardown** — available for post-demo inspection.
+
+10. [RESOLVED] `docs/self-service-research-nl.md`. **Keep; update just before implementation.**
+
+11. [RESOLVED] Loki in monitoring stack. **Not present. Integrate into `monitoring/setup.sh`.** Scope and approach: see open questions 25–29.
+
+### Resolved — Validation Gaps (identified 2026-05-03, resolved 2026-05-04)
+
+12. [RESOLVED] Barman Cloud chart version 0.6.0 vs plugin binary 0.12.0. **Divergence is known and intentional; both version references are correct.** No action needed.
+
+13. [RESOLVED] Vault 2.0 VDE API. **Unchanged from 1.x.** `vault write database/config/...` and `vault write database/roles/...` commands are unaffected by the 2.0 release.
+
+14. [RESOLVED] VDE admin user for `database/config/rbr-ver-max`. **Option (b): dedicated non-rotating PostgreSQL role** `rbr_ver_vde_admin`. Created via `kubectl exec` psql (not via CNPG managed roles — no Secret, no ESO sync). Password generated once at setup time, stored only in Vault KV at `cnpg/data/rbr/ver/vde-admin`. See open questions 30–33 for privileges and storage details.
+
+15. [RESOLVED] Dex overlay mechanism (same as Q5). **Option (a): add directly to `dex-config.yaml.tpl`.**
+
+16. [RESOLVED] RustFS reachability from `rbr-ver-db`. **Already works in `demo/setup.sh`; pattern carries over to `rbr-ver-db` namespace without change.**
+
+17. [RESOLVED] ESO AppRole scope for self-service cluster. **Create new AppRole `eso-rbr-ver-local` with new `ClusterSecretStore` `vault-approle-rbr-ver`.** Pattern mirrors `eso-${REGION}` / `vault-approle` from `scripts/eso-setup.sh`. See open question 24 for policy scope.
+
+### Unresolved — Emerged from Answers (2026-05-04)
+
+**Read-only VDE role (from Q2)**
+
+18. [UNRESOLVED] Stable role name for `rbr-ver-db-readonly` backing. Candidate: `rbr_ver_ddl_reader` — consistent with existing `rbr_ver_ddl_owner` / `rbr_ver_ddl_admin` naming. Confirm or override.
+
+19. [RESOLVED] Privileges for `rbr_ver_ddl_reader`. Use `ALTER DEFAULT PRIVILEGES` — already the pattern in `demo/yaml/local/pg-local-eso.yaml.tpl` for the existing `readonly` managed role. Full SQL:
+    ```sql
+    GRANT CONNECT ON DATABASE max TO rbr_ver_ddl_reader;
+    GRANT USAGE ON SCHEMA public TO rbr_ver_ddl_reader;
+    GRANT SELECT ON ALL TABLES IN SCHEMA public TO rbr_ver_ddl_reader;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO rbr_ver_ddl_reader;
+    ```
+    The existing pattern confirms this is the correct approach for the demo. Run as a one-time setup step via `kubectl exec` before VDE config.
+
+20. [UNRESOLVED] Creation/revocation SQL for `rbr-ver-db-readonly` Vault role. Proposed creation (analogous to admin):
+    ```sql
+    CREATE ROLE "{{name}}" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}' IN ROLE rbr_ver_ddl_reader;
+    ```
+    Revocation: `DROP ROLE IF EXISTS "{{name}}"` is sufficient — read-only users create no objects, so REASSIGN OWNED is not needed. Confirm.
+
+**Dex new users and hashes (from Q5/Q15)**
+
+21. [UNRESOLVED] How are bcrypt hashes for new Dex users generated and managed? Existing pattern: `DEX_STATIC_PASSWORD_HASH` set with a hardcoded default in `common.sh:86`. Options:
+    - (a) Add `DEX_RBR_ADMIN_PASSWORD_HASH`, `DEX_RBR_VER_ADMIN_PASSWORD_HASH`, `DEX_UNRELATED_PASSWORD_HASH` as defaults in `common.sh`, generated with `htpasswd -bnBC 10 "" <default-password> | tr -d ':\n'` and baked in. Override at deploy time via env.
+    - (b) Self-service setup script generates hashes at runtime from prompted or auto-generated passwords, exports the vars before Dex config rendering.
+    Option (a) is simpler and consistent with existing pattern. Option (b) avoids embedding any password-derived material in source.
+    Which approach? Does the existing `dexuser` default password need to change when self-service entries are added?
+
+**psql rotation-test Job (from Q7)**
+
+22. [UNRESOLVED] Container image for rotation-test psql Job. Candidates:
+    - `postgres:18-alpine` — small, standard, has `psql` + full libpq
+    - `ghcr.io/cloudnative-pg/postgresql:18-standard-trixie` — same as cluster, already pulled, has pgaudit tools
+    Prefer `postgres:18-alpine` unless there is a specific reason to match the cluster image.
+
+23. [UNRESOLVED] Should the rotation-test Job connect via the sslip.io external hostname (full routing proof through Traefik TCP) or via `verstappen-rw.rbr-ver-db` internal Kubernetes service (simpler, no Traefik hop)?
+    - External: proves the entire stack including TCP passthrough; matches what real apps outside the cluster would use
+    - Internal: simpler; tests only CNPG credential acceptance, not routing
+    Both are valid for different demo goals. Decision affects what the test actually demonstrates.
+
+**ESO AppRole and ClusterSecretStore (from Q8/Q17)**
+
+24. [UNRESOLVED] New ClusterSecretStore and Vault policy details for `eso-rbr-ver-local`:
+    - ClusterSecretStore name: `vault-approle-rbr-ver` (mirrors `vault-approle` pattern)
+    - K8s Secret name: `vault-approle-rbr-ver-creds` in ESO namespace
+    - Vault policy: existing `eso-cnpg` reads `cnpg/data/*` (too broad for tenant isolation). Should a new narrower policy `eso-rbr-ver` be created that reads only `cnpg/data/rbr/ver/*` and `cnpg/metadata/rbr/ver/*`? Or reuse `eso-cnpg` for simplicity in this demo?
+    - Where does new AppRole setup code live: inline in `demo/self-service-setup.sh setup`, or extracted to `scripts/eso-rbr-ver-setup.sh` following the pattern of `scripts/eso-setup.sh`?
+
+**Loki integration (from Q11)**
+
+25. [UNRESOLVED] Is Loki a separate phase (e.g., Phase 5.5 or a new `monitoring-loki/setup.sh`) or folded into existing `monitoring/setup.sh`? Folding is simpler but mixes concerns. A separate script keeps monitoring setup idempotent and allows Loki to be skipped.
+
+26. [UNRESOLVED] Loki deployment approach. Recommended: `grafana/loki` chart in single-binary mode + `grafana/promtail` chart for log collection. Alternatives:
+    - `grafana/loki-stack` (bundles Promtail + Grafana — but conflicts with existing Grafana Operator setup)
+    - Grafana Alloy (successor to Promtail — more powerful, more complex config)
+    For demo: `grafana/loki` + `grafana/promtail` separately is cleanest.
+
+27. [UNRESOLVED] Loki storage backend. Options:
+    - Filesystem (`/data/loki` in pod) — ephemeral, lost on pod restart, acceptable for demo
+    - RustFS (already present at `objectstore-local:9000`) — persistent, realistic, requires extra Loki S3 config
+    Filesystem is sufficient for demo. If RustFS, need separate Loki bucket config.
+
+28. [UNRESOLVED] Does CNPG output logs in JSON format? CNPG default log output is structured JSON (PostgreSQL logs are wrapped in JSON by the CNPG instance manager). pgaudit entries appear as fields inside the JSON log record. Promtail will need a pipeline stage to parse JSON and extract pgaudit fields for Loki label indexing. **Research needed**: confirm exact CNPG log format and whether a Promtail JSON pipeline stage is sufficient, or if a regex stage is also needed for pgaudit extraction.
+
+29. [UNRESOLVED] Should the self-service Grafana instance (`grafana-rbr-ver`) also get a Loki datasource, or only the main Grafana? If the pgaudit panels are in `grafana-rbr-ver`, Loki datasource must be configured there. If in the main Grafana only, keep `grafana-rbr-ver` focused on CNPG health and backup metrics.
+
+**VDE admin role (from Q14)**
+
+30. [UNRESOLVED] Name for the dedicated Vault VDE admin PostgreSQL role. Candidate: `rbr_ver_vde_admin` — per-cluster scope, consistent with `rbr_ver_*` prefix. Confirm or override.
+
+31. [UNRESOLVED] PostgreSQL privileges for `rbr_ver_vde_admin`. Required:
+    ```sql
+    CREATE ROLE rbr_ver_vde_admin WITH LOGIN CREATEROLE;
+    GRANT CONNECT ON DATABASE max TO rbr_ver_vde_admin;
+    GRANT rbr_ver_ddl_owner TO rbr_ver_vde_admin;   -- required: REASSIGN OWNED needs membership in target role
+    GRANT rbr_ver_ddl_admin TO rbr_ver_vde_admin;   -- required: DROP ROLE on members of rbr_ver_ddl_admin
+    ```
+    `CREATEROLE` in PostgreSQL 16+ (confirmed applicable to PG18) allows DROP ROLE on any non-superuser role, including roles the actor did not create. This removes the need for SUPERUSER. Is granting membership in both `rbr_ver_ddl_owner` and `rbr_ver_ddl_admin` acceptable? This means the VDE admin has implicit DDL and write capabilities — limited blast radius since it still cannot log in with those roles directly.
+
+32. [UNRESOLVED] **Research needed**: In PG18, does a role with `CREATEROLE` + membership in `rbr_ver_ddl_admin` successfully execute `REASSIGN OWNED BY "{{name}}" TO rbr_ver_ddl_owner` when `"{{name}}"` is `IN ROLE rbr_ver_ddl_admin`? PostgreSQL docs say REASSIGN OWNED requires the executor to be a member of both source and target roles. Verify this is the complete set of requirements (no SUPERUSER needed).
+
+33. [UNRESOLVED] VDE admin password storage. Proposed flow:
+    1. `demo/self-service-setup.sh` generates password: `VDE_ADMIN_PASS=$(openssl rand -hex 32)`
+    2. Creates PostgreSQL role: `kubectl exec ... psql -c "CREATE ROLE rbr_ver_vde_admin WITH LOGIN CREATEROLE PASSWORD '${VDE_ADMIN_PASS}'; ..."`
+    3. Stores in Vault KV: `vault kv put cnpg/rbr/ver/vde-admin username=rbr_ver_vde_admin password=${VDE_ADMIN_PASS}`
+    4. Reads back for VDE config: `vault kv get -field=password cnpg/rbr/ver/vde-admin`
+    Not ESO-synced. Manual re-rotation requires re-running VDE config step.
+    Confirm this flow. Is step 3 necessary (Vault KV storage), or is it sufficient to keep the password only in the setup script's memory for the duration of the run?
+
+**pgAdmin namespace (new finding)**
+
+34. [UNRESOLVED] The repo already has `pgadmin/namespace.yaml`, `pgadmin/deployment.yaml`, `demo/pgadmin-setup.sh`, and `demo/pgadmin-teardown.sh`. The existing deployment uses a `servers.json.tpl` ConfigMap parameterized by `CNPG_DEMO_NAMESPACE`. The existing pgAdmin serves one server per region. Options:
+    - (a) Add a second server entry to the existing `pgadmin/servers.json.tpl` pointing to `verstappen` in `rbr-ver-db`. One pgAdmin instance serves both demo clusters. Simplest — no new Deployment, namespace, or ingress.
+    - (b) Deploy a second Deployment `pgadmin-rbr-ver` in the existing `pgadmin` namespace with its own ConfigMap and credentials. Separate pgAdmin UI per cluster.
+    - (c) New namespace `pgadmin-rbr-ver` with a standalone deployment.
+    Option (a) avoids duplication but mixes demo concerns. Option (b) keeps personas separate while reusing namespace infra. Which separation level is needed?
+
+## Research Directions — Post-Answer (2026-05-04)
+
+New research needed before or during implementation:
+
+### A. VDE Admin Role Privilege Verification (blocks Phase 2 SQL design)
+
+Verify PG18 behavior: can a role with `CREATEROLE` + membership in `rbr_ver_ddl_admin` + membership in `rbr_ver_ddl_owner` successfully execute the full VDE creation/revocation cycle without SUPERUSER? Specifically:
+- `CREATE ROLE "{{name}}" ... IN ROLE rbr_ver_ddl_admin` — no special privilege needed
+- `REASSIGN OWNED BY "{{name}}" TO rbr_ver_ddl_owner` — needs executor membership in both `{{name}}`'s roles and `rbr_ver_ddl_owner`
+- `DROP OWNED BY "{{name}}"` — needs membership in `{{name}}`'s roles
+- `DROP ROLE IF EXISTS "{{name}}"` — CREATEROLE sufficient in PG16+
+
+Suggested: run a local test in the cluster before finalising the VDE admin SQL. See Q32.
+
+### B. Read-Only VDE Role SQL (blocks Phase 2 and Phase 1 manifest)
+
+Draft full SQL block for read-only stable role creation, including DEFAULT PRIVILEGES decision (Q19). Confirm simplified revocation (Q20). No SET ROLE needed for read-only users — they create no objects.
+
+### C. Loki Integration Approach (blocks Phase 5 pgaudit dashboards)
+
+Assess Loki single-binary chart + Promtail. Key unknowns:
+- CNPG log JSON structure and pgaudit field path (Q28)
+- Whether filesystem storage is enough for demo or RustFS preferred (Q27)
+- Whether Loki belongs in `monitoring/setup.sh` or separate script (Q25)
+- Datasource distribution to `grafana-rbr-ver` (Q29)
+
+Suggested research: run `monitoring/setup.sh` on a live cluster and inspect CNPG pod log format with `kubectl logs -n <db-ns> <cnpg-pod> | head -5`.
+
+### D. psql Job Manifest (blocks Phase 3 rotation demo)
+
+Decide image (Q22) and connection target (Q23). Draft Job manifest with ESO-synced secret mounting. Job should be apply-once, `restartPolicy: Never`, triggered from `demo/self-service-setup.sh rotate local app`.
+
+### E. ESO AppRole Policy Scope Decision (blocks Phase 2 Vault setup)
+
+Decide: new narrow `eso-rbr-ver` Vault policy vs reusing `eso-cnpg` (Q24). The existing `eso-cnpg` policy reads `cnpg/data/*` — this would give the tenant-scoped AppRole read access to all KV secrets, not just `rbr/ver/...`. For a demo this is acceptable. For a real multi-tenant deployment it is not. Decide which is appropriate for this demo.
+
+### F. pgAdmin Existing Setup (blocks Phase 4 design)
+
+Read `pgadmin/deployment.yaml` and `demo/pgadmin-setup.sh` to understand the existing setup before deciding namespace and deployment approach for the self-service pgAdmin (Q34). Reusing existing infrastructure avoids a second pgAdmin instance and its associated ingress/credential setup.
+
+### G. Dex Hash Generation Strategy (blocks Phase 5 Dex config update)
+
+Decide Q21. If option (a): generate default hashes for demo passwords now and embed in `common.sh`. Recommend distinct default passwords for each demo persona to avoid accidental cross-persona login. Passwords can be simple (`rbr-admin-pass`, `rbr-ver-admin-pass`, `unrelated-pass`) since this is a local demo.
 
 ## Source Links
 
