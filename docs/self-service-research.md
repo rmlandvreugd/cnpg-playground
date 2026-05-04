@@ -85,6 +85,18 @@ Decisions added after research closure (2026-05-01) and codebase validation (202
 - Grafana `org_mapping` format (Grafana v11.5+): `ExternalGroupName:GrafanaOrgName:Role`. Orgs must be pre-created. No auto-creation.
 - `allowed_groups` in Grafana Generic OAuth restricts login to specified groups. Users not in any listed group cannot log in.
 
+Decisions added after second research pass (2026-05-04):
+
+- `rbr_ver_vde_admin` is a dedicated non-rotating PostgreSQL role (`CREATEROLE`, `GRANT CONNECT ON DATABASE max`, stable roles granted `WITH ADMIN OPTION`). Password generated once at setup; stored in Vault KV at `cnpg/data/rbr/ver/vde-admin`. Not managed by CNPG or ESO.
+- ESO AppRole: tenant-scoped name `eso-rbr-local`; `ClusterSecretStore` `vault-approle-rbr`; narrow Vault policy `eso-rbr-ver` reads `cnpg/data/rbr/ver/*` and `cnpg/metadata/rbr/ver/*` only.
+- Loki + Alloy: `grafana/alloy` 1.8.0 and `grafana-community/loki` 13.5.0 (single-binary mode) folded into `monitoring/setup.sh`. Loki chart moved from `grafana/loki` to `grafana-community/loki`.
+- Loki storage: RustFS `objectstore-local`, separate `loki/` bucket. Bucket created by explicit init step in `monitoring/setup.sh`. Same S3 access/secret as barman — no separate RustFS user needed.
+- `GrafanaDatasource` resources: separate per instance (Option B). `grafana-rbr-ver` gets dedicated Prometheus and Loki `GrafanaDatasource` resources with `instanceSelector: matchLabels: dashboards: "grafana-rbr-ver"`. Main `grafana` instance unchanged.
+- pgaudit panels included in both Grafana instances. Loki now in scope; panels are not deferred.
+- Dex overlay: add self-service entries directly to `dex-config.yaml.tpl`. New users' bcrypt hashes default to `${DEX_STATIC_PASSWORD_HASH}` in `common.sh`.
+- Grafana `rbr` org role mapping: `rbr-db-admin` → Admin, `rbr-ver-db-admin` → Editor.
+- On-demand `Backup` resources cover only PostgreSQL data. Kubernetes Secrets, certificates, and ESO `ExternalSecret` resources are not included. Runbook must document this explicitly.
+
 ## Review Findings
 
 ### Existing Repo Fit
@@ -228,13 +240,30 @@ Open questions:
 Plan:
 
 - Enable `database` secrets engine if absent: `vault secrets enable database`
+- Create PostgreSQL VDE admin role before configuring VDE (VDE config requires the username/password):
+
+```bash
+VDE_ADMIN_PASS=$(openssl rand -hex 32)
+kubectl --context "${CONTEXT_NAME}" exec -n rbr-ver-db \
+  "$(kubectl --context "${CONTEXT_NAME}" get pod -n rbr-ver-db \
+      -l cnpg.io/cluster=verstappen,role=primary -o name)" \
+  -- psql -U postgres -d max -c "
+    CREATE ROLE rbr_ver_vde_admin WITH LOGIN CREATEROLE PASSWORD '${VDE_ADMIN_PASS}';
+    GRANT CONNECT ON DATABASE max TO rbr_ver_vde_admin;
+    GRANT rbr_ver_ddl_owner TO rbr_ver_vde_admin WITH ADMIN OPTION;
+    GRANT rbr_ver_ddl_admin TO rbr_ver_vde_admin WITH ADMIN OPTION;
+    GRANT rbr_ver_ddl_reader TO rbr_ver_vde_admin WITH ADMIN OPTION;"
+vault kv put cnpg/rbr/ver/vde-admin \
+  username=rbr_ver_vde_admin password="${VDE_ADMIN_PASS}"
+```
+
 - Configure `database/config/rbr-ver-max`:
 
 ```bash
 vault write database/config/rbr-ver-max \
   plugin_name="postgresql-database-plugin" \
   connection_url="postgresql://{{username}}:{{password}}@verstappen-rbr-ver-db.${TRAEFIK_IP_DASHED}.sslip.io:5432/max?sslmode=require" \
-  allowed_roles="rbr-db-admin,rbr-ver-db-admin" \
+  allowed_roles="rbr-db-admin,rbr-ver-db-admin,rbr-ver-db-readonly" \
   username="<vault-admin-postgres-user>" \
   password="<vault-admin-postgres-password>"
 ```
@@ -467,7 +496,7 @@ Plan:
   - Org: `rbr` (pre-created; no auto-creation in OSS)
   - Folders exist for visual grouping only — no OAuth group-based access control in OSS
   - Dashboards: CNPG health, backup status, app credential rotation status
-  - pgaudit panel deferred pending Loki investigation
+  - pgaudit panels: included once Loki + Alloy deployed in `monitoring/setup.sh`
 
 Grafana CR `spec.config` for Generic OAuth:
 
@@ -508,7 +537,7 @@ deployment:
                     key: client-secret
 ```
 
-Dex config overlay approach: extend `dex-config.yaml.tpl` by adding the Grafana static client and new users in an overlay file. Do not modify the base template.
+Dex config overlay approach: extend `dex-config.yaml.tpl` directly — add Grafana static client and new users as additive entries. New `envsubst` vars: `DEX_RBR_ADMIN_PASSWORD_HASH`, `DEX_RBR_VER_ADMIN_PASSWORD_HASH`, `DEX_UNRELATED_PASSWORD_HASH`, `DEX_GRAFANA_RBR_VER_CLIENT_SECRET`. Hash vars default to `${DEX_STATIC_PASSWORD_HASH}` in `common.sh`.
 
 Findings:
 
@@ -671,7 +700,7 @@ Status of the 12 research queue items:
 8. **Dex groups claim shape in current template** — CLOSED. `staticPasswords` supports `groups` field natively. `groups` scope required. Token shape: plain string array. See section 5.
 9. **Grafana Operator OAuth config for separate instance** — CLOSED. Second Grafana CR in `grafana` namespace. `spec.config` dotted keys. Client secret via env var. See section 5.
 10. **Grafana OSS org/folder isolation limits** — CLOSED. Org-level isolation confirmed for OSS. Folder-level access control requires Enterprise. Folders are visual grouping only. See section 5.
-11. **Loki availability for pgaudit dashboards** — DEFERRED. No Loki visible in `monitoring/`. pgaudit dashboard panels deferred. Script verification is the fallback.
+11. **Loki availability for pgaudit dashboards** — CLOSED. Loki + Alloy folded into `monitoring/setup.sh` (Alloy 1.8.0, Loki 13.5.0). pgaudit panels included once Loki deployed. See Directions C, J, K.
 12. **Rootless Podman behavior for MetalLB `EXTERNAL-IP:5432`** — CLOSED. Port 5432 reachable identically to 80/443. No special config needed. See section 1.
 
 ## Implementation Plan
@@ -681,10 +710,10 @@ Status of the 12 research queue items:
 Before writing code, confirm the following from a running cluster:
 
 1. ~~Confirm `allowCrossNamespace=true`~~ — **confirmed**: `traefik/values.yaml:18–19` sets `allowCrossNamespace: true` under `providers.kubernetesCRD`. No runtime check needed.
-2. Confirm the installed Grafana Operator CRD version supports `"auth.generic_oauth"` dotted key in `spec.config`.
+2. ~~Confirm the installed Grafana Operator CRD version supports `"auth.generic_oauth"` dotted key in `spec.config`.~~ — **confirmed**: chart v5.22.2 from `common.sh:106`. v5.x supports dotted keys natively.
 3. Confirm barman plugin 0.12.0 is the installed version (`kubectl get deployment -n cnpg-system | grep barman`).
-4. Decide: tenant admin `rbr-db-admin` gets Grafana `Admin`, group admin `rbr-ver-db-admin` gets `Editor`? Or both `Editor`?
-5. Decide: should `SET ROLE rbr_ver_ddl_owner` be mandatory in pgAdmin docs, or optional?
+4. ~~Decide: tenant admin gets Grafana `Admin`, group admin gets `Editor`?~~ — **decided**: Admin/Editor split confirmed (`org_mapping: "rbr-db-admin:rbr:Admin rbr-ver-db-admin:rbr:Editor"`).
+5. ~~Decide: should `SET ROLE rbr_ver_ddl_owner` be mandatory in pgAdmin docs, or optional?~~ — **decided**: mandatory, step 1 in runbook.
 
 ### Phase 1: Static Manifests
 
@@ -706,9 +735,10 @@ Add helper script or functions:
 
 - Seed KV secrets under `cnpg/rbr/ver/max/...`
 - Enable VDE (`vault secrets enable database`)
-- Create stable PostgreSQL roles via `kubectl exec` after cluster is ready
-- Configure `database/config/rbr-ver-max` with sslip.io connection URL
-- Create Vault roles `rbr-db-admin` and `rbr-ver-db-admin` with creation/revocation statements
+- Create stable PostgreSQL roles via `kubectl exec` after cluster is ready (`rbr_ver_ddl_owner`, `rbr_ver_ddl_admin`, `rbr_ver_ddl_reader` with correct grants)
+- Create `rbr_ver_vde_admin` via `kubectl exec`; store password in Vault KV `cnpg/rbr/ver/vde-admin`
+- Configure `database/config/rbr-ver-max` with sslip.io connection URL (use vde_admin credentials)
+- Create Vault roles `rbr-db-admin`, `rbr-ver-db-admin`, `rbr-ver-db-readonly` with creation/revocation statements
 - Create Vault policies for tenant and group admin
 - Print copy/paste commands for credential issuance
 
@@ -746,7 +776,8 @@ Later: init container with `.pgpass` populated from Vault at pod startup.
 - Pre-create `rbr` org in the Grafana instance via provisioning or Grafana API
 - Add IngressRoute for `grafana-rbr-ver.<dashed-ip>.sslip.io`
 - Provision dashboards: CNPG health, backup status, app credential rotation
-- pgaudit dashboard panel: deferred (no Loki confirmed)
+- Provision `GrafanaDatasource` resources for `grafana-rbr-ver`: Prometheus datasource (pointing to kube-prometheus-stack) and Loki datasource (pointing to Loki in `grafana` namespace), both with `instanceSelector: matchLabels: dashboards: "grafana-rbr-ver"`
+- pgaudit dashboard panels: included once Loki + Alloy deployed in `monitoring/setup.sh`
 
 ### Phase 6: Docs
 
@@ -968,9 +999,9 @@ Defaulted container "postgres" out of: postgres, bootstrap-controller (init), pl
 
 ## Research Directions — Post-Answer (2026-05-04)
 
-### A. VDE Admin Role Privilege Verification (blocks Phase 2 SQL design)
+### A. VDE Admin Role Privilege Verification — CLOSED
 
-Verify PG18: `CREATEROLE` + membership in `rbr_ver_ddl_admin` + `rbr_ver_ddl_owner` sufficient for full creation/revocation cycle without SUPERUSER? See Q32. **Run live cluster test before finalising Phase 2 SQL.** Key check: `REASSIGN OWNED BY "{{name}}" TO rbr_ver_ddl_owner` — executor must be member of both source and target roles.
+Q32 resolved by live cluster test. `CREATEROLE` + membership with `ADMIN OPTION` + dynamic role `GRANT "{{name}}" TO rbr_ver_vde_admin` in creation_statements = sufficient for full create/REASSIGN OWNED/drop cycle. No SUPERUSER. Phase 2 SQL finalized.
 
 ### B. Read-Only VDE Role SQL — CLOSED
 
@@ -985,7 +1016,7 @@ All blocking questions resolved: Q28 (JSON log structure confirmed), Q39 (grafan
 - River pipeline: `discovery.kubernetes` → `loki.source.kubernetes` → `stage.json` decode → `loki.write`
 - CNPG pgaudit path: filter `logger == "pgaudit"`, extract `record.audit.*`
 
-### D. psql Job Manifest (blocks Phase 3 rotation demo)
+### D. psql Job Manifest — Implementation Task (Phase 3)
 
 Q22 (alpine) and Q23 (internal) resolved. Draft Job manifest with:
 - Image: `postgres:18-alpine`
@@ -1006,15 +1037,9 @@ Codebase read. Deployment hardcoded. Option (b) design captured in Q34-Q36.
 
 Q21 resolved. Option (a) confirmed. Embed defaults as `${DEX_STATIC_PASSWORD_HASH}` fallback in `common.sh`.
 
-### H. pgAdmin Option (b) Design (blocks Phase 4)
+### H. pgAdmin Option (b) Design — CLOSED
 
-Existing `pgadmin/deployment.yaml` is fully hardcoded (all names, configmap, secret). New Deployment `pgadmin-rbr-ver` in `pgadmin` namespace needs:
-- `pgadmin-rbr-ver` Deployment, Service, Secret, ConfigMap, IngressRoute
-- `servers.json` should use internal DNS or external hostname (see Q35)
-- `SSLMode` choice (see Q36)
-- Script changes: extend `demo/self-service-setup.sh` with pgAdmin-rbr-ver deploy step (or call `demo/pgadmin-setup.sh` with a flag)
-
-Open: can the existing `demo/pgadmin-setup.sh` be reused with params, or does it need a separate function? Currently it loops over regions and uses `CNPG_DEMO_NAMESPACE` — not tenant-aware.
+Q44 resolved. Setup inline in `demo/self-service-setup.sh` (not reusing `demo/pgadmin-setup.sh` — region-scoped and not tenant-aware). Design captured in Q34-Q36: second Deployment `pgadmin-rbr-ver` in `pgadmin` namespace, `servers.json` preloaded, `.pgpass` init container pattern for Vault credential injection (Phase 4+).
 
 ### I. Traefik `ports:` Section — CLOSED
 
