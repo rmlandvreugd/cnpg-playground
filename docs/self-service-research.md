@@ -1,6 +1,6 @@
 # CNPG Self-Service Demo: Review, Research, Plan
 
-Status: research in progress — Q35–Q36, Q39, Q43–Q44 resolved; open: Q28, Q32, Q37, Q38, Q40, Q41, Q42
+Status: research in progress — Q32 resolved by live cluster test; open: Q28, Q37, Q38, Q40, Q41, Q42
 Date: 2026-05-01 (research closed 2026-05-01; validated against codebase 2026-05-03; second codebase pass 2026-05-04)
 Scope: local runnable demo plus architecture docs
 
@@ -61,10 +61,12 @@ Decisions added after research closure (2026-05-01) and codebase validation (202
 - `ObjectStore` (`barmancloud.cnpg.io/v1`) must be in the same namespace as the Cluster that references it.
 - On-demand `Backup` names must be unique. Applying the same name twice is idempotent (does not trigger a second backup). Use timestamps or suffixes.
 - `ScheduledBackup.spec.backupOwnerReference: self` is the correct value for this demo (the existing `pg-local.yaml` already uses this).
-- Vault Database Secrets Engine `creation_statements`:
+- Vault Database Secrets Engine `creation_statements` (admin roles):
   ```sql
   CREATE ROLE "{{name}}" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}' IN ROLE rbr_ver_ddl_admin;
+  GRANT "{{name}}" TO rbr_ver_vde_admin;
   ```
+  Note: second statement required — `REASSIGN OWNED BY "{{name}}"` in revocation requires the executing role to be a **member** of `"{{name}}"`, not just ADMIN OPTION holder (confirmed PG18 live cluster test 2026-05-04).
 - Vault Database Secrets Engine `revocation_statements`:
   ```sql
   REASSIGN OWNED BY "{{name}}" TO rbr_ver_ddl_owner;
@@ -242,17 +244,25 @@ vault write database/config/rbr-ver-max \
 ```sql
 CREATE ROLE rbr_ver_ddl_owner NOLOGIN;
 CREATE ROLE rbr_ver_ddl_admin NOLOGIN;
+CREATE ROLE rbr_ver_ddl_reader NOLOGIN;
 GRANT CONNECT ON DATABASE max TO rbr_ver_ddl_admin;
 GRANT USAGE, CREATE ON SCHEMA public TO rbr_ver_ddl_admin;
+GRANT USAGE, CREATE ON SCHEMA public TO rbr_ver_ddl_owner;
 GRANT rbr_ver_ddl_owner TO rbr_ver_ddl_admin;
+GRANT CONNECT ON DATABASE max TO rbr_ver_ddl_reader;
+GRANT USAGE ON SCHEMA public TO rbr_ver_ddl_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO rbr_ver_ddl_reader;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO rbr_ver_ddl_reader;
 ```
+
+Note: `rbr_ver_ddl_owner` needs `CREATE ON SCHEMA public` because dynamic users do `SET ROLE rbr_ver_ddl_owner` before DDL — the privilege check runs against the current role, not the session user (confirmed by live cluster test 2026-05-04).
 
 - Create Vault role `rbr-db-admin`:
 
 ```bash
 vault write database/roles/rbr-db-admin \
   db_name="rbr-ver-max" \
-  creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}' IN ROLE rbr_ver_ddl_admin;" \
+  creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}' IN ROLE rbr_ver_ddl_admin; GRANT \"{{name}}\" TO rbr_ver_vde_admin;" \
   revocation_statements="REASSIGN OWNED BY \"{{name}}\" TO rbr_ver_ddl_owner; DROP OWNED BY \"{{name}}\"; DROP ROLE IF EXISTS \"{{name}}\";" \
   default_ttl="1h" \
   max_ttl="4h"
@@ -263,8 +273,19 @@ vault write database/roles/rbr-db-admin \
 ```bash
 vault write database/roles/rbr-ver-db-admin \
   db_name="rbr-ver-max" \
-  creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}' IN ROLE rbr_ver_ddl_admin;" \
+  creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}' IN ROLE rbr_ver_ddl_admin; GRANT \"{{name}}\" TO rbr_ver_vde_admin;" \
   revocation_statements="REASSIGN OWNED BY \"{{name}}\" TO rbr_ver_ddl_owner; DROP OWNED BY \"{{name}}\"; DROP ROLE IF EXISTS \"{{name}}\";" \
+  default_ttl="1h" \
+  max_ttl="4h"
+```
+
+- Create Vault role `rbr-ver-db-readonly`:
+
+```bash
+vault write database/roles/rbr-ver-db-readonly \
+  db_name="rbr-ver-max" \
+  creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}' IN ROLE rbr_ver_ddl_reader; GRANT \"{{name}}\" TO rbr_ver_vde_admin;" \
+  revocation_statements="DROP ROLE IF EXISTS \"{{name}}\";" \
   default_ttl="1h" \
   max_ttl="4h"
 ```
@@ -284,6 +305,13 @@ Findings:
 - `SET ROLE rbr_ver_ddl_owner` before DDL means `DROP OWNED BY "{{name}}"` in revocation has no effect on those objects. They persist under `rbr_ver_ddl_owner`.
 - Vault automatically triggers revocation when the lease TTL expires. The user does not need to manually revoke.
 - Vault connection to CNPG goes via Traefik TCP passthrough (sslip.io hostname). Vault is on the Podman `kind` network and can reach the MetalLB IP directly.
+
+Live cluster test findings (PG18, 2026-05-04):
+
+- **`GRANT ... WITH ADMIN OPTION` required.** PG16+ changed `CREATEROLE` semantics: granting roles to others requires `ADMIN OPTION` on each role, not just `CREATEROLE`. All three GRANTs to `rbr_ver_vde_admin` must use `WITH ADMIN OPTION`.
+- **`GRANT "{{name}}" TO rbr_ver_vde_admin` required in `creation_statements`.** `REASSIGN OWNED BY "{{name}}"` requires the executor to be a **member** of `"{{name}}"` (not just ADMIN OPTION holder). PG16+ CREATEROLE auto-grants ADMIN OPTION on created roles but NOT membership. Without this grant, revocation fails with `permission denied to reassign objects`.
+- **`rbr_ver_ddl_owner` needs `CREATE ON SCHEMA public`.** Dynamic users do `SET ROLE rbr_ver_ddl_owner` before DDL; privilege check runs against `rbr_ver_ddl_owner`, not the session role. Without this grant, `CREATE TABLE` fails with `permission denied for schema public` (PG15+ no longer grants CREATE on public to PUBLIC by default).
+- **Full verified creation cycle (PG18 live cluster):** CREATEROLE + ADMIN OPTION on stable roles + membership in dynamic role + `CREATE ON SCHEMA public` on owner role = full cycle works without SUPERUSER.
 
 Open questions:
 
@@ -822,7 +850,24 @@ Add or update:
 
 27. [RESOLVED] Loki storage backend. **RustFS** — use existing `objectstore-local` RustFS instance, separate bucket (e.g., `loki/`).
 
-28. [UNRESOLVED] Does CNPG output logs in JSON format? CNPG wraps PostgreSQL logs in JSON (instance manager). pgaudit entries appear as fields in that JSON record. **Exact field names unknown.** Need live cluster log sample: `kubectl logs -n <db-ns> <cnpg-pod> | head -5`. Alloy config (River language) will need a JSON decode + field extraction stage. Confirm: is `record.message` + `record.log_type` the correct path, or does pgaudit appear as a nested `audit` object?
+28. [UNRESOLVED] Does CNPG output logs in JSON format? CNPG wraps PostgreSQL logs in JSON (instance manager). pgaudit entries appear as fields in that JSON record. **Exact field names unknown.** Need live cluster log sample: `kubectl logs -n <db-ns> <cnpg-pod> | head -5`. Alloy config (River language) will need a JSON decode + field extraction stage. Confirm: is `record.message` + `record.log_type` the correct path, or does pgaudit appear as a nested `audit` object?\
+```bash
+rmlan@LAPTOP-NJ4D8KHP:~/projects/cnpg-playground$ kubectl logs -n default pods/pg-local-1 | tail -5
+Defaulted container "postgres" out of: postgres, bootstrap-controller (init), plugin-barman-cloud (init)
+{"level":"info","ts":"2026-05-04T12:37:29.798611652Z","logger":"pgaudit","msg":"record","logging_pod":"pg-local-1","record":{"log_time":"2026-05-04 12:37:29.798 UTC","user_name":"postgres","database_name":"app","process_id":"98887","connection_from":"[local]","session_id":"69f89309.18247","session_line_num":"1","command_tag":"BIND","session_start_time":"2026-05-04 12:37:29 UTC","virtual_transaction_id":"49/22","transaction_id":"0","error_severity":"LOG","sql_state_code":"00000","application_name":"cnpg_metrics_exporter","backend_type":"client backend","query_id":"3053595831065363910","audit":{"audit_type":"SESSION","statement_id":"1","substatement_id":"1","class":"READ","command":"SELECT","statement":"SELECT NOT pg_catalog.pg_is_in_recovery()\n  OR pg_catalog.current_setting('archive_mode') = 'always'","parameter":"<none>"}}}
+{"level":"info","ts":"2026-05-04T12:38:29.75136131Z","logger":"pgaudit","msg":"record","logging_pod":"pg-local-1","record":{"log_time":"2026-05-04 12:38:29.751 UTC","user_name":"postgres","database_name":"app","process_id":"98919","connection_from":"[local]","session_id":"69f89345.18267","session_line_num":"1","command_tag":"BIND","session_start_time":"2026-05-04 12:38:29 UTC","virtual_transaction_id":"71/21","transaction_id":"0","error_severity":"LOG","sql_state_code":"00000","application_name":"cnpg_metrics_exporter","backend_type":"client backend","query_id":"3133205611730249372","audit":{"audit_type":"SESSION","statement_id":"1","substatement_id":"1","class":"READ","command":"SELECT","statement":"SELECT EXTRACT(EPOCH FROM pg_postmaster_start_time) AS start_time\nFROM pg_catalog.pg_postmaster_start_time()","parameter":"<none>"}}}
+{"level":"info","ts":"2026-05-04T12:38:29.808001407Z","logger":"pgaudit","msg":"record","logging_pod":"pg-local-1","record":{"log_time":"2026-05-04 12:38:29.807 UTC","user_name":"postgres","database_name":"app","process_id":"98930","connection_from":"[local]","session_id":"69f89345.18272","session_line_num":"1","command_tag":"BIND","session_start_time":"2026-05-04 12:38:29 UTC","virtual_transaction_id":"82/20","transaction_id":"0","error_severity":"LOG","sql_state_code":"00000","application_name":"cnpg_metrics_exporter","backend_type":"client backend","query_id":"3053595831065363910","audit":{"audit_type":"SESSION","statement_id":"1","substatement_id":"1","class":"READ","command":"SELECT","statement":"SELECT NOT pg_catalog.pg_is_in_recovery()\n  OR pg_catalog.current_setting('archive_mode') = 'always'","parameter":"<none>"}}}
+{"level":"info","ts":"2026-05-04T12:39:29.749529217Z","logger":"pgaudit","msg":"record","logging_pod":"pg-local-1","record":{"log_time":"2026-05-04 12:39:29.749 UTC","user_name":"postgres","database_name":"app","process_id":"98960","connection_from":"[local]","session_id":"69f89381.18290","session_line_num":"1","command_tag":"BIND","session_start_time":"2026-05-04 12:39:29 UTC","virtual_transaction_id":"3/26","transaction_id":"0","error_severity":"LOG","sql_state_code":"00000","application_name":"cnpg_metrics_exporter","backend_type":"client backend","query_id":"3053595831065363910","audit":{"audit_type":"SESSION","statement_id":"1","substatement_id":"1","class":"READ","command":"SELECT","statement":"SELECT NOT pg_catalog.pg_is_in_recovery()\n  OR pg_catalog.current_setting('archive_mode') = 'always'","parameter":"<none>"}}}
+{"level":"info","ts":"2026-05-04T12:39:29.774869985Z","logger":"pgaudit","msg":"record","logging_pod":"pg-local-1","record":{"log_time":"2026-05-04 12:39:29.774 UTC","user_name":"postgres","database_name":"app","process_id":"98965","connection_from":"[local]","session_id":"69f89381.18295","session_line_num":"1","command_tag":"BIND","session_start_time":"2026-05-04 12:39:29 UTC","virtual_transaction_id":"8/24","transaction_id":"0","error_severity":"LOG","sql_state_code":"00000","application_name":"cnpg_metrics_exporter","backend_type":"client backend","query_id":"3133205611730249372","audit":{"audit_type":"SESSION","statement_id":"1","substatement_id":"1","class":"READ","command":"SELECT","statement":"SELECT EXTRACT(EPOCH FROM pg_postmaster_start_time) AS start_time\nFROM pg_catalog.pg_postmaster_start_time()","parameter":"<none>"}}}
+
+rmlan@LAPTOP-NJ4D8KHP:~/projects/cnpg-playground$ kubectl logs -n default pods/pg-local-1 | head -5
+Defaulted container "postgres" out of: postgres, bootstrap-controller (init), plugin-barman-cloud (init)
+{"level":"info","ts":"2026-05-02T22:21:54.298559589Z","msg":"OS distribution is supported","logger":"instance-manager","logging_pod":"pg-local-1","entry":{"version":"13 (trixie)","deprecatedFrom":"2028-08-09T00:00:00Z","supportedUntil":"2030-06-30T00:00:00Z"}}
+{"level":"info","ts":"2026-05-02T22:21:54.298683486Z","msg":"Starting CloudNativePG Instance Manager","logger":"instance-manager","logging_pod":"pg-local-1","version":"1.29.0","build":{"Version":"1.29.0","Commit":"23eae00cd","Date":"2026-04-01"},"skipNameValidation":false}
+{"level":"info","ts":"2026-05-02T22:21:54.636938458Z","msg":"starting tablespace manager","logger":"instance-manager","logging_pod":"pg-local-1"}
+{"level":"info","ts":"2026-05-02T22:21:54.637009057Z","msg":"starting external server manager","logger":"instance-manager","logging_pod":"pg-local-1"}
+{"level":"info","ts":"2026-05-02T22:21:54.637035256Z","msg":"starting controller-runtime manager","logger":"instance-manager","logging_pod":"pg-local-1"}
+```
 
 29. [RESOLVED] Should `grafana-rbr-ver` also get a Loki datasource? **Yes — both `grafana` (main) and `grafana-rbr-ver` need Loki datasource.** pgaudit panels go to both instances.
 
@@ -830,16 +875,21 @@ Add or update:
 
 30. [RESOLVED] Name for dedicated VDE admin PostgreSQL role. **`rbr_ver_vde_admin`** — confirmed.
 
-31. [RESOLVED] PostgreSQL privileges for `rbr_ver_vde_admin`. **Confirmed (updated by Q43):**
+31. [RESOLVED] PostgreSQL privileges for `rbr_ver_vde_admin`. **Confirmed by live cluster test (PG18, 2026-05-04). `WITH ADMIN OPTION` required on all three GRANTs:**
     ```sql
     CREATE ROLE rbr_ver_vde_admin WITH LOGIN CREATEROLE;
     GRANT CONNECT ON DATABASE max TO rbr_ver_vde_admin;
-    GRANT rbr_ver_ddl_owner TO rbr_ver_vde_admin;
-    GRANT rbr_ver_ddl_admin TO rbr_ver_vde_admin;
-    GRANT rbr_ver_ddl_reader TO rbr_ver_vde_admin;
+    GRANT rbr_ver_ddl_owner TO rbr_ver_vde_admin WITH ADMIN OPTION;
+    GRANT rbr_ver_ddl_admin TO rbr_ver_vde_admin WITH ADMIN OPTION;
+    GRANT rbr_ver_ddl_reader TO rbr_ver_vde_admin WITH ADMIN OPTION;
     ```
+    Without `WITH ADMIN OPTION`: `IN ROLE <role>` in `CREATE ROLE` fails with `permission denied to grant role`.
 
-32. [DEFERRED] In PG18, does `rbr_ver_vde_admin` (CREATEROLE + membership in both stable roles) successfully execute `REASSIGN OWNED BY "{{name}}" TO rbr_ver_ddl_owner`? Expectation: membership in `rbr_ver_ddl_owner` (target) + membership in `rbr_ver_ddl_admin` (source) satisfies REASSIGN OWNED requirements without SUPERUSER. **Verify on live cluster before Phase 2.**
+32. [RESOLVED] PG18 REASSIGN OWNED privilege test. **Confirmed: works without SUPERUSER** with the correct pattern:
+    1. GRANT stable roles to vde_admin `WITH ADMIN OPTION`
+    2. `creation_statements` includes `GRANT "{{name}}" TO rbr_ver_vde_admin` — gives vde_admin **membership** in the dynamic role (ADMIN OPTION alone is not sufficient for REASSIGN OWNED)
+    3. `rbr_ver_ddl_owner` has `CREATE ON SCHEMA public` (dynamic users need this when they `SET ROLE`)
+    Live cluster verified: `tableowner = rbr_ver_ddl_owner` after full create/reassign/drop cycle. No SUPERUSER needed.
 
 33. [RESOLVED] VDE admin password storage. **Step 3 (Vault KV) is needed.** Flow confirmed:
     1. `VDE_ADMIN_PASS=$(openssl rand -hex 32)`
@@ -872,28 +922,38 @@ Add or update:
         exposedPort: 5432
         protocol: TCP
     ```
-    Question: does `expose.default: true` expose the port on the `LoadBalancer` Service, or is a separate `service.ports` override needed? Traefik v3 Helm chart docs needed.
+    Question: does `expose.default: true` expose the port on the `LoadBalancer` Service, or is a separate `service.ports` override needed? Traefik v3 Helm chart docs needed.\
+    use `expose.default: true`. See, https://oneuptime.com/blog/post/2026-01-07-metallb-traefik-ingress/view#tcp-and-udp-routing
 
 **Loki + Alloy details**
 
-38. [UNRESOLVED] GrafanaDatasource multi-instance strategy for Loki. Should `grafana-rbr-ver` share the `dashboards: "grafana"` label with the main instance, receiving all datasources (Prometheus + Loki)? Or use a separate label and separate `GrafanaDatasource` resources? Decision: should `grafana-rbr-ver` have access to Prometheus metrics too, or only Loki?
+38. [UNRESOLVED] GrafanaDatasource multi-instance strategy for Loki. Should `grafana-rbr-ver` share the `dashboards: "grafana"` label with the main instance, receiving all datasources (Prometheus + Loki)? Or use a separate label and separate `GrafanaDatasource` resources? Decision: should `grafana-rbr-ver` have access to Prometheus metrics too, or only Loki?\
+    Also metric access is needed
 
 39. [RESOLVED] Loki deployment namespace. **`grafana` namespace** — consistent with Grafana Operator pattern. Loki Service reachable from Grafana instances in same namespace without cross-namespace datasource config.
 
 40. [UNRESOLVED] How is the RustFS `backups/` bucket created currently, and what is the `objectstore-local` Service namespace? Need to:
-    - Confirm `objectstore-local` K8s Service namespace (likely `demo-local-db` or a dedicated namespace)
-    - Confirm bucket auto-creation vs. explicit init step in `scripts/setup.sh`
-    - Decide: create Loki bucket (`loki/`) via same init mechanism, or add a step in `monitoring/setup.sh`
-    - Decide: Loki uses same S3 credentials as barman, or separate RustFS user/policy?
+    - Confirm `objectstore-local` K8s Service namespace (likely `demo-local-db` or a dedicated namespace)\
+      confirmed
+    - Confirm bucket auto-creation vs. explicit init step in `scripts/setup.sh`\
+      explicit
+    - Decide: create Loki bucket (`loki/`) via same init mechanism, or add a step in `monitoring/setup.sh`\
+      part of setup
+    - Decide: Loki uses same S3 credentials as barman, or separate RustFS user/policy?\
+      use the same
 
 41. [UNRESOLVED] Alloy chart version and River config approach for k8s log collection. Need:
-    - Current stable `grafana/alloy` Helm chart version to pin in `common.sh`
-    - Current stable `grafana/loki` chart version for single-binary mode
-    - River config structure: does the alloy-scenarios k8s/logs example use `discovery.kubernetes` → `loki.source.kubernetes` → `loki.write`? Confirm pipeline and any required JSON decode stage for CNPG logs.
+    - Current stable `grafana/alloy` Helm chart version to pin in `common.sh`\
+      chart version: 1.8.0
+    - Current stable `grafana-community/loki` chart version for single-binary mode\
+      chart version: 13.5.0. loki chart moved to "grafana-community"
+    - River config structure: does the alloy-scenarios k8s/logs example use `discovery.kubernetes` → `loki.source.kubernetes` → `loki.write`? Confirm pipeline and any required JSON decode stage for CNPG logs.\
+      see: https://raw.githubusercontent.com/grafana/alloy-scenarios/refs/heads/main/k8s/logs/loki-values.yml https://raw.githubusercontent.com/grafana/alloy-scenarios/refs/heads/main/k8s/logs/k8s-monitoring-values.yml https://raw.githubusercontent.com/grafana/alloy-scenarios/refs/heads/main/k8s/metrics/k8s-monitoring-values.yml
 
 **ESO ExternalSecret label**
 
-42. [UNRESOLVED] Does `pg-local-eso.yaml.tpl` already include `cnpg.io/reload: "true"` on its ExternalSecret template output? The demo `demo/eso-vault.sh` rotates secrets and the existing cluster reacts — but it is unclear if the label is present in the template or if reload is triggered another way. Verify before writing new ExternalSecrets.
+42. [UNRESOLVED] Does `pg-local-eso.yaml.tpl` already include `cnpg.io/reload: "true"` on its ExternalSecret template output? The demo `demo/eso-vault.sh` rotates secrets and the existing cluster reacts — but it is unclear if the label is present in the template or if reload is triggered another way. Verify before writing new ExternalSecrets.\
+    part of the `externalsecret`s
 
 **VDE creation/revocation with rbr_ver_ddl_reader**
 
@@ -994,9 +1054,11 @@ Research: current stable versions of both charts. Check Helm repo `grafana/loki`
 
 Existing `GrafanaDatasource` (Prometheus) uses `instanceSelector: matchLabels: dashboards: "grafana"` and targets only the main `grafana` instance. For Loki datasource in both instances:
 - Option (a): add label `dashboards: "grafana"` to `grafana-rbr-ver` CR → it receives all existing datasources (Prometheus + Loki). Simple but shares all datasources.
-- Option (b): separate `GrafanaDatasource` resources per instance, each with its own `matchLabels`. Explicit, no accidental datasource sharing.
+- Option (b): separate `GrafanaDatasource` resources per instance, each with its own `matchLabels`. Explicit, no accidental datasource sharing.\
+  Do Option B
 
-Decision needed: should `grafana-rbr-ver` also get the Prometheus datasource, or only Loki?
+Decision needed: should `grafana-rbr-ver` also get the Prometheus datasource, or only Loki?\
+both metrics and logs wanted
 
 ### M. ESO ExternalSecret Label Injection (blocks Phase 1 manifest)
 
