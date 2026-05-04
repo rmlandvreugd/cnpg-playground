@@ -711,7 +711,7 @@ Before writing code, confirm the following from a running cluster:
 
 1. ~~Confirm `allowCrossNamespace=true`~~ — **confirmed**: `traefik/values.yaml:18–19` sets `allowCrossNamespace: true` under `providers.kubernetesCRD`. No runtime check needed.
 2. ~~Confirm the installed Grafana Operator CRD version supports `"auth.generic_oauth"` dotted key in `spec.config`.~~ — **confirmed**: chart v5.22.2 from `common.sh:106`. v5.x supports dotted keys natively.
-3. Confirm barman plugin 0.12.0 is the installed version (`kubectl get deployment -n cnpg-system | grep barman`).
+3. ~~Confirm barman plugin 0.12.0 is the installed version.~~ — **confirmed**: `app.kubernetes.io/version: v0.12.0`, `helm.sh/chart: plugin-barman-cloud-0.6.0` (2026-05-04 live cluster).
 4. ~~Decide: tenant admin gets Grafana `Admin`, group admin gets `Editor`?~~ — **decided**: Admin/Editor split confirmed (`org_mapping: "rbr-db-admin:rbr:Admin rbr-ver-db-admin:rbr:Editor"`).
 5. ~~Decide: should `SET ROLE rbr_ver_ddl_owner` be mandatory in pgAdmin docs, or optional?~~ — **decided**: mandatory, step 1 in runbook.
 
@@ -827,7 +827,7 @@ Add or update:
 
 16. [RESOLVED] RustFS reachability from `rbr-ver-db`. **Already works in `demo/setup.sh`; pattern carries over to `rbr-ver-db` namespace without change.**
 
-17. [RESOLVED] ESO AppRole scope for self-service cluster. **Create new AppRole `eso-rbr-ver-local` with new `ClusterSecretStore` `vault-approle-rbr-ver`.** Pattern mirrors `eso-${REGION}` / `vault-approle` from `scripts/eso-setup.sh`. See open question 24 for policy scope.
+17. [RESOLVED] ESO AppRole scope for self-service cluster. **Create new AppRole `eso-rbr-ver-local` with new `ClusterSecretStore` `vault-approle-rbr`.** Pattern mirrors `eso-${REGION}` / `vault-approle` from `scripts/eso-setup.sh`. See open question 24 for policy scope.
 
 ### Unresolved — Emerged from Answers (2026-05-04)
 
