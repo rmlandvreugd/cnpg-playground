@@ -318,9 +318,9 @@ Open questions:
 - [RESOLVED] Creation statement syntax: confirmed valid.
 - [RESOLVED] `SET ROLE` before DDL preserves objects through revocation: confirmed.
 - [RESOLVED] Automatic revocation: Vault executes `revocation_statements` at lease expiry automatically.
-- [UNRESOLVED] Should `SET ROLE rbr_ver_ddl_owner` be required in pgAdmin docs as a mandatory first step, or documented as optional best practice?
-- [UNRESOLVED] Should a read-only dynamic role (`rbr-ver-db-readonly`) be added to VDE in phase 1, or deferred?
-- [UNRESOLVED] Should the demo provide a wrapper function (e.g., a shell alias) that issues `SET ROLE` automatically, or rely on user docs?
+- [RESOLVED] Should `SET ROLE rbr_ver_ddl_owner` be required? **Mandatory** — step 1 in pgAdmin runbook. Enforcement is docs-only; pgAdmin has no pre-connection SQL hook. (Q1)
+- [RESOLVED] Should `rbr-ver-db-readonly` be added in phase 1? **Yes** — `rbr_ver_ddl_reader` stable role + Vault readonly role included in phase 1. (Q2)
+- [RESOLVED] Wrapper function vs user docs? **Documentation only.** pgAdmin has no pre-connection hook; no wrapper viable. CLI psql users can alias if desired but it is not required by the demo.
 
 ### 3. pgaudit Runtime
 
@@ -364,7 +364,7 @@ Open questions:
 
 - [RESOLVED] Does the current image include pgaudit? **Yes — pgaudit 18.0-2.pgdg13+1 confirmed.**
 - [RESOLVED] Does adding `pgaudit.*` trigger reload or restart? **First add: rolling restart (shared_preload_libraries change). Subsequent parameter changes: reload only.**
-- [UNRESOLVED] Should pgaudit proof be script-based only, or also surfaced in Grafana via logs? Deferred pending Loki investigation (see Research Closure item 11).
+- [RESOLVED] Should pgaudit proof be surfaced in Grafana? **Yes — both `grafana` and `grafana-rbr-ver` instances get Loki datasource and pgaudit panels.** Loki is now in scope (Q11, Q29). Script verification remains the fallback for the phase 1 demo before Loki is deployed.
 
 ### 4. pgAdmin Preconfiguration
 
@@ -422,8 +422,8 @@ Open questions:
 
 - [RESOLVED] Can `PasswordExecCommand` safely run `vault read` inside pgAdmin? **No — disabled in container mode. Dead end.**
 - [RESOLVED] Should pgAdmin use Dex login in the first pass? **No — stay local-admin. Dex integration deferred until Grafana/Dex is proven.**
-- [UNRESOLVED] For the `.pgpass` init container approach: should the Vault token be mounted as a Kubernetes Secret into the init container, or should the init container use the AppRole credentials already available in the cluster?
-- [UNRESOLVED] Should the init container use the `rbr-db-admin` or `rbr-ver-db-admin` Vault role? Decision depends on which persona the pgAdmin instance represents.
+- [UNRESOLVED] For the `.pgpass` init container approach: Vault token as K8s Secret vs AppRole credentials already in cluster. Phase 4+ work — deferred.
+- [RESOLVED] Init container Vault role: **`rbr-ver-db-admin`** — pgAdmin instance represents the group-admin persona. (Q6)
 
 ### 5. Grafana + Dex
 
@@ -529,10 +529,10 @@ Open questions:
 - [RESOLVED] Does the Grafana Operator CRD support separate instance OAuth config? **Yes — each Grafana CR has independent `spec.config`.**
 - [RESOLVED] Does Dex static password support groups natively? **Yes — `groups` field on `staticPasswords` entries.**
 - [RESOLVED] Is folder isolation by OAuth groups possible in OSS? **No — Enterprise only. OSS demo uses org-level isolation only.**
-- [UNRESOLVED] Should tenant admin (`rbr-db-admin`) get Grafana `Admin` and group admin (`rbr-ver-db-admin`) get `Editor`, or should both be `Editor`? The `org_mapping` above assumes Admin/Editor split. Needs explicit sign-off.
-- [UNRESOLVED] Does the current monitoring Grafana Operator version (installed via `latest` from GitHub releases) support the `"auth.generic_oauth"` dotted key in `spec.config`? Verify against the installed CRD version after `monitoring/setup.sh` runs.
-- [UNRESOLVED] Should the Dex config overlay use `envsubst` substitution for the new users' password hashes, or should a separate script generate the bcrypt hashes and inject them?
-- [UNRESOLVED] Does current monitoring stack include Loki? If absent, defer pgaudit dashboard panels.
+- [RESOLVED] Grafana role split: **`rbr-db-admin` → Admin, `rbr-ver-db-admin` → Editor.** `org_mapping: "rbr-db-admin:rbr:Admin rbr-ver-db-admin:rbr:Editor"` confirmed. (Q3)
+- [RESOLVED] Grafana Operator dotted-key support: **Confirmed — chart v5.22.2 (from `common.sh:106`). No runtime check needed.** (Q4)
+- [RESOLVED] Dex overlay hash generation: **`envsubst` option (a)** — new vars default to `${DEX_STATIC_PASSWORD_HASH}` in `common.sh`. (Q5)
+- [RESOLVED] Loki in monitoring stack: **Absent — fold into `monitoring/setup.sh`.** pgaudit panels deferred until Loki deployed. (Q11)
 
 ### 6. Backup Manifest
 
