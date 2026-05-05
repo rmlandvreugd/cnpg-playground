@@ -398,7 +398,7 @@ EOF
             echo "✅ Dex ready"
             break
         fi
-        sleep 3; ((COUNT++))
+        sleep 3; COUNT=$((COUNT + 1))
     done
     [ "${COUNT}" -ge "${MAX_RETRIES}" ] && { echo "❌ Dex did not restart within 60s"; exit 1; }
 
