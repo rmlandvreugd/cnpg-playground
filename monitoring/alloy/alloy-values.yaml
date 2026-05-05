@@ -1,0 +1,28 @@
+alloy:
+  configMap:
+    content: ""  # content injected via --set-file in setup.sh
+
+  clustering:
+    enabled: false
+
+  # Allow Alloy to scrape pod logs cluster-wide
+  mounts:
+    varlog: false
+    dockercontainers: false
+
+controller:
+  type: deployment
+  replicas: 1
+  nodeSelector:
+    node-role.kubernetes.io/infra: ""
+  tolerations:
+    - key: node-role.kubernetes.io/infra
+      operator: Exists
+      effect: NoSchedule
+
+# RBAC required for loki.source.kubernetes (pod log access)
+rbac:
+  create: true
+
+serviceAccount:
+  create: true

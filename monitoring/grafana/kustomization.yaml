@@ -3,5 +3,7 @@ kind: Kustomization
 resources:
  - grafana_instance.yaml
  - grafana_datasource.yaml
+ - grafana_datasource_loki.yaml
  - grafana_dashboard.yaml
+ - grafana_dashboard_pgaudit.yaml
 namespace: grafana

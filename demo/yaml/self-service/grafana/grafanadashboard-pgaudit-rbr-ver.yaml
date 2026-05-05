@@ -1,0 +1,76 @@
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: pgaudit-dashboard-rbr-ver
+  namespace: grafana
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: "grafana-rbr-ver"
+  json: |
+    {
+      "title": "pgaudit Audit Logs",
+      "uid": "cnpg-pgaudit-rbr-ver",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "30s",
+      "time": {"from": "now-1h", "to": "now"},
+      "templating": {
+        "list": [
+          {
+            "name": "datasource",
+            "label": "Loki",
+            "type": "datasource",
+            "query": "loki",
+            "hide": 0
+          },
+          {
+            "name": "cluster",
+            "label": "Cluster",
+            "type": "query",
+            "datasource": {"type": "loki", "uid": "${datasource}"},
+            "query": {"label": "cluster", "type": 1},
+            "refresh": 2,
+            "hide": 0,
+            "multi": false,
+            "includeAll": true,
+            "allValue": ".+"
+          }
+        ]
+      },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Audit Events per Minute",
+          "type": "timeseries",
+          "gridPos": {"x": 0, "y": 0, "w": 24, "h": 8},
+          "datasource": {"type": "loki", "uid": "${datasource}"},
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (cluster, command) (count_over_time({cluster=~\"$cluster\"} |= `AUDIT:` [1m]))",
+              "legendFormat": "{{cluster}} / {{command}}"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "Audit Log Stream",
+          "type": "logs",
+          "gridPos": {"x": 0, "y": 8, "w": 24, "h": 16},
+          "datasource": {"type": "loki", "uid": "${datasource}"},
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "{cluster=~\"$cluster\"} |= `AUDIT:`"
+            }
+          ],
+          "options": {
+            "dedupStrategy": "none",
+            "enableLogDetails": true,
+            "showTime": true,
+            "wrapLogMessage": true
+          }
+        }
+      ]
+    }
