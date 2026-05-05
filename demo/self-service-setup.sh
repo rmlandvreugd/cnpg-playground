@@ -412,8 +412,8 @@ EOF
         --for=condition=Ready certificate/grafana-rbr-ver-cert -n grafana
 
     # Grafana CR
-    DEX_HOST="${DEX_HOST}" DEX_PORT="${DEX_PORT}" \
-    envsubst '${DEX_HOST} ${DEX_PORT}' \
+    DEX_HOST="${DEX_HOST}" DEX_PORT="${DEX_PORT}" TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
+    envsubst '${DEX_HOST} ${DEX_PORT} ${TRAEFIK_IP_DASHED}' \
         < "${SELF_SERVICE_YAML}/grafana/grafana-rbr-ver.yaml.tpl" \
         | kubectl apply --context "${LOCAL_CONTEXT}" -f -
 
@@ -431,7 +431,7 @@ EOF
 
     # Wait for Grafana deployment
     echo "⏳ Waiting for grafana-rbr-ver deployment..."
-    kubectl rollout status deployment/grafana-rbr-ver \
+    kubectl rollout status deployment/grafana-rbr-ver-deployment \
         -n grafana --context "${LOCAL_CONTEXT}" --timeout=180s
 
     # Pre-create 'rbr' org via Grafana API (port-forward)
@@ -579,6 +579,8 @@ teardown)
     echo "🐘 Deleting CNPG Cluster and ObjectStore (waits for finalizer cleanup)..."
     kubectl delete cluster verstappen \
         -n rbr-ver-db --context "${LOCAL_CONTEXT}" --ignore-not-found --wait
+    kubectl delete pooler pooler-verstappen-rw \
+        -n rbr-ver-db --context "${LOCAL_CONTEXT}" --ignore-not-found --wait
     kubectl delete objectstore objectstore-rbr-ver \
         -n rbr-ver-db --context "${LOCAL_CONTEXT}" --ignore-not-found --wait
     kubectl delete externalsecret verstappen-superuser verstappen-app verstappen-readonly \
@@ -618,7 +620,7 @@ teardown)
         -n grafana --context "${LOCAL_CONTEXT}" --ignore-not-found
     kubectl delete grafanadashboard pgaudit-dashboard-rbr-ver \
         -n grafana --context "${LOCAL_CONTEXT}" --ignore-not-found
-    kubectl delete grafana grafana-rbr-ver \
+    kubectl delete grafana grafana-rbr-ver-deployment \
         -n grafana --context "${LOCAL_CONTEXT}" --ignore-not-found
     kubectl delete secret grafana-rbr-ver-oauth \
         -n grafana --context "${LOCAL_CONTEXT}" --ignore-not-found
