@@ -109,9 +109,8 @@ EOF
         || echo "  ⚠️  Bucket init may have failed — verify: kubectl run mc ... mc mb store/loki"
 
     echo "📊 Installing Loki ${LOKI_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
-    helm_upgrade_install loki loki \
+    helm_upgrade_install loki oci://ghcr.io/grafana-community/helm-charts/loki \
         grafana "${CONTEXT_NAME}" "${LOKI_CHART_VERSION}" \
-        --repo-url https://grafana.github.io/helm-charts \
         --values "${GIT_REPO_ROOT}/monitoring/loki/loki-values.yaml" \
         --set "loki.storage.s3.accessKeyId=${RUSTFS_ROOT_USER}" \
         --set "loki.storage.s3.secretAccessKey=${RUSTFS_ROOT_PASSWORD}"
