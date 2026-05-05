@@ -31,6 +31,15 @@ additionalArguments:
   - "--global.sendanonymoususage=false"
   - "--ping=true"
   - "--ping.entrypoint=traefik"
+  - "--entrypoints.postgres.address=:5432"
+
+ports:
+  postgres:
+    port: 5432
+    expose:
+      default: true
+    exposedPort: 5432
+    protocol: TCP
 
 resources:
   requests:
