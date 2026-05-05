@@ -14,7 +14,7 @@ data:
           "Port": 5432,
           "MaintenanceDB": "max",
           "SSLMode": "require",
-          "Username": ""
+          "Username": "app"
         }
       }
     }

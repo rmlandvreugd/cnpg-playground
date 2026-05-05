@@ -7,6 +7,8 @@ metadata:
     dashboards: "grafana-rbr-ver"
 spec:
   config:
+    server:
+      root_url: "https://grafana-rbr-ver.${TRAEFIK_IP_DASHED}.sslip.io"
     log:
       mode: "console"
     security:
