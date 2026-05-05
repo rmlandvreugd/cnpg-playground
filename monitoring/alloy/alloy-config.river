@@ -1,0 +1,60 @@
+// Discover all CNPG pods across all namespaces
+discovery.kubernetes "cnpg_pods" {
+  role = "pod"
+  selectors {
+    role  = "pod"
+    label = "cnpg.io/cluster"
+  }
+}
+
+// Relabel pod metadata into Loki stream labels
+discovery.relabel "cnpg_pods" {
+  targets = discovery.kubernetes.cnpg_pods.targets
+
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    target_label  = "namespace"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_name"]
+    target_label  = "pod"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_cnpg_io_cluster"]
+    target_label  = "cluster"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_role"]
+    target_label  = "role"
+  }
+}
+
+// Tail pod logs via Kubernetes API
+loki.source.kubernetes "cnpg_logs" {
+  targets    = discovery.relabel.cnpg_pods.output
+  forward_to = [loki.process.pgaudit.receiver]
+}
+
+// Extract pgaudit fields from matching log lines; non-matching lines pass through unlabeled
+loki.process "pgaudit" {
+  stage.regex {
+    expression = `AUDIT: (?P<audit_type>[^,]+),(?P<statement_id>[^,]+),(?P<substatement_id>[^,]+),(?P<class>[^,]+),(?P<command>[^,]+),(?P<object_type>[^,]*),(?P<object_name>[^,]*),(?P<statement>.*)`
+  }
+
+  stage.labels {
+    values = {
+      "audit_type" = "audit_type",
+      "class"      = "class",
+      "command"    = "command",
+    }
+  }
+
+  forward_to = [loki.write.grafana_loki.receiver]
+}
+
+// Push logs to in-cluster Loki
+loki.write "grafana_loki" {
+  endpoint {
+    url = "http://loki.grafana.svc.cluster.local:3100/loki/api/v1/push"
+  }
+}

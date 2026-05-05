@@ -417,10 +417,11 @@ EOF
         < "${SELF_SERVICE_YAML}/grafana/grafana-rbr-ver.yaml.tpl" \
         | kubectl apply --context "${LOCAL_CONTEXT}" -f -
 
-    # GrafanaDatasources (Prometheus now; Loki becomes active once Loki is deployed)
+    # GrafanaDatasources + pgaudit dashboard
     kubectl apply --context "${LOCAL_CONTEXT}" \
         -f "${SELF_SERVICE_YAML}/grafana/grafanadatasource-prometheus-rbr-ver.yaml" \
-        -f "${SELF_SERVICE_YAML}/grafana/grafanadatasource-loki-rbr-ver.yaml"
+        -f "${SELF_SERVICE_YAML}/grafana/grafanadatasource-loki-rbr-ver.yaml" \
+        -f "${SELF_SERVICE_YAML}/grafana/grafanadashboard-pgaudit-rbr-ver.yaml"
 
     # IngressRoute (HTTPS via cert-manager TLS)
     TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
@@ -604,6 +605,8 @@ teardown)
     kubectl delete ingressroute grafana-rbr-ver \
         -n grafana --context "${LOCAL_CONTEXT}" --ignore-not-found
     kubectl delete grafanadatasource prometheus-rbr-ver loki-rbr-ver \
+        -n grafana --context "${LOCAL_CONTEXT}" --ignore-not-found
+    kubectl delete grafanadashboard pgaudit-dashboard-rbr-ver \
         -n grafana --context "${LOCAL_CONTEXT}" --ignore-not-found
     kubectl delete grafana grafana-rbr-ver \
         -n grafana --context "${LOCAL_CONTEXT}" --ignore-not-found

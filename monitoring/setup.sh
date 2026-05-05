@@ -67,6 +67,62 @@ for region in "${REGIONS[@]}"; do
     kubectl kustomize ${GIT_REPO_ROOT}/monitoring/grafana/ | \
       kubectl --context ${CONTEXT_NAME} apply -f -
 
+    # --- Loki + Alloy (pgaudit log aggregation) ---
+    echo "📊 Wiring objectstore into grafana namespace for Loki..."
+    RUSTFS_CONTAINER_NAME="${RUSTFS_BASE_NAME}-${region}"
+    OBJECTSTORE_IP=$(${CONTAINER_PROVIDER} inspect "${RUSTFS_CONTAINER_NAME}" \
+        --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
+    kubectl --context "${CONTEXT_NAME}" apply -f - <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: objectstore-local
+  namespace: grafana
+spec:
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: 9000
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: objectstore-local
+  namespace: grafana
+subsets:
+  - addresses:
+      - ip: ${OBJECTSTORE_IP}
+    ports:
+      - name: s3
+        port: 9000
+EOF
+
+    echo "🪣 Creating Loki S3 bucket..."
+    kubectl run loki-bucket-init --restart=Never --rm --attach \
+        --context "${CONTEXT_NAME}" \
+        -n grafana \
+        --image=minio/mc:latest \
+        --pod-running-timeout=60s \
+        -- sh -c "mc alias set store http://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1 \
+            && mc mb --ignore-existing store/loki \
+            && echo '✅ Bucket loki ready'" \
+        || echo "  ⚠️  Bucket init may have failed — verify: kubectl run mc ... mc mb store/loki"
+
+    echo "📊 Installing Loki ${LOKI_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
+    helm_upgrade_install loki loki \
+        grafana "${CONTEXT_NAME}" "${LOKI_CHART_VERSION}" \
+        --repo-url https://grafana.github.io/helm-charts \
+        --values "${GIT_REPO_ROOT}/monitoring/loki/loki-values.yaml" \
+        --set "loki.storage.s3.accessKeyId=${RUSTFS_ROOT_USER}" \
+        --set "loki.storage.s3.secretAccessKey=${RUSTFS_ROOT_PASSWORD}"
+
+    echo "📊 Installing Alloy ${ALLOY_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
+    helm_upgrade_install alloy alloy \
+        grafana "${CONTEXT_NAME}" "${ALLOY_CHART_VERSION}" \
+        --repo-url https://grafana.github.io/helm-charts \
+        --values "${GIT_REPO_ROOT}/monitoring/alloy/alloy-values.yaml" \
+        --set-file "alloy.configMap.content=${GIT_REPO_ROOT}/monitoring/alloy/alloy-config.river"
+
 # Restart the operator
 if kubectl get ns cnpg-system &> /dev/null
 then
