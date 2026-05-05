@@ -17,7 +17,7 @@ MODE="${2:-}"
 usage() {
     cat <<'USAGE'
 Usage: self-service-setup.sh <subcommand> local [args]
-  setup   local                      — full stack: Vault + ESO + CNPG + Traefik
+  setup   local                      — full stack: Vault + ESO + CNPG + Traefik + pgAdmin
   verify  local                      — test superuser connectivity
   rotate  local <app|readonly>       — rotate ESO-managed credential
   backup  local                      — trigger on-demand backup
@@ -326,12 +326,53 @@ EOF
         max_ttl="4h"
 
     echo "✅ Vault Database Secrets Engine configured"
+
+    # --- pgAdmin (self-service) ---
+    echo "🔧 Deploying pgAdmin for rbr-ver..."
+    PGADMIN_RBR_VER_EMAIL="${PGADMIN_RBR_VER_EMAIL:-admin@example.com}"
+    PGADMIN_RBR_VER_PASSWORD="$(openssl rand -base64 32 | tr -d '/+=' | head -c 32)"
+
+    kubectl apply --context "${LOCAL_CONTEXT}" \
+        -f "${GIT_REPO_ROOT}/pgadmin/namespace.yaml"
+
+    PGADMIN_RBR_VER_EMAIL="${PGADMIN_RBR_VER_EMAIL}" \
+    PGADMIN_RBR_VER_PASSWORD="${PGADMIN_RBR_VER_PASSWORD}" \
+    envsubst '${PGADMIN_RBR_VER_EMAIL} ${PGADMIN_RBR_VER_PASSWORD}' \
+        < "${SELF_SERVICE_YAML}/pgadmin/secret-pgadmin-rbr-ver.yaml.tpl" \
+        | kubectl apply --context "${LOCAL_CONTEXT}" -f -
+
+    TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
+    envsubst '${TRAEFIK_IP_DASHED}' \
+        < "${SELF_SERVICE_YAML}/pgadmin/servers.json.tpl" \
+        | kubectl apply --context "${LOCAL_CONTEXT}" -f -
+
+    kubectl apply --context "${LOCAL_CONTEXT}" \
+        -f "${SELF_SERVICE_YAML}/pgadmin/deployment-pgadmin-rbr-ver.yaml"
+
+    echo "⏳ Waiting for pgadmin-rbr-ver rollout..."
+    kubectl rollout status deployment/pgadmin-rbr-ver \
+        -n pgadmin --context "${LOCAL_CONTEXT}" --timeout=120s
+
+    TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
+    envsubst '${TRAEFIK_IP_DASHED}' \
+        < "${SELF_SERVICE_YAML}/pgadmin/ingressroute-pgadmin-rbr-ver.yaml.tpl" \
+        | kubectl apply --context "${LOCAL_CONTEXT}" -f -
+
     echo ""
     echo "======================================================"
     echo "✅ Setup complete"
     echo "   Cluster:     verstappen  Namespace: rbr-ver-db"
     echo "   External DB: verstappen-rbr-ver-db.${TRAEFIK_IP_DASHED}.sslip.io:5432"
     echo "   sslmode:     require"
+    echo ""
+    echo "   pgAdmin:     http://pgadmin-rbr-ver.${TRAEFIK_IP_DASHED}.sslip.io"
+    echo "   Email:       ${PGADMIN_RBR_VER_EMAIL}"
+    echo "   Password:    ${PGADMIN_RBR_VER_PASSWORD}"
+    echo ""
+    echo "   1. Open pgAdmin URL above"
+    echo "   2. Run: $0 creds local group-admin"
+    echo "   3. Paste credentials into pgAdmin Connect dialog"
+    echo "   4. Before any DDL: SET ROLE rbr_ver_ddl_owner;"
     echo ""
     echo "   Tenant-admin creds:  $0 creds local tenant-admin"
     echo "   Group-admin creds:   $0 creds local group-admin"
@@ -457,6 +498,15 @@ teardown)
         -n traefik \
         --context "${LOCAL_CONTEXT}" \
         --ignore-not-found
+
+    echo "🔧 Removing pgAdmin rbr-ver resources..."
+    for res in deployment/pgadmin-rbr-ver service/pgadmin-rbr-ver \
+               configmap/pgadmin-rbr-ver-servers secret/pgadmin-rbr-ver-credentials; do
+        kubectl delete "${res}" -n pgadmin \
+            --context "${LOCAL_CONTEXT}" --ignore-not-found
+    done
+    kubectl delete ingressroute pgadmin-rbr-ver \
+        -n pgadmin --context "${LOCAL_CONTEXT}" --ignore-not-found
 
     echo "ℹ️  Vault VDE config, policies, and KV paths retained for post-demo inspection."
     echo "   Remove with: vault delete database/config/rbr-ver-max"
