@@ -17,7 +17,7 @@ MODE="${2:-}"
 usage() {
     cat <<'USAGE'
 Usage: self-service-setup.sh <subcommand> local [args]
-  setup   local                      — full stack: Vault + ESO + CNPG + Traefik + pgAdmin
+  setup   local                      — full stack: Vault + ESO + CNPG + Traefik + pgAdmin + Grafana
   verify  local                      — test superuser connectivity
   rotate  local <app|readonly>       — rotate ESO-managed credential
   backup  local                      — trigger on-demand backup
@@ -358,6 +358,94 @@ EOF
         < "${SELF_SERVICE_YAML}/pgadmin/ingressroute-pgadmin-rbr-ver.yaml.tpl" \
         | kubectl apply --context "${LOCAL_CONTEXT}" -f -
 
+    # --- Grafana + Dex for rbr-ver ---
+    echo "📊 Deploying grafana-rbr-ver with Dex Generic OAuth..."
+
+    HOST_IP=$(hostname -I | awk '{print $1}')
+    HOST_IP_DASHED=$(echo "${HOST_IP}" | tr '.' '-')
+    DEX_HOST="dex.${HOST_IP_DASHED}.sslip.io"
+    VAULT_HOST="vault.${HOST_IP_DASHED}.sslip.io"
+
+    # K8s Secret for Grafana OAuth client secret
+    GRAFANA_RBR_VER_CLIENT_SECRET="${DEX_GRAFANA_RBR_VER_CLIENT_SECRET}"
+    GRAFANA_RBR_VER_CLIENT_SECRET="${GRAFANA_RBR_VER_CLIENT_SECRET}" \
+    envsubst '${GRAFANA_RBR_VER_CLIENT_SECRET}' \
+        < "${SELF_SERVICE_YAML}/grafana/secret-grafana-rbr-ver-oauth.yaml.tpl" \
+        | kubectl apply --context "${LOCAL_CONTEXT}" -f -
+
+    # Re-render dex-config.yaml with full var set (incl. TRAEFIK_IP_DASHED) and restart Dex
+    echo "🔄 Updating Dex config with grafana-rbr-ver client (TRAEFIK_IP_DASHED=${TRAEFIK_IP_DASHED})..."
+    DEX_HOST="${DEX_HOST}" VAULT_HOST="${VAULT_HOST}" \
+    DEX_PORT="${DEX_PORT}" VAULT_PORT="${VAULT_PORT}" \
+    DEX_OIDC_CLIENT_ID="${DEX_OIDC_CLIENT_ID}" DEX_OIDC_CLIENT_SECRET="${DEX_OIDC_CLIENT_SECRET}" \
+    DEX_STATIC_PASSWORD_HASH="${DEX_STATIC_PASSWORD_HASH}" \
+    DEX_RBR_ADMIN_PASSWORD_HASH="${DEX_RBR_ADMIN_PASSWORD_HASH}" \
+    DEX_RBR_VER_ADMIN_PASSWORD_HASH="${DEX_RBR_VER_ADMIN_PASSWORD_HASH}" \
+    DEX_UNRELATED_PASSWORD_HASH="${DEX_UNRELATED_PASSWORD_HASH}" \
+    DEX_GRAFANA_RBR_VER_CLIENT_SECRET="${DEX_GRAFANA_RBR_VER_CLIENT_SECRET}" \
+    TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
+    envsubst '${DEX_HOST} ${VAULT_HOST} ${DEX_PORT} ${VAULT_PORT} ${DEX_OIDC_CLIENT_ID} ${DEX_OIDC_CLIENT_SECRET} ${DEX_STATIC_PASSWORD_HASH} ${DEX_RBR_ADMIN_PASSWORD_HASH} ${DEX_RBR_VER_ADMIN_PASSWORD_HASH} ${DEX_UNRELATED_PASSWORD_HASH} ${DEX_GRAFANA_RBR_VER_CLIENT_SECRET} ${TRAEFIK_IP_DASHED}' \
+        < "${GIT_REPO_ROOT}/dex/config/dex-config.yaml.tpl" \
+        | sudo tee "${GIT_REPO_ROOT}/dex/config/dex-config.yaml" > /dev/null
+
+    ${CONTAINER_PROVIDER} restart "${DEX_CONTAINER_NAME}"
+    echo "⏳ Waiting for Dex to restart..."
+    DEX_TLS_DIR="${GIT_REPO_ROOT}/dex/tls"
+    DISCOVERY_URL="https://${DEX_HOST}:${DEX_PORT}/dex/.well-known/openid-configuration"
+    MAX_RETRIES=20; COUNT=0
+    while [ "${COUNT}" -lt "${MAX_RETRIES}" ]; do
+        if curl -sf --cacert "${DEX_TLS_DIR}/ca-chain.pem" "${DISCOVERY_URL}" > /dev/null 2>&1; then
+            echo "✅ Dex ready"
+            break
+        fi
+        sleep 3; ((COUNT++))
+    done
+    [ "${COUNT}" -ge "${MAX_RETRIES}" ] && { echo "❌ Dex did not restart within 60s"; exit 1; }
+
+    # TLS Certificate for Grafana
+    echo "📜 Issuing TLS certificate for grafana-rbr-ver..."
+    TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
+    envsubst '${TRAEFIK_IP_DASHED}' \
+        < "${SELF_SERVICE_YAML}/grafana/certificate-grafana-rbr-ver.yaml.tpl" \
+        | kubectl apply --context "${LOCAL_CONTEXT}" -f -
+    kubectl wait --context "${LOCAL_CONTEXT}" --timeout=60s \
+        --for=condition=Ready certificate/grafana-rbr-ver-cert -n grafana
+
+    # Grafana CR
+    DEX_HOST="${DEX_HOST}" DEX_PORT="${DEX_PORT}" \
+    envsubst '${DEX_HOST} ${DEX_PORT}' \
+        < "${SELF_SERVICE_YAML}/grafana/grafana-rbr-ver.yaml.tpl" \
+        | kubectl apply --context "${LOCAL_CONTEXT}" -f -
+
+    # GrafanaDatasources (Prometheus now; Loki becomes active once Loki is deployed)
+    kubectl apply --context "${LOCAL_CONTEXT}" \
+        -f "${SELF_SERVICE_YAML}/grafana/grafanadatasource-prometheus-rbr-ver.yaml" \
+        -f "${SELF_SERVICE_YAML}/grafana/grafanadatasource-loki-rbr-ver.yaml"
+
+    # IngressRoute (HTTPS via cert-manager TLS)
+    TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
+    envsubst '${TRAEFIK_IP_DASHED}' \
+        < "${SELF_SERVICE_YAML}/grafana/ingressroute-grafana-rbr-ver.yaml.tpl" \
+        | kubectl apply --context "${LOCAL_CONTEXT}" -f -
+
+    # Wait for Grafana deployment
+    echo "⏳ Waiting for grafana-rbr-ver deployment..."
+    kubectl rollout status deployment/grafana-rbr-ver \
+        -n grafana --context "${LOCAL_CONTEXT}" --timeout=180s
+
+    # Pre-create 'rbr' org via Grafana API (port-forward)
+    echo "🏢 Pre-creating 'rbr' org in grafana-rbr-ver..."
+    kubectl port-forward svc/grafana-rbr-ver-service 13000:3000 \
+        -n grafana --context "${LOCAL_CONTEXT}" &
+    PF_PID=$!
+    sleep 4
+    curl -sf -u admin:admin http://localhost:13000/api/orgs \
+        -X POST -H "Content-Type: application/json" \
+        -d '{"name":"rbr"}' > /dev/null \
+        || echo "  ℹ️  Org 'rbr' may already exist or grafana-rbr-ver not ready yet"
+    kill "${PF_PID}" 2>/dev/null || true
+    echo "✅ Grafana rbr-ver ready"
+
     echo ""
     echo "======================================================"
     echo "✅ Setup complete"
@@ -368,6 +456,10 @@ EOF
     echo "   pgAdmin:     http://pgadmin-rbr-ver.${TRAEFIK_IP_DASHED}.sslip.io"
     echo "   Email:       ${PGADMIN_RBR_VER_EMAIL}"
     echo "   Password:    ${PGADMIN_RBR_VER_PASSWORD}"
+    echo ""
+    echo "   Grafana:     https://grafana-rbr-ver.${TRAEFIK_IP_DASHED}.sslip.io"
+    echo "   Dex users:   rbr-admin@example.com / rbr-ver-admin@example.com"
+    echo "   (password:   same as dexuser — see DEX_STATIC_PASSWORD_HASH)"
     echo ""
     echo "   1. Open pgAdmin URL above"
     echo "   2. Run: $0 creds local group-admin"
@@ -507,6 +599,19 @@ teardown)
     done
     kubectl delete ingressroute pgadmin-rbr-ver \
         -n pgadmin --context "${LOCAL_CONTEXT}" --ignore-not-found
+
+    echo "📊 Removing Grafana rbr-ver resources..."
+    kubectl delete ingressroute grafana-rbr-ver \
+        -n grafana --context "${LOCAL_CONTEXT}" --ignore-not-found
+    kubectl delete grafanadatasource prometheus-rbr-ver loki-rbr-ver \
+        -n grafana --context "${LOCAL_CONTEXT}" --ignore-not-found
+    kubectl delete grafana grafana-rbr-ver \
+        -n grafana --context "${LOCAL_CONTEXT}" --ignore-not-found
+    kubectl delete secret grafana-rbr-ver-oauth \
+        -n grafana --context "${LOCAL_CONTEXT}" --ignore-not-found
+    kubectl delete certificate grafana-rbr-ver-cert \
+        -n grafana --context "${LOCAL_CONTEXT}" --ignore-not-found
+    echo "ℹ️  Dex config NOT reverted — re-run scripts/dex-setup.sh to reset."
 
     echo "ℹ️  Vault VDE config, policies, and KV paths retained for post-demo inspection."
     echo "   Remove with: vault delete database/config/rbr-ver-max"
