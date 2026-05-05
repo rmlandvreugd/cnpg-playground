@@ -1,0 +1,18 @@
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: objectstore-rbr-ver
+  namespace: rbr-ver-db
+spec:
+  configuration:
+    destinationPath: s3://verstappen-backups/
+    endpointURL: http://objectstore-local:9000
+    s3Credentials:
+      accessKeyId:
+        name: objectstore-local
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: objectstore-local
+        key: ACCESS_SECRET_KEY
+    wal:
+      compression: gzip
