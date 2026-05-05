@@ -103,7 +103,7 @@ EOF
         -n grafana \
         --image=minio/mc:latest \
         --pod-running-timeout=60s \
-        -- sh -c "mc alias set store http://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1 \
+        --command -- sh -c "mc alias set store http://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1 \
             && mc mb --ignore-existing store/loki \
             && echo '✅ Bucket loki ready'" \
         || echo "  ⚠️  Bucket init may have failed — verify: kubectl run mc ... mc mb store/loki"
