@@ -574,6 +574,16 @@ creds)
 
 teardown)
     echo "🔥 Teardown: rbr-ver-db + rbr-ver (local)"
+
+    # Delete CRs first so operators can process finalizers before namespace termination
+    echo "🐘 Deleting CNPG Cluster and ObjectStore (waits for finalizer cleanup)..."
+    kubectl delete cluster verstappen \
+        -n rbr-ver-db --context "${LOCAL_CONTEXT}" --ignore-not-found --wait
+    kubectl delete objectstore objectstore-rbr-ver \
+        -n rbr-ver-db --context "${LOCAL_CONTEXT}" --ignore-not-found --wait
+    kubectl delete externalsecret verstappen-superuser verstappen-app verstappen-readonly \
+        -n rbr-ver-db --context "${LOCAL_CONTEXT}" --ignore-not-found --wait
+
     kubectl delete namespace rbr-ver-db rbr-ver \
         --context "${LOCAL_CONTEXT}" \
         --ignore-not-found
