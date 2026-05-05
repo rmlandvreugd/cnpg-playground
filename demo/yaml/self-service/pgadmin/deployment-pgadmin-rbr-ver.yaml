@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgadmin-rbr-ver
+  namespace: pgadmin
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pgadmin-rbr-ver
+  template:
+    metadata:
+      labels:
+        app: pgadmin-rbr-ver
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/infra: ""
+      containers:
+      - name: pgadmin
+        image: dpage/pgadmin4:latest
+        ports:
+        - containerPort: 80
+          name: http
+        env:
+        - name: PGADMIN_DEFAULT_EMAIL
+          valueFrom:
+            secretKeyRef:
+              name: pgadmin-rbr-ver-credentials
+              key: email
+        - name: PGADMIN_DEFAULT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: pgadmin-rbr-ver-credentials
+              key: password
+        - name: PGADMIN_SERVER_JSON_FILE
+          value: /pgadmin4/servers.json
+        volumeMounts:
+        - name: servers-config
+          mountPath: /pgadmin4/servers.json
+          subPath: servers.json
+          readOnly: true
+      volumes:
+      - name: servers-config
+        configMap:
+          name: pgadmin-rbr-ver-servers
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgadmin-rbr-ver
+  namespace: pgadmin
+spec:
+  selector:
+    app: pgadmin-rbr-ver
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
