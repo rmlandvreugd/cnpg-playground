@@ -6,7 +6,10 @@ nodes:
 # Control Plane node
 - role: control-plane
 
-# Infrastructure/Application nodes (2)
+# Infrastructure/Application nodes (3)
+- role: worker
+  labels:
+    infra.node.kubernetes.io:
 - role: worker
   labels:
     infra.node.kubernetes.io:
