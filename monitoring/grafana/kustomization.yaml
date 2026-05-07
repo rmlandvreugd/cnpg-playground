@@ -13,3 +13,5 @@ resources:
   - grafana_dashboard_k8s_pods.yaml
   - grafana_dashboard_k8s_events.yaml
   - grafana_dashboard_k8s_pod_logs.yaml
+  - grafana_datasource_mimir.yaml
+  - grafana_datasource_tempo.yaml

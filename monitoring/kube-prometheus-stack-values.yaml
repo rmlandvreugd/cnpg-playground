@@ -36,6 +36,13 @@ kubeScheduler:
   enabled: true
 kubeEtcd:
   enabled: true
+  service:
+    enabled: true
+    port: 2381
+    targetPort: 2381
+  serviceMonitor:
+    scheme: http
+    insecureSkipVerify: true
 
 defaultRules:
   create: true

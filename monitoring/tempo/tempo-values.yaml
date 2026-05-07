@@ -1,0 +1,57 @@
+# Single-replica tempo-distributed; RustFS S3 backend; OTLP gRPC + HTTP receivers.
+
+minio:
+  enabled: false  # bundled MinIO unused — RustFS provides S3
+
+storage:
+  trace:
+    backend: s3
+    s3:
+      bucket: tempo
+      endpoint: objectstore-local.tempo.svc.cluster.local:9000
+      region: us-east-1
+      insecure: true
+      # access_key / secret_key injected via --set in setup.sh
+
+# Pin all roles to single replica
+ingester:      { replicas: 1, persistence: { enabled: true, size: 5Gi } }
+distributor:   { replicas: 1 }
+compactor:     { replicas: 1 }
+querier:       { replicas: 1 }
+queryFrontend: { replicas: 1 }
+
+metricsGenerator:
+  enabled: true
+  replicas: 1
+  config:
+    registry:
+      external_labels:
+        source: tempo
+    storage:
+      remote_write:
+        - url: http://mimir-nginx.mimir.svc.cluster.local/api/v1/push
+          headers:
+            X-Scope-OrgID: tempo
+
+overrides:
+  defaults:
+    metrics_generator:
+      processors: [service-graphs, span-metrics]
+
+distributor:
+  replicas: 1
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+
+nodeSelector:
+  node-role.kubernetes.io/infra: ""
+tolerations:
+  - key: node-role.kubernetes.io/infra
+    operator: Exists
+    effect: NoSchedule

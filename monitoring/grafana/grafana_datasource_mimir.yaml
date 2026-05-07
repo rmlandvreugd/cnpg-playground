@@ -1,7 +1,7 @@
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDatasource
 metadata:
-  name: loki
+  name: mimir
   namespace: grafana
 spec:
   instanceSelector:
@@ -9,14 +9,15 @@ spec:
       dashboards: grafana
   allowCrossNamespaceImport: true
   datasource:
+    name: DS_MIMIR
+    type: prometheus
     access: proxy
-    name: DS_LOKI
-    type: loki
-    url: http://loki.grafana.svc.cluster.local:3100
+    url: http://mimir-nginx.mimir.svc.cluster.local
     jsonData:
-      tlsSkipVerify: true
-      derivedFields:
-        - matcherRegex: '"traceID":"(\w+)"'
-          name: TraceID
-          url: '${__value.raw}'
+      httpHeaderName1: X-Scope-OrgID
+      timeInterval: 15s
+      exemplarTraceIdDestinations:
+        - name: traceID
           datasourceUid: tempo
+    secureJsonData:
+      httpHeaderValue1: __all__

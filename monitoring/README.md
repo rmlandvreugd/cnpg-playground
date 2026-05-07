@@ -77,8 +77,10 @@ You can find the dashboard under `Home > Dashboards > grafana > CloudNativePG`.
 | Grafana Operator controller | Helm — `grafana-operator` chart (release `grafana-operator`, namespace `grafana`) |
 | Grafana instance, datasource, dashboards | Plain manifests — `monitoring/grafana/` |
 | Loki single-binary | Helm — `loki` chart (namespace `grafana`, S3 backend via RustFS, 20Gi PVC, 3d retention) |
-| Alloy log collector | Helm — `alloy` chart (namespace `grafana`, scrapes CNPG pods + all-pods + k8s events) |
+| Alloy log collector | Helm — `alloy` chart (namespace `grafana`, scrapes CNPG pods + all-pods + Traefik + k8s events) |
 | Traefik `IngressRoute` for Grafana | Plain template — `monitoring/grafana/ingressroute.yaml.tpl` |
+| Mimir (long-term metrics) | Helm — `mimir-distributed` chart (namespace `mimir`, hub region only, RustFS S3) |
+| Tempo (distributed tracing) | Helm — `tempo-distributed` chart (namespace `tempo`, hub region only, RustFS S3) |
 
 Chart versions are pinned in `scripts/common.sh` as `KUBE_PROMETHEUS_STACK_CHART_VERSION`
 and `GRAFANA_OPERATOR_CHART_VERSION`. Values overrides are in
@@ -98,8 +100,49 @@ and `GRAFANA_OPERATOR_CHART_VERSION`. Values overrides are in
 | Kubernetes Pod Logs | `grafana_dashboard_k8s_pod_logs.yaml` — inline JSON | Loki-backed explorer; namespace/pod/container filters |
 
 `grafanaCom.id` dashboards require outbound internet from the `grafana` namespace at apply time.
-`kubeControllerManager`, `kubeScheduler`, and `kubeEtcd` ServiceMonitors are enabled but will show
-DOWN targets in kind (endpoints bind `127.0.0.1`); this is expected and acceptable.
+
+`kubeControllerManager`, `kubeScheduler`, `kubeProxy`, and `kubeEtcd` ServiceMonitors require
+cluster recreation with `kubeadmConfigPatches` binding metrics to `0.0.0.0` (see `k8s/kind-cluster.yaml`).
+Run `./demo/teardown.sh && ./scripts/setup.sh && ./monitoring/setup.sh` to apply the patches.
+
+**Security note — etcd metrics port 2381:** `etcd` exposes an HTTP-only, unauthenticated metrics
+endpoint on port 2381 (separate from the TLS client port 2379). It exposes runtime metrics only
+(no key/value data). Acceptable for a local playground; do not expose outside the kind docker
+network in non-playground environments.
+
+## Traefik Access Logs
+
+Traefik emits JSON access logs on stdout; Alloy routes them through a dedicated
+`traefik_access` pipeline with `method`, `status`, and `route` promoted as Loki labels.
+Traefik pods are excluded from the generic `system_logs` pipeline to avoid double-shipping.
+
+**PII watchpoint:** Traefik JSON access logs include the full `RequestPath` with query string.
+Any token or credential leaked into a URL parameter is retained in Loki for the chunk-store
+retention window. Rotate any such token immediately; Traefik does not strip URL parameters.
+
+Example queries:
+```
+{app="traefik", status=~"5.."}
+{app="traefik", method="GET"} | json | duration > 500
+```
+
+## Tempo Tracing
+
+Traefik exports OTLP traces to Tempo. Hub region uses gRPC in-cluster
+(`tempo-distributor.tempo.svc.cluster.local:4317`); non-hub regions use HTTP/4318
+via a sslip.io IngressRoute on the hub.
+
+**Sampling:** `tracing.sampleRate: 1.0` (100%) — acceptable for playground, tune down for
+production by setting `--set 'tracing.sampleRate=0.1'` at Traefik install.
+
+**RouterName cardinality:** Traefik's `RouterName` field is promoted as a Loki label.
+If the number of distinct routes exceeds ~50 consider demoting `route` to a parsed field only.
+
+**Tempo metricsGenerator** emits `traces_service_graph_*` and `traces_spanmetrics_*` histograms
+with `traceID` exemplars to Mimir (tenant `tempo`). Mimir histogram exemplars → click → Tempo trace.
+
+**Pre-built Traefik/Tempo dashboard** (RED panels, service-graph node panel, traceID-pivot widgets)
+is a follow-up task — flag in backlog.
 
 ## PodMonitor
 
