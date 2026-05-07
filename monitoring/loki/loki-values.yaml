@@ -27,9 +27,9 @@ loki:
           period: 24h
   limits_config:
     allow_structured_metadata: true
-    retention_period: 7d
-    ingestion_rate_mb: 16
-    ingestion_burst_size_mb: 32
+    retention_period: 3d
+    ingestion_rate_mb: 32
+    ingestion_burst_size_mb: 64
 
 singleBinary:
   replicas: 1
@@ -41,7 +41,7 @@ singleBinary:
       effect: NoSchedule
   persistence:
     enabled: true
-    size: 5Gi
+    size: 20Gi
 
 # Disable distributed-mode components
 backend:
