@@ -30,6 +30,9 @@ source $(git rev-parse --show-toplevel)/scripts/common.sh
 # Determine regions from arguments, or auto-detect if none are provided
 detect_running_regions "$@"
 
+HUB_REGION="${REGIONS[0]}"
+HUB_CONTEXT="$(get_cluster_context "${HUB_REGION}")"
+
 # Add a target port for the port-forward, the port will be incremeted by 1 for each region
 port=3001
 
@@ -49,6 +52,68 @@ for region in "${REGIONS[@]}"; do
 
     kubectl kustomize ${GIT_REPO_ROOT}/monitoring/prometheus-instance | \
         kubectl --context=${CONTEXT_NAME} apply --force-conflicts --server-side -f -
+
+    # --- Mimir: hub install (first region only) ---
+    if [[ "${region}" == "${HUB_REGION}" ]]; then
+        echo "📦 Wiring objectstore into mimir namespace..."
+        RUSTFS_CONTAINER_NAME="${RUSTFS_BASE_NAME}-${region}"
+        OBJECTSTORE_IP=$(${CONTAINER_PROVIDER} inspect "${RUSTFS_CONTAINER_NAME}" \
+            --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
+        kubectl --context "${CONTEXT_NAME}" create namespace mimir --dry-run=client -o yaml \
+            | kubectl --context "${CONTEXT_NAME}" apply -f -
+        OBJECTSTORE_IP="${OBJECTSTORE_IP}" envsubst '${OBJECTSTORE_IP}' \
+            < "${GIT_REPO_ROOT}/monitoring/mimir/objectstore-bridge.yaml.tpl" \
+            | kubectl --context "${CONTEXT_NAME}" apply -f -
+
+        echo "🪣 Creating Mimir S3 buckets..."
+        kubectl --context "${CONTEXT_NAME}" -n grafana delete pod mimir-bucket-init --ignore-not-found
+        kubectl run mimir-bucket-init --restart=Never \
+            --context "${CONTEXT_NAME}" \
+            -n grafana \
+            --image=minio/mc:latest \
+            --pod-running-timeout=60s \
+            --command -- sh -c "mc alias set store http://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1 \
+                && mc mb --ignore-existing store/mimir-blocks \
+                && mc mb --ignore-existing store/mimir-alertmanager \
+                && mc mb --ignore-existing store/mimir-ruler \
+                && echo '✅ Mimir buckets ready'"
+        kubectl --context "${CONTEXT_NAME}" -n grafana wait pod/mimir-bucket-init \
+            --for=jsonpath='{.status.phase}'=Succeeded --timeout=60s \
+            && kubectl --context "${CONTEXT_NAME}" -n grafana logs pod/mimir-bucket-init \
+            || echo "  ⚠️  Mimir bucket init may have failed — verify manually"
+        kubectl --context "${CONTEXT_NAME}" -n grafana delete pod mimir-bucket-init --ignore-not-found
+
+        echo "📊 Installing Mimir ${MIMIR_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
+        helm_upgrade_install mimir \
+            oci://ghcr.io/grafana/helm-charts/mimir-distributed \
+            mimir "${CONTEXT_NAME}" "${MIMIR_CHART_VERSION}" \
+            --values "${GIT_REPO_ROOT}/monitoring/mimir/mimir-values.yaml" \
+            --set "mimir.structuredConfig.common.storage.s3.access_key_id=${RUSTFS_ROOT_USER}" \
+            --set "mimir.structuredConfig.common.storage.s3.secret_access_key=${RUSTFS_ROOT_PASSWORD}"
+
+        if [[ ${#REGIONS[@]} -gt 1 ]]; then
+            HUB_TRAEFIK_IP="$(get_traefik_lb_ip "${HUB_CONTEXT}" 30)"
+            HUB_TRAEFIK_DASHED="$(ip_to_dashed "${HUB_TRAEFIK_IP}")"
+            TRAEFIK_IP_DASHED="${HUB_TRAEFIK_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
+                < "${GIT_REPO_ROOT}/monitoring/mimir/ingressroute.yaml.tpl" \
+                | kubectl --context "${CONTEXT_NAME}" apply -f -
+        fi
+    fi
+
+    # Compute MIMIR_PUSH_URL for this region
+    if [[ "${region}" == "${HUB_REGION}" ]]; then
+        MIMIR_PUSH_URL="http://mimir-nginx.mimir.svc.cluster.local/api/v1/push"
+    else
+        HUB_TRAEFIK_IP="$(get_traefik_lb_ip "${HUB_CONTEXT}" 30)"
+        HUB_TRAEFIK_DASHED="$(ip_to_dashed "${HUB_TRAEFIK_IP}")"
+        MIMIR_PUSH_URL="http://mimir-push.${HUB_TRAEFIK_DASHED}.sslip.io/api/v1/push"
+    fi
+
+    echo "📊 Applying Prometheus CR with remoteWrite → Mimir for '${region}'..."
+    REGION="${region}" MIMIR_PUSH_URL="${MIMIR_PUSH_URL}" \
+        envsubst '${REGION} ${MIMIR_PUSH_URL}' \
+        < "${GIT_REPO_ROOT}/monitoring/prometheus-instance/prometheus-cr.yaml.tpl" \
+        | kubectl --context "${CONTEXT_NAME}" apply --force-conflicts --server-side -f -
 
     echo "-------------------------------------------------------------"
     echo " 📈 Provisioning Grafana resources for region: ${region}"

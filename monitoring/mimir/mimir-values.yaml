@@ -1,0 +1,57 @@
+# Classic architecture, monolithic-style single-replica deployment for the playground.
+# Storage: RustFS S3 (in-cluster Service objectstore-local in the mimir namespace).
+
+kafka:
+  enabled: false
+
+minio:
+  enabled: false  # bundled MinIO unused — RustFS provides S3
+
+mimir:
+  structuredConfig:
+    ingest_storage:
+      enabled: false
+    common:
+      storage:
+        backend: s3
+        s3:
+          endpoint: objectstore-local.mimir.svc.cluster.local:9000
+          region: us-east-1
+          insecure: true
+    blocks_storage:
+      s3:
+        bucket_name: mimir-blocks
+    alertmanager_storage:
+      s3:
+        bucket_name: mimir-alertmanager
+    ruler_storage:
+      s3:
+        bucket_name: mimir-ruler
+    multitenancy_enabled: true
+    limits:
+      ingestion_rate: 100000
+      ingestion_burst_size: 200000
+
+# Pin every component to single replica — playground footprint
+distributor:    { replicas: 1 }
+ingester:       { replicas: 1, persistentVolume: { size: 5Gi } }
+querier:        { replicas: 1 }
+query_frontend: { replicas: 1 }
+query_scheduler: { replicas: 1 }
+store_gateway:  { replicas: 1, persistentVolume: { size: 5Gi } }
+compactor:      { replicas: 1, persistentVolume: { size: 5Gi } }
+ruler:          { replicas: 1 }
+alertmanager:   { replicas: 1, persistentVolume: { size: 1Gi } }
+overrides_exporter: { replicas: 1 }
+
+nginx:
+  replicas: 1
+  service:
+    type: ClusterIP
+
+nodeSelector:
+  node-role.kubernetes.io/infra: ""
+tolerations:
+  - key: node-role.kubernetes.io/infra
+    operator: Exists
+    effect: NoSchedule
