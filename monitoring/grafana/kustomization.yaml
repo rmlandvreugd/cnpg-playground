@@ -1,9 +1,15 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources:
- - grafana_instance.yaml
- - grafana_datasource.yaml
- - grafana_datasource_loki.yaml
- - grafana_dashboard.yaml
- - grafana_dashboard_pgaudit.yaml
 namespace: grafana
+resources:
+  - grafana_instance.yaml
+  - grafana_datasource.yaml
+  - grafana_datasource_loki.yaml
+  - grafana_dashboard.yaml
+  - grafana_dashboard_pgaudit.yaml
+  - grafana_dashboard_node_exporter.yaml
+  - grafana_dashboard_kube_state.yaml
+  - grafana_dashboard_k8s_global.yaml
+  - grafana_dashboard_k8s_pods.yaml
+  - grafana_dashboard_k8s_events.yaml
+  - grafana_dashboard_k8s_pod_logs.yaml
