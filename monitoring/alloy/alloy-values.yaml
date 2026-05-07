@@ -20,9 +20,19 @@ controller:
       operator: Exists
       effect: NoSchedule
 
-# RBAC required for loki.source.kubernetes (pod log access)
+# RBAC required for loki.source.kubernetes (pod log access) and events/cluster-wide logs
 rbac:
   create: true
+  extraRules:
+    - apiGroups: [""]
+      resources:
+        - events
+        - pods
+        - pods/log
+        - namespaces
+        - nodes
+        - nodes/proxy
+      verbs: ["get", "list", "watch"]
 
 serviceAccount:
   create: true
