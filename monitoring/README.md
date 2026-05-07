@@ -72,14 +72,34 @@ You can find the dashboard under `Home > Dashboards > grafana > CloudNativePG`.
 |---|---|
 | Prometheus Operator CRDs and controller | Helm — `kube-prometheus-stack` chart (release `kube-prometheus-stack`, namespace `prometheus-operator`) |
 | kube-state-metrics | Helm — `kube-prometheus-stack` chart |
+| node-exporter DaemonSet | Helm — `kube-prometheus-stack` chart (tolerations: `operator: Exists` to cover all nodes) |
 | `Prometheus` CR and `prometheus-operated` service | Plain manifest — `monitoring/prometheus-instance/` |
 | Grafana Operator controller | Helm — `grafana-operator` chart (release `grafana-operator`, namespace `grafana`) |
-| Grafana instance, datasource, dashboard | Plain manifests — `monitoring/grafana/` |
+| Grafana instance, datasource, dashboards | Plain manifests — `monitoring/grafana/` |
+| Loki single-binary | Helm — `loki` chart (namespace `grafana`, S3 backend via RustFS, 20Gi PVC, 3d retention) |
+| Alloy log collector | Helm — `alloy` chart (namespace `grafana`, scrapes CNPG pods + all-pods + k8s events) |
 | Traefik `IngressRoute` for Grafana | Plain template — `monitoring/grafana/ingressroute.yaml.tpl` |
 
 Chart versions are pinned in `scripts/common.sh` as `KUBE_PROMETHEUS_STACK_CHART_VERSION`
 and `GRAFANA_OPERATOR_CHART_VERSION`. Values overrides are in
 `monitoring/kube-prometheus-stack-values.yaml`.
+
+## Dashboards
+
+| Dashboard | Source | Notes |
+|---|---|---|
+| CloudNativePG cluster | `grafana_dashboard.yaml` — URL import | CNPG official dashboard |
+| pgaudit Audit Logs | `grafana_dashboard_pgaudit.yaml` — inline JSON | Loki datasource |
+| Node Exporter Full | `grafana_dashboard_node_exporter.yaml` — grafana.com id `1860` | Per-node CPU/mem/disk/network |
+| kube-state-metrics v2 | `grafana_dashboard_kube_state.yaml` — grafana.com id `13332` | Workload counts and resource usage |
+| k8s Views / Global | `grafana_dashboard_k8s_global.yaml` — grafana.com id `15760` | Cluster-wide overview |
+| k8s Views / Pods | `grafana_dashboard_k8s_pods.yaml` — grafana.com id `15759` | Per-pod detail |
+| Kubernetes Events | `grafana_dashboard_k8s_events.yaml` — inline JSON | Loki-backed table; namespace/type/reason filters |
+| Kubernetes Pod Logs | `grafana_dashboard_k8s_pod_logs.yaml` — inline JSON | Loki-backed explorer; namespace/pod/container filters |
+
+`grafanaCom.id` dashboards require outbound internet from the `grafana` namespace at apply time.
+`kubeControllerManager`, `kubeScheduler`, and `kubeEtcd` ServiceMonitors are enabled but will show
+DOWN targets in kind (endpoints bind `127.0.0.1`); this is expected and acceptable.
 
 ## PodMonitor
 
