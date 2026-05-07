@@ -25,18 +25,18 @@ ingressRoute:
 logs:
   general:
     level: "INFO"
-
-accessLog:
-  format: json
-  filePath: ""          # stdout — Alloy tails all pod stdout
-  bufferingSize: 0      # immediate flush
-  fields:
-    defaultMode: keep
-    headers:
-      defaultMode: drop  # drop request headers by default (PII)
-      names:
-        User-Agent: keep
-        X-Forwarded-For: keep
+  access:
+    enabled: true
+    format: json
+    bufferingSize: 0      # immediate flush
+    fields:
+      general:
+        defaultmode: keep
+      headers:
+        defaultmode: drop  # drop request headers by default (PII)
+        names:
+          User-Agent: keep
+          X-Forwarded-For: keep
 
 tracing:
   serviceName: traefik
