@@ -25,6 +25,19 @@ nodes:
           oidc-username-prefix: "oidc:"
           oidc-groups-claim: groups
           oidc-groups-prefix: "oidc:"
+      controllerManager:
+        extraArgs:
+          bind-address: 0.0.0.0
+      scheduler:
+        extraArgs:
+          bind-address: 0.0.0.0
+      etcd:
+        local:
+          extraArgs:
+            listen-metrics-urls: http://0.0.0.0:2381
+    - |
+      kind: KubeProxyConfiguration
+      metricsBindAddress: 0.0.0.0
 
 # Infrastructure/Application nodes (3)
 - role: worker

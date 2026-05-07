@@ -98,8 +98,15 @@ and `GRAFANA_OPERATOR_CHART_VERSION`. Values overrides are in
 | Kubernetes Pod Logs | `grafana_dashboard_k8s_pod_logs.yaml` — inline JSON | Loki-backed explorer; namespace/pod/container filters |
 
 `grafanaCom.id` dashboards require outbound internet from the `grafana` namespace at apply time.
-`kubeControllerManager`, `kubeScheduler`, and `kubeEtcd` ServiceMonitors are enabled but will show
-DOWN targets in kind (endpoints bind `127.0.0.1`); this is expected and acceptable.
+
+`kubeControllerManager`, `kubeScheduler`, `kubeProxy`, and `kubeEtcd` ServiceMonitors require
+cluster recreation with `kubeadmConfigPatches` binding metrics to `0.0.0.0` (see `k8s/kind-cluster.yaml`).
+Run `./demo/teardown.sh && ./scripts/setup.sh && ./monitoring/setup.sh` to apply the patches.
+
+**Security note — etcd metrics port 2381:** `etcd` exposes an HTTP-only, unauthenticated metrics
+endpoint on port 2381 (separate from the TLS client port 2379). It exposes runtime metrics only
+(no key/value data). Acceptable for a local playground; do not expose outside the kind docker
+network in non-playground environments.
 
 ## PodMonitor
 
