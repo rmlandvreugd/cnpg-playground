@@ -98,15 +98,20 @@ subsets:
 EOF
 
     echo "🪣 Creating Loki S3 bucket..."
-    kubectl run loki-bucket-init --restart=Never --rm --attach \
+    kubectl --context "${CONTEXT_NAME}" -n grafana delete pod loki-bucket-init --ignore-not-found
+    kubectl run loki-bucket-init --restart=Never \
         --context "${CONTEXT_NAME}" \
         -n grafana \
         --image=minio/mc:latest \
         --pod-running-timeout=60s \
         --command -- sh -c "mc alias set store http://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1 \
             && mc mb --ignore-existing store/loki \
-            && echo '✅ Bucket loki ready'" \
+            && echo '✅ Bucket loki ready'"
+    kubectl --context "${CONTEXT_NAME}" -n grafana wait pod/loki-bucket-init \
+        --for=jsonpath='{.status.phase}'=Succeeded --timeout=60s \
+        && kubectl --context "${CONTEXT_NAME}" -n grafana logs pod/loki-bucket-init \
         || echo "  ⚠️  Bucket init may have failed — verify: kubectl run mc ... mc mb store/loki"
+    kubectl --context "${CONTEXT_NAME}" -n grafana delete pod loki-bucket-init --ignore-not-found
 
     echo "📊 Installing Loki ${LOKI_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
     helm_upgrade_install loki oci://ghcr.io/grafana-community/helm-charts/loki \
