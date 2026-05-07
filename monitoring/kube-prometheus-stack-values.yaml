@@ -4,9 +4,38 @@ grafana:
   enabled: false
 alertmanager:
   enabled: false
-nodeExporter:
-  enabled: false
+
 prometheusOperator:
   enabled: true
+
 kubeStateMetrics:
   enabled: true
+
+nodeExporter:
+  enabled: true
+prometheus-node-exporter:
+  tolerations:
+    - operator: Exists  # cover all nodes including infra/control-plane
+
+kubeApiServer:
+  enabled: true
+kubelet:
+  enabled: true
+  serviceMonitor:
+    cAdvisor: true
+    probes: true
+coreDns:
+  enabled: true
+kubeProxy:
+  enabled: true
+
+# Kept enabled per locked decision; DOWN targets expected in kind
+kubeControllerManager:
+  enabled: true
+kubeScheduler:
+  enabled: true
+kubeEtcd:
+  enabled: true
+
+defaultRules:
+  create: true
