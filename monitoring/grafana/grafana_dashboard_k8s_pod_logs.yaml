@@ -1,0 +1,47 @@
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: k8s-pod-logs
+  namespace: grafana
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: "grafana"
+  json: |
+    {
+      "title": "Kubernetes Pod Logs",
+      "uid": "k8s-pod-logs",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "10s",
+      "time": {"from": "now-15m", "to": "now"},
+      "templating": {
+        "list": [
+          {"name":"datasource","label":"Loki","type":"datasource","query":"loki","hide":0},
+          {"name":"namespace","label":"Namespace","type":"query",
+           "datasource":{"type":"loki","uid":"${datasource}"},
+           "query":{"label":"namespace","type":1},"refresh":2,"multi":false,"includeAll":false},
+          {"name":"pod","label":"Pod","type":"query",
+           "datasource":{"type":"loki","uid":"${datasource}"},
+           "query":{"label":"pod","stream":"{namespace=\"$namespace\"}","type":1},"refresh":2,"multi":false,"includeAll":false},
+          {"name":"container","label":"Container","type":"query",
+           "datasource":{"type":"loki","uid":"${datasource}"},
+           "query":{"label":"container","stream":"{namespace=\"$namespace\", pod=\"$pod\"}","type":1},"refresh":2,"multi":true,"includeAll":true,"allValue":".+"}
+        ]
+      },
+      "panels": [
+        {
+          "id": 1, "title": "Log Rate", "type": "timeseries",
+          "gridPos": {"x":0,"y":0,"w":24,"h":6},
+          "datasource": {"type":"loki","uid":"${datasource}"},
+          "targets": [{"refId":"A","expr":"sum by (container) (rate({namespace=\"$namespace\", pod=\"$pod\", container=~\"$container\"}[1m]))"}]
+        },
+        {
+          "id": 2, "title": "Logs", "type": "logs",
+          "gridPos": {"x":0,"y":6,"w":24,"h":18},
+          "datasource": {"type":"loki","uid":"${datasource}"},
+          "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Descending"},
+          "targets": [{"refId":"A","expr":"{namespace=\"$namespace\", pod=\"$pod\", container=~\"$container\"}"}]
+        }
+      ]
+    }
