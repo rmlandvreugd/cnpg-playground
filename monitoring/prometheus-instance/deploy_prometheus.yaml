@@ -44,7 +44,7 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: prometheus
-  namespace: default
+  namespace: prometheus-operator
 ---
 
 apiVersion: monitoring.coreos.com/v1
@@ -55,5 +55,11 @@ spec:
   serviceAccountName: prometheus
   podMonitorSelector: {}
   podMonitorNamespaceSelector: {}
+  serviceMonitorSelector: {}
+  serviceMonitorNamespaceSelector: {}
+  ruleSelector: {}
+  ruleNamespaceSelector: {}
+  probeSelector: {}
+  probeNamespaceSelector: {}
   nodeSelector:
     node-role.kubernetes.io/infra: ""
