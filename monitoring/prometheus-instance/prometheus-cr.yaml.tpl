@@ -13,6 +13,8 @@ spec:
   ruleNamespaceSelector: {}
   probeSelector: {}
   probeNamespaceSelector: {}
+  externalLabels:
+    cluster: "${REGION}"
   nodeSelector:
     node-role.kubernetes.io/infra: ""
   remoteWrite:
