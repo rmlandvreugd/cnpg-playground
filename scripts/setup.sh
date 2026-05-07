@@ -237,7 +237,7 @@ EOF
         traefik "${CONTEXT_NAME}" "${TRAEFIK_CHART_VERSION}" \
         --values "${GIT_REPO_ROOT}/traefik/values.yaml" \
         --set "tracing.serviceName=traefik-${region}" \
-        --set "tracing.globalAttributes.cluster=${region}" \
+        --set "tracing.resourceAttributes.cluster=${region}" \
         "${TRACING_SET_ARGS[@]}"
 
     # Traefik dashboard TLS certificate
