@@ -55,6 +55,7 @@ echo
 # --- Script Setup ---
 # Determine regions from arguments, or use defaults
 set_regions "$@"
+HUB_REGION="${REGIONS[0]}"
 
 echo "=================================================="
 echo "🔐 Phase 0: Bootstrapping external services"
@@ -220,10 +221,24 @@ EOF
     TRAEFIK_IP=$(echo "$IP_RANGE" | cut -d- -f1)
     TRAEFIK_IP_DASHED=$(ip_to_dashed "${TRAEFIK_IP}")
     echo "🔧 Installing Traefik ${TRAEFIK_CHART_VERSION} (chart) in '${K8S_CLUSTER_NAME}'..."
+    if [[ "${region}" == "${HUB_REGION}" ]]; then
+        # Hub: wire gRPC tracing to in-cluster Tempo (Tempo may not exist yet; Traefik retries)
+        TRACING_SET_ARGS=(
+            --set "tracing.otlp.grpc.enabled=true"
+            --set "tracing.otlp.grpc.endpoint=tempo-distributor.tempo.svc.cluster.local:4317"
+            --set "tracing.otlp.grpc.insecure=true"
+        )
+    else
+        # Non-hub: install without tracing; monitoring/setup.sh upgrades after hub Tempo is live
+        TRACING_SET_ARGS=()
+    fi
     helm_upgrade_install traefik \
         oci://ghcr.io/traefik/helm/traefik \
         traefik "${CONTEXT_NAME}" "${TRAEFIK_CHART_VERSION}" \
-        --values "${GIT_REPO_ROOT}/traefik/values.yaml"
+        --values "${GIT_REPO_ROOT}/traefik/values.yaml" \
+        --set "tracing.serviceName=traefik-${region}" \
+        --set "tracing.globalAttributes.cluster=${region}" \
+        "${TRACING_SET_ARGS[@]}"
 
     # Traefik dashboard TLS certificate
     echo "📜 Issuing Traefik dashboard TLS certificate..."

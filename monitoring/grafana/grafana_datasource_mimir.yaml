@@ -16,5 +16,8 @@ spec:
     jsonData:
       httpHeaderName1: X-Scope-OrgID
       timeInterval: 15s
+      exemplarTraceIdDestinations:
+        - name: traceID
+          datasourceUid: tempo
     secureJsonData:
       httpHeaderValue1: __all__

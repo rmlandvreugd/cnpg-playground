@@ -115,6 +115,66 @@ for region in "${REGIONS[@]}"; do
         < "${GIT_REPO_ROOT}/monitoring/prometheus-instance/prometheus-cr.yaml.tpl" \
         | kubectl --context "${CONTEXT_NAME}" apply --force-conflicts --server-side -f -
 
+    # --- Tempo: hub install (first region only) ---
+    if [[ "${region}" == "${HUB_REGION}" ]]; then
+        echo "📦 Wiring objectstore into tempo namespace..."
+        RUSTFS_CONTAINER_NAME="${RUSTFS_BASE_NAME}-${region}"
+        OBJECTSTORE_IP=$(${CONTAINER_PROVIDER} inspect "${RUSTFS_CONTAINER_NAME}" \
+            --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
+        kubectl --context "${CONTEXT_NAME}" create namespace tempo --dry-run=client -o yaml \
+            | kubectl --context "${CONTEXT_NAME}" apply -f -
+        OBJECTSTORE_IP="${OBJECTSTORE_IP}" envsubst '${OBJECTSTORE_IP}' \
+            < "${GIT_REPO_ROOT}/monitoring/tempo/objectstore-bridge.yaml.tpl" \
+            | kubectl --context "${CONTEXT_NAME}" apply -f -
+
+        echo "🪣 Creating Tempo S3 bucket..."
+        kubectl --context "${CONTEXT_NAME}" -n grafana delete pod tempo-bucket-init --ignore-not-found
+        kubectl run tempo-bucket-init --restart=Never \
+            --context "${CONTEXT_NAME}" \
+            -n grafana \
+            --image=minio/mc:latest \
+            --pod-running-timeout=60s \
+            --command -- sh -c "mc alias set store http://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1 \
+                && mc mb --ignore-existing store/tempo \
+                && echo '✅ Bucket tempo ready'"
+        kubectl --context "${CONTEXT_NAME}" -n grafana wait pod/tempo-bucket-init \
+            --for=jsonpath='{.status.phase}'=Succeeded --timeout=60s \
+            && kubectl --context "${CONTEXT_NAME}" -n grafana logs pod/tempo-bucket-init \
+            || echo "  ⚠️  Tempo bucket init may have failed — verify manually"
+        kubectl --context "${CONTEXT_NAME}" -n grafana delete pod tempo-bucket-init --ignore-not-found
+
+        echo "📊 Installing Tempo ${TEMPO_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
+        helm_upgrade_install tempo \
+            oci://ghcr.io/grafana/helm-charts/tempo-distributed \
+            tempo "${CONTEXT_NAME}" "${TEMPO_CHART_VERSION}" \
+            --values "${GIT_REPO_ROOT}/monitoring/tempo/tempo-values.yaml" \
+            --set "storage.trace.s3.access_key=${RUSTFS_ROOT_USER}" \
+            --set "storage.trace.s3.secret_key=${RUSTFS_ROOT_PASSWORD}"
+
+        if [[ ${#REGIONS[@]} -gt 1 ]]; then
+            HUB_TRAEFIK_IP="$(get_traefik_lb_ip "${HUB_CONTEXT}" 30)"
+            HUB_TRAEFIK_DASHED="$(ip_to_dashed "${HUB_TRAEFIK_IP}")"
+            TRAEFIK_IP_DASHED="${HUB_TRAEFIK_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
+                < "${GIT_REPO_ROOT}/monitoring/tempo/ingressroute.yaml.tpl" \
+                | kubectl --context "${CONTEXT_NAME}" apply -f -
+
+            echo "🔁 Re-applying Traefik on non-hub regions to enable OTLP HTTP push to hub Tempo..."
+            for non_hub_region in "${REGIONS[@]}"; do
+                if [[ "${non_hub_region}" != "${HUB_REGION}" ]]; then
+                    NON_HUB_CTX="$(get_cluster_context "${non_hub_region}")"
+                    helm_upgrade_install traefik \
+                        oci://ghcr.io/traefik/helm/traefik \
+                        traefik "${NON_HUB_CTX}" "${TRAEFIK_CHART_VERSION}" \
+                        --values "${GIT_REPO_ROOT}/traefik/values.yaml" \
+                        --set "tracing.otlp.http.enabled=true" \
+                        --set "tracing.otlp.http.endpoint=http://tempo-otlp.${HUB_TRAEFIK_DASHED}.sslip.io/v1/traces" \
+                        --set "tracing.serviceName=traefik-${non_hub_region}" \
+                        --set "tracing.globalAttributes.cluster=${non_hub_region}"
+                fi
+            done
+        fi
+    fi
+
     echo "-------------------------------------------------------------"
     echo " 📈 Provisioning Grafana resources for region: ${region}"
     echo "-------------------------------------------------------------"

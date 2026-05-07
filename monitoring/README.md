@@ -77,8 +77,10 @@ You can find the dashboard under `Home > Dashboards > grafana > CloudNativePG`.
 | Grafana Operator controller | Helm — `grafana-operator` chart (release `grafana-operator`, namespace `grafana`) |
 | Grafana instance, datasource, dashboards | Plain manifests — `monitoring/grafana/` |
 | Loki single-binary | Helm — `loki` chart (namespace `grafana`, S3 backend via RustFS, 20Gi PVC, 3d retention) |
-| Alloy log collector | Helm — `alloy` chart (namespace `grafana`, scrapes CNPG pods + all-pods + k8s events) |
+| Alloy log collector | Helm — `alloy` chart (namespace `grafana`, scrapes CNPG pods + all-pods + Traefik + k8s events) |
 | Traefik `IngressRoute` for Grafana | Plain template — `monitoring/grafana/ingressroute.yaml.tpl` |
+| Mimir (long-term metrics) | Helm — `mimir-distributed` chart (namespace `mimir`, hub region only, RustFS S3) |
+| Tempo (distributed tracing) | Helm — `tempo-distributed` chart (namespace `tempo`, hub region only, RustFS S3) |
 
 Chart versions are pinned in `scripts/common.sh` as `KUBE_PROMETHEUS_STACK_CHART_VERSION`
 and `GRAFANA_OPERATOR_CHART_VERSION`. Values overrides are in
@@ -123,6 +125,24 @@ Example queries:
 {app="traefik", status=~"5.."}
 {app="traefik", method="GET"} | json | duration > 500
 ```
+
+## Tempo Tracing
+
+Traefik exports OTLP traces to Tempo. Hub region uses gRPC in-cluster
+(`tempo-distributor.tempo.svc.cluster.local:4317`); non-hub regions use HTTP/4318
+via a sslip.io IngressRoute on the hub.
+
+**Sampling:** `tracing.sampleRate: 1.0` (100%) — acceptable for playground, tune down for
+production by setting `--set 'tracing.sampleRate=0.1'` at Traefik install.
+
+**RouterName cardinality:** Traefik's `RouterName` field is promoted as a Loki label.
+If the number of distinct routes exceeds ~50 consider demoting `route` to a parsed field only.
+
+**Tempo metricsGenerator** emits `traces_service_graph_*` and `traces_spanmetrics_*` histograms
+with `traceID` exemplars to Mimir (tenant `tempo`). Mimir histogram exemplars → click → Tempo trace.
+
+**Pre-built Traefik/Tempo dashboard** (RED panels, service-graph node panel, traceID-pivot widgets)
+is a follow-up task — flag in backlog.
 
 ## PodMonitor
 

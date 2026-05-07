@@ -15,3 +15,8 @@ spec:
     url: http://loki.grafana.svc.cluster.local:3100
     jsonData:
       tlsSkipVerify: true
+      derivedFields:
+        - matcherRegex: '"traceID":"(\w+)"'
+          name: TraceID
+          url: '${__value.raw}'
+          datasourceUid: tempo
