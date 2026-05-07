@@ -108,6 +108,22 @@ endpoint on port 2381 (separate from the TLS client port 2379). It exposes runti
 (no key/value data). Acceptable for a local playground; do not expose outside the kind docker
 network in non-playground environments.
 
+## Traefik Access Logs
+
+Traefik emits JSON access logs on stdout; Alloy routes them through a dedicated
+`traefik_access` pipeline with `method`, `status`, and `route` promoted as Loki labels.
+Traefik pods are excluded from the generic `system_logs` pipeline to avoid double-shipping.
+
+**PII watchpoint:** Traefik JSON access logs include the full `RequestPath` with query string.
+Any token or credential leaked into a URL parameter is retained in Loki for the chunk-store
+retention window. Rotate any such token immediately; Traefik does not strip URL parameters.
+
+Example queries:
+```
+{app="traefik", status=~"5.."}
+{app="traefik", method="GET"} | json | duration > 500
+```
+
 ## PodMonitor
 
 To enable Prometheus to scrape metrics from your PostgreSQL pods, you must

@@ -26,6 +26,25 @@ logs:
   general:
     level: "INFO"
 
+accessLog:
+  format: json
+  filePath: ""          # stdout — Alloy tails all pod stdout
+  bufferingSize: 0      # immediate flush
+  fields:
+    defaultMode: keep
+    headers:
+      defaultMode: drop  # drop request headers by default (PII)
+      names:
+        User-Agent: keep
+        X-Forwarded-For: keep
+
+tracing:
+  serviceName: traefik
+  sampleRate: 1.0       # 100% sampling — playground; tune for prod
+  otlp:
+    enabled: true
+    # transport and endpoint set at install time via --set (hub=gRPC, non-hub=HTTP)
+
 additionalArguments:
   - "--global.checknewversion=false"
   - "--global.sendanonymoususage=false"

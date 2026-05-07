@@ -93,10 +93,70 @@ discovery.relabel "all_pods" {
     action        = "drop"
     regex         = ".+"
   }
+  // Drop Traefik pods — shipped via traefik_access pipeline below
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+    action        = "drop"
+    regex         = "traefik"
+  }
 }
 
 loki.source.kubernetes "system_logs" {
   targets    = discovery.relabel.all_pods.output
+  forward_to = [loki.write.grafana_loki.receiver]
+}
+
+// === Traefik access-log branch ===
+discovery.relabel "traefik_pods" {
+  targets = discovery.kubernetes.all_pods.targets
+
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+    regex         = "traefik"
+    action        = "keep"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    target_label  = "namespace"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_name"]
+    target_label  = "pod"
+  }
+  rule {
+    target_label = "app"
+    replacement  = "traefik"
+  }
+}
+
+loki.source.kubernetes "traefik_access" {
+  targets    = discovery.relabel.traefik_pods.output
+  forward_to = [loki.process.traefik_access.receiver]
+}
+
+loki.process "traefik_access" {
+  // Non-JSON lines (Traefik runtime logs) pass through unmodified
+  stage.json {
+    expressions = {
+      method   = "RequestMethod",
+      status   = "DownstreamStatus",
+      host     = "RequestHost",
+      route    = "RouterName",
+      service  = "ServiceName",
+      duration = "Duration",
+      trace_id = "traceID",
+    }
+  }
+
+  // Promote low-cardinality fields to Loki labels
+  stage.labels {
+    values = {
+      method = "method",
+      status = "status",
+      route  = "route",
+    }
+  }
+
   forward_to = [loki.write.grafana_loki.receiver]
 }
 
