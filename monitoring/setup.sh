@@ -66,10 +66,10 @@ for region in "${REGIONS[@]}"; do
             | kubectl --context "${CONTEXT_NAME}" apply -f -
 
         echo "🪣 Creating Mimir S3 buckets..."
-        kubectl --context "${CONTEXT_NAME}" -n grafana delete pod mimir-bucket-init --ignore-not-found
+        kubectl --context "${CONTEXT_NAME}" -n mimir delete pod mimir-bucket-init --ignore-not-found
         kubectl run mimir-bucket-init --restart=Never \
             --context "${CONTEXT_NAME}" \
-            -n grafana \
+            -n mimir \
             --image=minio/mc:latest \
             --pod-running-timeout=60s \
             --command -- sh -c "mc alias set store http://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1 \
@@ -77,11 +77,11 @@ for region in "${REGIONS[@]}"; do
                 && mc mb --ignore-existing store/mimir-alertmanager \
                 && mc mb --ignore-existing store/mimir-ruler \
                 && echo '✅ Mimir buckets ready'"
-        kubectl --context "${CONTEXT_NAME}" -n grafana wait pod/mimir-bucket-init \
+        kubectl --context "${CONTEXT_NAME}" -n mimir wait pod/mimir-bucket-init \
             --for=jsonpath='{.status.phase}'=Succeeded --timeout=60s \
-            && kubectl --context "${CONTEXT_NAME}" -n grafana logs pod/mimir-bucket-init \
+            && kubectl --context "${CONTEXT_NAME}" -n mimir logs pod/mimir-bucket-init \
             || echo "  ⚠️  Mimir bucket init may have failed — verify manually"
-        kubectl --context "${CONTEXT_NAME}" -n grafana delete pod mimir-bucket-init --ignore-not-found
+        kubectl --context "${CONTEXT_NAME}" -n mimir delete pod mimir-bucket-init --ignore-not-found
 
         echo "📊 Installing Mimir ${MIMIR_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
         helm_upgrade_install mimir \
@@ -128,20 +128,20 @@ for region in "${REGIONS[@]}"; do
             | kubectl --context "${CONTEXT_NAME}" apply -f -
 
         echo "🪣 Creating Tempo S3 bucket..."
-        kubectl --context "${CONTEXT_NAME}" -n grafana delete pod tempo-bucket-init --ignore-not-found
+        kubectl --context "${CONTEXT_NAME}" -n tempo delete pod tempo-bucket-init --ignore-not-found
         kubectl run tempo-bucket-init --restart=Never \
             --context "${CONTEXT_NAME}" \
-            -n grafana \
+            -n tempo \
             --image=minio/mc:latest \
             --pod-running-timeout=60s \
             --command -- sh -c "mc alias set store http://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1 \
                 && mc mb --ignore-existing store/tempo \
                 && echo '✅ Bucket tempo ready'"
-        kubectl --context "${CONTEXT_NAME}" -n grafana wait pod/tempo-bucket-init \
+        kubectl --context "${CONTEXT_NAME}" -n tempo wait pod/tempo-bucket-init \
             --for=jsonpath='{.status.phase}'=Succeeded --timeout=60s \
-            && kubectl --context "${CONTEXT_NAME}" -n grafana logs pod/tempo-bucket-init \
+            && kubectl --context "${CONTEXT_NAME}" -n tempo logs pod/tempo-bucket-init \
             || echo "  ⚠️  Tempo bucket init may have failed — verify manually"
-        kubectl --context "${CONTEXT_NAME}" -n grafana delete pod tempo-bucket-init --ignore-not-found
+        kubectl --context "${CONTEXT_NAME}" -n tempo delete pod tempo-bucket-init --ignore-not-found
 
         echo "📊 Installing Tempo ${TEMPO_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
         helm_upgrade_install tempo \
