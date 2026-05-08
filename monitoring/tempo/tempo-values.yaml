@@ -14,7 +14,13 @@ storage:
       # access_key / secret_key injected via --set in setup.sh
 
 # Pin all roles to single replica
-ingester:      { replicas: 1, persistence: { enabled: true, size: 5Gi } }
+ingester:
+  replicas: 1
+  persistence:
+    enabled: true
+    size: 5Gi
+  config:
+    replication_factor: 1  # single-node: avoids "at least 2 live replicas required" error
 distributor:   { replicas: 1 }
 compactor:     { replicas: 1 }
 querier:       { replicas: 1 }
@@ -32,11 +38,20 @@ metricsGenerator:
         - url: http://mimir-nginx.mimir.svc.cluster.local/api/v1/push
           headers:
             X-Scope-OrgID: tempo
+    processor:
+      local_blocks:
+        max_live_traces: 50000
+        max_block_duration: 5m
+        max_block_bytes: 314572800
+        flush_check_period: 10s
+        trace_idle_period: 10s
+        complete_block_timeout: 15m
+        filter_server_spans: false
 
 overrides:
   defaults:
     metrics_generator:
-      processors: [service-graphs, span-metrics]
+      processors: [service-graphs, span-metrics, local-blocks]
 
 traces:
   otlp:
