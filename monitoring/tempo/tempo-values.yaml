@@ -38,20 +38,17 @@ overrides:
     metrics_generator:
       processors: [service-graphs, span-metrics]
 
-distributor:
-  replicas: 1
-  config:
-    receivers:
-      otlp:
-        protocols:
-          grpc:
-            endpoint: 0.0.0.0:4317
-          http:
-            endpoint: 0.0.0.0:4318
+traces:
+  otlp:
+    grpc:
+      enabled: true
+    http:
+      enabled: true
 
-nodeSelector:
-  node-role.kubernetes.io/infra: ""
-tolerations:
-  - key: node-role.kubernetes.io/infra
-    operator: Exists
-    effect: NoSchedule
+tempo:
+  nodeSelector:
+    node-role.kubernetes.io/infra: ""
+  tolerations:
+    - key: node-role.kubernetes.io/infra
+      operator: Exists
+      effect: NoSchedule

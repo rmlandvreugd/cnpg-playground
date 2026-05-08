@@ -145,7 +145,7 @@ for region in "${REGIONS[@]}"; do
 
         echo "📊 Installing Tempo ${TEMPO_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
         helm_upgrade_install tempo \
-            oci://ghcr.io/grafana/helm-charts/tempo-distributed \
+            oci://ghcr.io/grafana-community/helm-charts/tempo-distributed \
             tempo "${CONTEXT_NAME}" "${TEMPO_CHART_VERSION}" \
             --values "${GIT_REPO_ROOT}/monitoring/tempo/tempo-values.yaml" \
             --set "storage.trace.s3.access_key=${RUSTFS_ROOT_USER}" \
