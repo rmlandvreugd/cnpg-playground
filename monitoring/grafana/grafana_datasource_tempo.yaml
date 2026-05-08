@@ -10,6 +10,7 @@ spec:
   allowCrossNamespaceImport: true
   datasource:
     name: DS_TEMPO
+    uid: tempo
     type: tempo
     access: proxy
     url: http://tempo-query-frontend.tempo.svc.cluster.local:3200

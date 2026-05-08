@@ -10,9 +10,10 @@ spec:
   allowCrossNamespaceImport: true
   datasource:
     name: DS_MIMIR
+    uid: mimir
     type: prometheus
     access: proxy
-    url: http://mimir-nginx.mimir.svc.cluster.local
+    url: http://mimir-nginx.mimir.svc.cluster.local/prometheus
     jsonData:
       httpHeaderName1: X-Scope-OrgID
       timeInterval: 15s

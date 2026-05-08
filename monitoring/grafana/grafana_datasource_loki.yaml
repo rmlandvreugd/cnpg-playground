@@ -9,9 +9,10 @@ spec:
       dashboards: grafana
   allowCrossNamespaceImport: true
   datasource:
-    access: proxy
     name: DS_LOKI
+    uid: loki
     type: loki
+    access: proxy
     url: http://loki.grafana.svc.cluster.local:3100
     jsonData:
       tlsSkipVerify: true
