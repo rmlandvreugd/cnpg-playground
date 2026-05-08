@@ -28,6 +28,8 @@ mimir:
       s3:
         bucket_name: mimir-ruler
     multitenancy_enabled: true
+    tenant_federation:
+      enabled: true
     limits:
       ingestion_rate: 100000
       ingestion_burst_size: 200000

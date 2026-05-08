@@ -21,4 +21,4 @@ spec:
         - name: traceID
           datasourceUid: tempo
     secureJsonData:
-      httpHeaderValue1: __all__
+      httpHeaderValue1: local
