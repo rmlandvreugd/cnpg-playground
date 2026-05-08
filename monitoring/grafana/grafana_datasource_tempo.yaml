@@ -26,11 +26,11 @@ spec:
             value: cluster
         filterByTraceID: true
       tracesToMetrics:
-        datasourceUid: mimir
+        datasourceUid: mimir-tempo
         tags:
           - key: cluster
       serviceMap:
-        datasourceUid: mimir
+        datasourceUid: mimir-tempo
       nodeGraph:
         enabled: true
       lokiSearch:
