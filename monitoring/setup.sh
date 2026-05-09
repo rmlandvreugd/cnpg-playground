@@ -275,6 +275,14 @@ then
   kubectl rollout status deployment -n cnpg-system cnpg-controller-manager
 fi
 
+    if kubectl --context "${CONTEXT_NAME}" get namespace cnpg-system &>/dev/null; then
+        echo "📊 Applying CNPG PodMonitors (operator + cluster/pooler wildcards)..."
+        kubectl --context "${CONTEXT_NAME}" apply \
+            -f "${GIT_REPO_ROOT}/monitoring/cnpg/cnpg-operator-podmonitor.yaml" \
+            -f "${GIT_REPO_ROOT}/monitoring/cnpg/cnpg-cluster-wildcard-podmonitor.yaml" \
+            -f "${GIT_REPO_ROOT}/monitoring/cnpg/cnpg-pooler-wildcard-podmonitor.yaml"
+    fi
+
     if TRAEFIK_LB_IP=$(get_traefik_lb_ip "${CONTEXT_NAME}" 30); then
         TRAEFIK_IP_DASHED=$(ip_to_dashed "${TRAEFIK_LB_IP}")
         TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \

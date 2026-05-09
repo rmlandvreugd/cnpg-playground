@@ -44,6 +44,12 @@ spec:
       shared_memory_type: 'sysv'
       dynamic_shared_memory_type: 'sysv'
 
+  monitoring:
+    enablePodMonitor: false   # rely on wildcard PodMonitors in monitoring/cnpg/
+    customQueriesConfigMap:
+      - name: cnpg-custom-metrics
+        key: custom-metrics.yaml
+
   plugins:
   - name: barman-cloud.cloudnative-pg.io
     isWALArchiver: true

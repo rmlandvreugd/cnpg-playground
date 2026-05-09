@@ -1,0 +1,15 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: cnpg-poolers
+  namespace: cnpg-system
+spec:
+  namespaceSelector:
+    any: true                 # match poolers in any namespace (self-service tenants)
+  selector:
+    matchExpressions:
+      - key: cnpg.io/poolerName
+        operator: Exists      # set by CNPG on every pooler-managed pod
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics

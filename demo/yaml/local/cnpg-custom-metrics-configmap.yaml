@@ -1,0 +1,70 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cnpg-custom-metrics
+  namespace: default         # same namespace as the Cluster CR
+  labels:
+    cnpg.io/reload: ""       # required: CNPG only reloads labeled ConfigMaps
+data:
+  custom-metrics.yaml: |
+    pg_replication_lag:
+      # Run on every instance: returns 0 on primary, lag on replica.
+      # No `primary: true` gate — replica reading is the whole point.
+      query: |
+        SELECT
+          COALESCE(EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp()))::bigint, 0) AS lag_seconds,
+          pg_is_in_recovery()::int AS is_replica
+      metrics:
+        - lag_seconds:
+            usage: GAUGE
+            description: "Replication lag in seconds (0 on primary)"
+        - is_replica:
+            usage: GAUGE
+            description: "1 if this is a standby, 0 if primary"
+
+    pg_stat_connections:
+      # Connection state is per-instance; useful on both primary and replicas.
+      query: |
+        SELECT state, count(*) AS total
+        FROM pg_stat_activity
+        WHERE datname IS NOT NULL
+        GROUP BY state
+      metrics:
+        - state:
+            usage: LABEL
+            description: "Connection state"
+        - total:
+            usage: GAUGE
+            description: "Number of connections in this state"
+
+    pg_database_size:
+      # Identical on primary and replicas — gate to primary to avoid 3x duplicate series.
+      primary: true
+      query: |
+        SELECT datname, pg_database_size(datname) AS bytes
+        FROM pg_database
+        WHERE datname NOT IN ('template0','template1','postgres')
+      metrics:
+        - datname:
+            usage: LABEL
+            description: "Database name"
+        - bytes:
+            usage: GAUGE
+            description: "Database size in bytes"
+
+    pg_long_running_queries:
+      # Queries on replicas are read-only and rare; primary is the operational concern.
+      primary: true
+      query: |
+        SELECT count(*) AS count,
+               COALESCE(max(EXTRACT(EPOCH FROM (now() - query_start)))::int, 0) AS max_age_seconds
+        FROM pg_stat_activity
+        WHERE state = 'active' AND query_start < now() - interval '30 seconds'
+          AND query NOT LIKE '%pg_stat_activity%'
+      metrics:
+        - count:
+            usage: GAUGE
+            description: "Queries running longer than 30s"
+        - max_age_seconds:
+            usage: GAUGE
+            description: "Age of the oldest long-running query in seconds"

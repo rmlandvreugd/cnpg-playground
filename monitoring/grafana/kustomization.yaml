@@ -16,3 +16,4 @@ resources:
   - grafana_datasource_mimir.yaml
   - grafana_datasource_mimir_tempo.yaml
   - grafana_datasource_tempo.yaml
+  - grafana_dashboard_cnpg_custom.yaml
