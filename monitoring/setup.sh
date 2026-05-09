@@ -151,14 +151,30 @@ for region in "${REGIONS[@]}"; do
             --set "storage.trace.s3.access_key=${RUSTFS_ROOT_USER}" \
             --set "storage.trace.s3.secret_key=${RUSTFS_ROOT_PASSWORD}"
 
+        echo "📡 Installing OTel Collector (tail-based sampling gateway)..."
+        kubectl --context "${CONTEXT_NAME}" create namespace otel --dry-run=client -o yaml \
+            | kubectl --context "${CONTEXT_NAME}" apply -f -
+
+        helm_upgrade_install otel-collector \
+            oci://ghcr.io/open-telemetry/opentelemetry-helm-charts/opentelemetry-collector \
+            otel "${CONTEXT_NAME}" "${OTEL_COLLECTOR_CHART_VERSION}" \
+            --values "${GIT_REPO_ROOT}/monitoring/otel-collector/otel-collector-values.yaml" \
+            --set "image.tag=${OTEL_COLLECTOR_IMAGE_TAG}"
+
+        kubectl --context "${CONTEXT_NAME}" -n otel rollout status deploy/otel-collector \
+            --timeout=120s
+
+        kubectl --context "${CONTEXT_NAME}" delete ingressroute tempo-otlp-http -n tempo \
+            --ignore-not-found
+
         if [[ ${#REGIONS[@]} -gt 1 ]]; then
             HUB_TRAEFIK_IP="$(get_traefik_lb_ip "${HUB_CONTEXT}" 30)"
             HUB_TRAEFIK_DASHED="$(ip_to_dashed "${HUB_TRAEFIK_IP}")"
             TRAEFIK_IP_DASHED="${HUB_TRAEFIK_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
-                < "${GIT_REPO_ROOT}/monitoring/tempo/ingressroute.yaml.tpl" \
+                < "${GIT_REPO_ROOT}/monitoring/otel-collector/ingressroute.yaml.tpl" \
                 | kubectl --context "${CONTEXT_NAME}" apply -f -
 
-            echo "🔁 Re-applying Traefik on non-hub regions to enable OTLP HTTP push to hub Tempo..."
+            echo "🔁 Reapplying Traefik on non-hub regions to push OTLP to otel-collector..."
             for non_hub_region in "${REGIONS[@]}"; do
                 if [[ "${non_hub_region}" != "${HUB_REGION}" ]]; then
                     NON_HUB_CTX="$(get_cluster_context "${non_hub_region}")"
@@ -167,9 +183,9 @@ for region in "${REGIONS[@]}"; do
                         traefik "${NON_HUB_CTX}" "${TRAEFIK_CHART_VERSION}" \
                         --values "${GIT_REPO_ROOT}/traefik/values.yaml" \
                         --set "tracing.otlp.http.enabled=true" \
-                        --set "tracing.otlp.http.endpoint=http://tempo-otlp.${HUB_TRAEFIK_DASHED}.sslip.io/v1/traces" \
+                        --set "tracing.otlp.http.endpoint=http://otel-push.${HUB_TRAEFIK_DASHED}.sslip.io/v1/traces" \
                         --set "tracing.serviceName=traefik-${non_hub_region}" \
-                        --set "tracing.globalAttributes.cluster=${non_hub_region}"
+                        --set "tracing.resourceAttributes.cluster=${non_hub_region}"
                 fi
             done
         fi

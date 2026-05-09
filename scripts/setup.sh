@@ -222,10 +222,10 @@ EOF
     TRAEFIK_IP_DASHED=$(ip_to_dashed "${TRAEFIK_IP}")
     echo "🔧 Installing Traefik ${TRAEFIK_CHART_VERSION} (chart) in '${K8S_CLUSTER_NAME}'..."
     if [[ "${region}" == "${HUB_REGION}" ]]; then
-        # Hub: wire gRPC tracing to in-cluster Tempo (Tempo may not exist yet; Traefik retries)
+        # Hub: wire gRPC tracing to in-cluster OTel Collector (may not exist yet; Traefik retries)
         TRACING_SET_ARGS=(
             --set "tracing.otlp.grpc.enabled=true"
-            --set "tracing.otlp.grpc.endpoint=tempo-distributor.tempo.svc.cluster.local:4317"
+            --set "tracing.otlp.grpc.endpoint=otel-collector.otel.svc.cluster.local:4317"
             --set "tracing.otlp.grpc.insecure=true"
         )
     else

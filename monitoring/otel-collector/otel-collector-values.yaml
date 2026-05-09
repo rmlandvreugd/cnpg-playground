@@ -1,0 +1,102 @@
+# OTel Collector contrib — tail-based sampling gateway for Tempo.
+# Single replica: all spans for a trace must land on same instance.
+
+mode: deployment
+replicaCount: 1
+
+image:
+  repository: otel/opentelemetry-collector-contrib
+  # tag pinned via OTEL_COLLECTOR_IMAGE_TAG in scripts/common.sh
+
+# Chart >=0.110 requires explicit command name when image.repository diverges
+# from the default. contrib binary is `otelcol-contrib`.
+command:
+  name: otelcol-contrib
+
+config:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+  processors:
+    memory_limiter:
+      check_interval: 1s
+      limit_percentage: 75
+      spike_limit_percentage: 25
+
+    tail_sampling:
+      decision_wait: 10s         # buffer window; tune up if Traefik spans arrive late
+      num_traces: 1000           # circular buffer; sized as ~tps * decision_wait * 10x safety
+      expected_new_traces_per_sec: 10
+      policies:
+        - name: errors-policy
+          type: status_code
+          status_code:
+            status_codes: [ERROR]
+        - name: slow-traces-policy
+          type: latency
+          latency:
+            threshold_ms: 500
+        - name: probabilistic-sample-policy
+          type: probabilistic
+          probabilistic:
+            sampling_percentage: 10   # keep 10% of healthy fast traces
+
+    batch:
+      send_batch_size: 1000      # low-traffic playground; full batch unlikely
+      timeout: 5s                # snappier flush for live dashboards
+
+  exporters:
+    otlp:
+      endpoint: tempo-distributor.tempo.svc.cluster.local:4317
+      tls:
+        insecure: true
+    debug:
+      verbosity: basic   # remove or set verbosity: detailed for trace debugging
+
+  service:
+    pipelines:
+      traces:
+        receivers: [otlp]
+        processors: [memory_limiter, tail_sampling, batch]
+        exporters: [otlp]
+
+ports:
+  otlp:
+    enabled: true
+    containerPort: 4317
+    servicePort: 4317
+  otlp-http:
+    enabled: true
+    containerPort: 4318
+    servicePort: 4318
+  # disable unused default ports to reduce surface area
+  metrics:
+    enabled: false
+  jaeger-compact:
+    enabled: false
+  jaeger-thrift:
+    enabled: false
+  jaeger-grpc:
+    enabled: false
+  zipkin:
+    enabled: false
+
+resources:
+  limits:
+    memory: 512Mi
+    cpu: 500m
+  requests:
+    memory: 256Mi
+    cpu: 100m
+
+nodeSelector:
+  node-role.kubernetes.io/infra: ""
+tolerations:
+  - key: node-role.kubernetes.io/infra
+    operator: Exists
+    effect: NoSchedule
