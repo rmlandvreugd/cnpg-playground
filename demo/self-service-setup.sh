@@ -96,15 +96,6 @@ setup)
     TRAEFIK_IP_DASHED=$(ip_to_dashed "${TRAEFIK_IP}")
     echo "ℹ️  Traefik IP: ${TRAEFIK_IP} (dashed: ${TRAEFIK_IP_DASHED})"
 
-    # --- Traefik: add postgres entrypoint ---
-    echo "🔧 Upgrading Traefik with postgres entrypoint (port 5432)..."
-    helm_upgrade_install traefik \
-        oci://ghcr.io/traefik/helm/traefik \
-        traefik "${LOCAL_CONTEXT}" "${TRAEFIK_CHART_VERSION}" \
-        --values "${GIT_REPO_ROOT}/traefik/values.yaml" \
-        --force-conflicts
-    echo "✅ Traefik upgraded"
-
     # --- Vault policies ---
     echo "📋 Writing Vault policies..."
     cat <<'EOF' | _vcmd_stdin policy write eso-rbr-ver -
