@@ -96,15 +96,6 @@ setup)
     TRAEFIK_IP_DASHED=$(ip_to_dashed "${TRAEFIK_IP}")
     echo "ℹ️  Traefik IP: ${TRAEFIK_IP} (dashed: ${TRAEFIK_IP_DASHED})"
 
-    # --- Traefik: add postgres entrypoint ---
-    echo "🔧 Upgrading Traefik with postgres entrypoint (port 5432)..."
-    helm_upgrade_install traefik \
-        oci://ghcr.io/traefik/helm/traefik \
-        traefik "${LOCAL_CONTEXT}" "${TRAEFIK_CHART_VERSION}" \
-        --values "${GIT_REPO_ROOT}/traefik/values.yaml" \
-        --force-conflicts
-    echo "✅ Traefik upgraded"
-
     # --- Vault policies ---
     echo "📋 Writing Vault policies..."
     cat <<'EOF' | _vcmd_stdin policy write eso-rbr-ver -
@@ -403,6 +394,15 @@ EOF
     done
     [ "${COUNT}" -ge "${MAX_RETRIES}" ] && { echo "❌ Dex did not restart within 60s"; exit 1; }
 
+    # Dex CA ConfigMap for Grafana TLS trust
+    echo "📜 Creating dex-ca-cert ConfigMap in grafana namespace..."
+    kubectl create configmap dex-ca-cert \
+        --namespace grafana \
+        --context "${LOCAL_CONTEXT}" \
+        --from-file=ca-chain.pem="${DEX_TLS_DIR}/ca-chain.pem" \
+        --dry-run=client -o yaml \
+        | kubectl apply --context "${LOCAL_CONTEXT}" -f -
+
     # TLS Certificate for Grafana
     echo "📜 Issuing TLS certificate for grafana-rbr-ver..."
     TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
@@ -630,6 +630,8 @@ teardown)
     kubectl delete secret grafana-rbr-ver-oauth \
         -n grafana --context "${LOCAL_CONTEXT}" --ignore-not-found
     kubectl delete certificate grafana-rbr-ver-cert \
+        -n grafana --context "${LOCAL_CONTEXT}" --ignore-not-found
+    kubectl delete configmap dex-ca-cert \
         -n grafana --context "${LOCAL_CONTEXT}" --ignore-not-found
     echo "ℹ️  Dex config NOT reverted — re-run scripts/dex-setup.sh to reset."
 
