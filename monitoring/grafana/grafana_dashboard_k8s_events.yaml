@@ -21,12 +21,11 @@ spec:
           {"name":"namespace","label":"Namespace","type":"query",
            "datasource":{"type":"loki","uid":"${datasource}"},
            "query":{"label":"namespace","type":1},"refresh":2,"multi":true,"includeAll":true,"allValue":".+"},
-          {"name":"type","label":"Type","type":"query",
-           "datasource":{"type":"loki","uid":"${datasource}"},
-           "query":{"label":"type","type":1},"refresh":2,"multi":true,"includeAll":true,"allValue":".+"},
+          {"name":"type","label":"Type","type":"custom",
+           "query":"Normal,Warning","multi":true,"includeAll":true,"allValue":".+"},
           {"name":"reason","label":"Reason","type":"query",
            "datasource":{"type":"loki","uid":"${datasource}"},
-           "query":{"label":"reason","type":1},"refresh":2,"multi":true,"includeAll":true,"allValue":".+"}
+           "query":{"type":5,"stream":"{job=\"k8s-events\"} | logfmt","label":"reason"},"refresh":2,"multi":true,"includeAll":true,"allValue":".+"}
         ]
       },
       "panels": [
@@ -34,14 +33,14 @@ spec:
           "id": 1, "title": "Event Rate", "type": "timeseries",
           "gridPos": {"x":0,"y":0,"w":24,"h":6},
           "datasource": {"type":"loki","uid":"${datasource}"},
-          "targets": [{"refId":"A","expr":"sum by (type) (rate({job=\"k8s-events\", namespace=~\"$namespace\", type=~\"$type\", reason=~\"$reason\"}[1m]))"}]
+          "targets": [{"refId":"A","expr":"sum by (type) (rate({job=\"k8s-events\", namespace=~\"$namespace\"} | logfmt | type=~\"$type\" | reason=~\"$reason\" [1m]))"}]
         },
         {
           "id": 2, "title": "Events", "type": "logs",
           "gridPos": {"x":0,"y":6,"w":24,"h":18},
           "datasource": {"type":"loki","uid":"${datasource}"},
           "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Descending"},
-          "targets": [{"refId":"A","expr":"{job=\"k8s-events\", namespace=~\"$namespace\", type=~\"$type\", reason=~\"$reason\"}"}]
+          "targets": [{"refId":"A","expr":"{job=\"k8s-events\", namespace=~\"$namespace\"} | logfmt | type=~\"$type\" | reason=~\"$reason\""}]
         }
       ]
     }
