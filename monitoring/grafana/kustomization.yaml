@@ -17,3 +17,4 @@ resources:
   - grafana_datasource_mimir_tempo.yaml
   - grafana_datasource_tempo.yaml
   - grafana_dashboard_cnpg_custom.yaml
+  - grafana_dashboard_traefik_traces.yaml

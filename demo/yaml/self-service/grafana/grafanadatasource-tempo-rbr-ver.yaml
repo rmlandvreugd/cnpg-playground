@@ -1,0 +1,37 @@
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
+  name: tempo-rbr-ver
+  namespace: grafana
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: "grafana-rbr-ver"
+  allowCrossNamespaceImport: true
+  datasource:
+    name: DS_TEMPO
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: http://tempo-query-frontend.tempo.svc.cluster.local:3200
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: '-1m'
+        spanEndTimeShift: '1m'
+        tags:
+          - key: service.name
+            value: service
+          - key: cluster
+            value: cluster
+        filterByTraceID: true
+      tracesToMetrics:
+        datasourceUid: mimir-tempo
+        tags:
+          - key: cluster
+      serviceMap:
+        datasourceUid: mimir-tempo
+      nodeGraph:
+        enabled: true
+      lokiSearch:
+        datasourceUid: loki

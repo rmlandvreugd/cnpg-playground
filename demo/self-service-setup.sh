@@ -101,7 +101,8 @@ setup)
     helm_upgrade_install traefik \
         oci://ghcr.io/traefik/helm/traefik \
         traefik "${LOCAL_CONTEXT}" "${TRAEFIK_CHART_VERSION}" \
-        --values "${GIT_REPO_ROOT}/traefik/values.yaml"
+        --values "${GIT_REPO_ROOT}/traefik/values.yaml" \
+        --force-conflicts
     echo "✅ Traefik upgraded"
 
     # --- Vault policies ---
@@ -417,11 +418,15 @@ EOF
         < "${SELF_SERVICE_YAML}/grafana/grafana-rbr-ver.yaml.tpl" \
         | kubectl apply --context "${LOCAL_CONTEXT}" -f -
 
-    # GrafanaDatasources + pgaudit dashboard
+    # GrafanaDatasources + dashboards
     kubectl apply --context "${LOCAL_CONTEXT}" \
         -f "${SELF_SERVICE_YAML}/grafana/grafanadatasource-prometheus-rbr-ver.yaml" \
         -f "${SELF_SERVICE_YAML}/grafana/grafanadatasource-loki-rbr-ver.yaml" \
-        -f "${SELF_SERVICE_YAML}/grafana/grafanadashboard-pgaudit-rbr-ver.yaml"
+        -f "${SELF_SERVICE_YAML}/grafana/grafanadatasource-tempo-rbr-ver.yaml" \
+        -f "${SELF_SERVICE_YAML}/grafana/grafanadatasource-mimir-tempo-rbr-ver.yaml" \
+        -f "${SELF_SERVICE_YAML}/grafana/grafanadashboard-pgaudit-rbr-ver.yaml" \
+        -f "${SELF_SERVICE_YAML}/grafana/grafanadashboard-traefik-traces-rbr-ver.yaml" \
+        -f "${SELF_SERVICE_YAML}/grafana/grafanadashboard-cnpg-custom-rbr-ver.yaml"
 
     # IngressRoute (HTTPS via cert-manager TLS)
     TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
