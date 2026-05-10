@@ -225,7 +225,7 @@ EOF
         # Hub: wire gRPC tracing to in-cluster OTel Collector (may not exist yet; Traefik retries)
         TRACING_SET_ARGS=(
             --set "tracing.otlp.grpc.enabled=true"
-            --set "tracing.otlp.grpc.endpoint=otel-collector.otel.svc.cluster.local:4317"
+            --set "tracing.otlp.grpc.endpoint=otel-collector-opentelemetry-collector.otel.svc.cluster.local:4317"
             --set "tracing.otlp.grpc.insecure=true"
         )
     else
