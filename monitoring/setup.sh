@@ -161,7 +161,7 @@ for region in "${REGIONS[@]}"; do
             --values "${GIT_REPO_ROOT}/monitoring/otel-collector/otel-collector-values.yaml" \
             --set "image.tag=${OTEL_COLLECTOR_IMAGE_TAG}"
 
-        kubectl --context "${CONTEXT_NAME}" -n otel rollout status deploy/otel-collector \
+        kubectl --context "${CONTEXT_NAME}" -n otel rollout status deploy/otel-collector-opentelemetry-collector \
             --timeout=120s
 
         kubectl --context "${CONTEXT_NAME}" delete ingressroute tempo-otlp-http -n tempo \

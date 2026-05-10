@@ -114,7 +114,7 @@ ALLOY_CHART_VERSION="${ALLOY_CHART_VERSION:-1.8.0}"
 MIMIR_CHART_VERSION="${MIMIR_CHART_VERSION:-5.7.0}"
 TEMPO_CHART_VERSION="${TEMPO_CHART_VERSION:-2.19.0}"
 OTEL_COLLECTOR_CHART_VERSION="${OTEL_COLLECTOR_CHART_VERSION:-0.153.0}"  # OCI: ghcr.io/open-telemetry/opentelemetry-helm-charts
-OTEL_COLLECTOR_IMAGE_TAG="${OTEL_COLLECTOR_IMAGE_TAG:-0.153.0}"           # contrib image; defaults to chart appVersion if unset
+OTEL_COLLECTOR_IMAGE_TAG="${OTEL_COLLECTOR_IMAGE_TAG:-0.151.0}"          # otel/opentelemetry-collector-contrib; chart 0.153.0 appVersion is 0.151.0
 
 # --- Common Prerequisite Checks ---
 REQUIRED_COMMANDS="kind kubectl helm git grep sed envsubst jq"
