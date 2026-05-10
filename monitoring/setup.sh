@@ -269,10 +269,12 @@ EOF
         --set-file "alloy.configMap.content=${GIT_REPO_ROOT}/monitoring/alloy/alloy-config.river"
 
 # Restart the operator
-if kubectl get ns cnpg-system &> /dev/null
-then
-  kubectl rollout restart deployment -n cnpg-system cnpg-controller-manager
-  kubectl rollout status deployment -n cnpg-system cnpg-controller-manager
+if kubectl get ns cnpg-system &> /dev/null; then
+  CNPG_DEPLOY=$(kubectl get deployment -n cnpg-system -o name 2>/dev/null | grep -E "cnpg|cloudnative-pg" | head -1)
+  if [[ -n "${CNPG_DEPLOY}" ]]; then
+    kubectl rollout restart "${CNPG_DEPLOY}" -n cnpg-system
+    kubectl rollout status "${CNPG_DEPLOY}" -n cnpg-system
+  fi
 fi
 
     if kubectl --context "${CONTEXT_NAME}" get namespace cnpg-system &>/dev/null; then
