@@ -31,12 +31,17 @@ spec:
       org_mapping: "rbr-db-admin:rbr:Admin rbr-ver-db-admin:rbr:Editor"
       allowed_groups: "rbr-db-admin,rbr-ver-db-admin"
       role_attribute_strict: "true"
+      tls_client_ca_file: "/etc/ssl/dex-ca/ca-chain.pem"
   deployment:
     spec:
       template:
         spec:
           nodeSelector:
             node-role.kubernetes.io/infra: ""
+          volumes:
+            - name: dex-ca
+              configMap:
+                name: dex-ca-cert
           containers:
             - name: grafana
               env:
@@ -45,3 +50,7 @@ spec:
                     secretKeyRef:
                       name: grafana-rbr-ver-oauth
                       key: client-secret
+              volumeMounts:
+                - name: dex-ca
+                  mountPath: /etc/ssl/dex-ca
+                  readOnly: true
