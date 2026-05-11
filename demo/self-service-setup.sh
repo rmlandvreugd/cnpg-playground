@@ -453,7 +453,18 @@ EOF
     kubectl port-forward svc/grafana-rbr-ver-service 13000:3000 \
         -n grafana --context "${LOCAL_CONTEXT}" &
     PF_PID=$!
-    sleep 4
+
+    # Wait for GrafanaOperator to reconcile datasources into org 1 before copying to org 2.
+    # Deployment ready != operator reconciled; operator is async and typically takes 10-30s.
+    echo "⏳ Waiting for GrafanaOperator to provision datasources into grafana-rbr-ver..."
+    WAIT_DS=0
+    until [ "${WAIT_DS}" -ge 60 ]; do
+        DS_COUNT=$(curl -sf -u admin:admin http://localhost:13000/api/datasources 2>/dev/null \
+            | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
+        [ "${DS_COUNT:-0}" -ge 5 ] && break
+        sleep 3; WAIT_DS=$((WAIT_DS + 3))
+    done
+    echo "  GrafanaOperator provisioned ${DS_COUNT:-0} datasource(s) after ${WAIT_DS}s"
 
     # Create org (idempotent — ignore conflict)
     curl -sf -u admin:admin http://localhost:13000/api/orgs \
@@ -490,12 +501,20 @@ if not rbr_org:
 org2 = rbr_org["id"]
 
 # Copy datasources
+# secureJsonData is not returned by GET /api/datasources (Grafana encrypts it).
+# Inject known secure values for header-based datasources so org 2 queries work.
+REGION = "local"
 ds_list = api("/api/datasources") or []
 for ds in ds_list:
+    jd = ds.get("jsonData", {})
+    secure = {}
+    if "httpHeaderName1" in jd:
+        secure["httpHeaderValue1"] = REGION
     payload = json.dumps({
         "name": ds["name"], "type": ds["type"], "uid": ds["uid"],
         "url": ds["url"], "access": ds["access"],
-        "jsonData": ds.get("jsonData", {}),
+        "jsonData": jd,
+        "secureJsonData": secure,
     }).encode()
     result = api("/api/datasources", method="POST", data=payload, org_id=org2)
     status = "ok" if result else "already exists"
