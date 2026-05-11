@@ -439,16 +439,77 @@ EOF
     kubectl rollout status deployment/grafana-rbr-ver-deployment \
         -n grafana --context "${LOCAL_CONTEXT}" --timeout=180s
 
-    # Pre-create 'rbr' org via Grafana API (port-forward)
-    echo "🏢 Pre-creating 'rbr' org in grafana-rbr-ver..."
+    # Seed 'rbr' org: create org, copy datasources and dashboards from Main Org.
+    echo "🏢 Seeding 'rbr' org in grafana-rbr-ver..."
     kubectl port-forward svc/grafana-rbr-ver-service 13000:3000 \
         -n grafana --context "${LOCAL_CONTEXT}" &
     PF_PID=$!
     sleep 4
+
+    # Create org (idempotent — ignore conflict)
     curl -sf -u admin:admin http://localhost:13000/api/orgs \
         -X POST -H "Content-Type: application/json" \
-        -d '{"name":"rbr"}' > /dev/null \
-        || echo "  ℹ️  Org 'rbr' may already exist or grafana-rbr-ver not ready yet"
+        -d '{"name":"rbr"}' > /dev/null 2>&1 || true
+
+    python3 - << 'PYEOF'
+import json, urllib.request, urllib.error, sys
+
+base  = "http://localhost:13000"
+auth  = "Basic YWRtaW46YWRtaW4="   # admin:admin
+
+def api(path, method="GET", data=None, org_id=None):
+    hdrs = {"Authorization": auth, "Content-Type": "application/json"}
+    if org_id:
+        hdrs["X-Grafana-Org-Id"] = str(org_id)
+    req = urllib.request.Request(
+        base + path, data=data, headers=hdrs, method=method)
+    try:
+        return json.load(urllib.request.urlopen(req))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()
+        if e.code == 409:   # already exists
+            return None
+        print(f"  HTTP {e.code} {path}: {body[:120]}", file=sys.stderr)
+        return None
+
+# Resolve org 2 id by name (in case id differs)
+orgs = api("/api/orgs")
+rbr_org = next((o for o in orgs if o["name"] == "rbr"), None)
+if not rbr_org:
+    print("  ✗ 'rbr' org not found; skipping datasource/dashboard seed", file=sys.stderr)
+    sys.exit(0)
+org2 = rbr_org["id"]
+
+# Copy datasources
+ds_list = api("/api/datasources") or []
+for ds in ds_list:
+    payload = json.dumps({
+        "name": ds["name"], "type": ds["type"], "uid": ds["uid"],
+        "url": ds["url"], "access": ds["access"],
+        "jsonData": ds.get("jsonData", {}),
+    }).encode()
+    result = api("/api/datasources", method="POST", data=payload, org_id=org2)
+    status = "ok" if result else "already exists"
+    print(f"  datasource '{ds['name']}': {status}")
+
+# Copy dashboards
+boards = api("/api/search?type=dash-db") or []
+for b in boards:
+    detail = api(f"/api/dashboards/uid/{b['uid']}")
+    if not detail:
+        continue
+    dash = detail["dashboard"]
+    dash.pop("id", None)
+    dash.pop("version", None)
+    payload = json.dumps(
+        {"dashboard": dash, "overwrite": True, "folderId": 0}
+    ).encode()
+    result = api("/api/dashboards/import", method="POST",
+                 data=payload, org_id=org2)
+    status = "ok" if result else "failed"
+    print(f"  dashboard '{b['title']}': {status}")
+PYEOF
+
     kill "${PF_PID}" 2>/dev/null || true
     echo "✅ Grafana rbr-ver ready"
 
