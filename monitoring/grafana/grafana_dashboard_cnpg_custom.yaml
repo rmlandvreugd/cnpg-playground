@@ -20,7 +20,7 @@ spec:
           {
             "name": "datasource",
             "type": "datasource",
-            "pluginId": "prometheus",
+            "query": "prometheus",
             "label": "Datasource",
             "current": {},
             "hide": 0
@@ -29,7 +29,8 @@ spec:
             "name": "cluster",
             "type": "query",
             "datasource": { "type": "prometheus", "uid": "${datasource}" },
-            "definition": "label_values(pg_replication_lag_lag_seconds, cluster)",
+            "definition": "label_values(cnpg_collector_up, cluster)",
+            "query": { "query": "label_values(cnpg_collector_up, cluster)", "refId": "StandardVariableQuery" },
             "label": "Cluster",
             "multi": true,
             "includeAll": true,
@@ -39,7 +40,8 @@ spec:
             "name": "namespace",
             "type": "query",
             "datasource": { "type": "prometheus", "uid": "${datasource}" },
-            "definition": "label_values(pg_replication_lag_lag_seconds{cluster=~\"$cluster\"}, namespace)",
+            "definition": "label_values(cnpg_collector_up{cluster=~\"$cluster\"}, namespace)",
+            "query": { "query": "label_values(cnpg_collector_up{cluster=~\"$cluster\"}, namespace)", "refId": "StandardVariableQuery" },
             "label": "Namespace",
             "multi": true,
             "includeAll": true,
@@ -69,7 +71,7 @@ spec:
           },
           "targets": [
             {
-              "expr": "pg_replication_lag_lag_seconds{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+              "expr": "cnpg_pg_replication_lag{namespace=~\"$namespace\", pod=~\"$cluster-[0-9]+\"}",
               "legendFormat": "{{pod}}",
               "refId": "A"
             }
@@ -92,7 +94,7 @@ spec:
           "options": { "tooltip": { "mode": "multi" } },
           "targets": [
             {
-              "expr": "sum by (state) (pg_stat_connections_total{cluster=~\"$cluster\", namespace=~\"$namespace\"})",
+              "expr": "sum by (state) (cnpg_backends_total{namespace=~\"$namespace\", pod=~\"$cluster-[0-9]+\"})",
               "legendFormat": "{{state}}",
               "refId": "A"
             }
@@ -107,7 +109,7 @@ spec:
           "fieldConfig": { "defaults": { "unit": "bytes" } },
           "targets": [
             {
-              "expr": "pg_database_size_bytes{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+              "expr": "cnpg_pg_database_size_bytes{namespace=~\"$namespace\", pod=~\"$cluster-[0-9]+\"}",
               "legendFormat": "{{datname}} ({{pod}})",
               "refId": "A"
             }
@@ -134,12 +136,12 @@ spec:
           },
           "targets": [
             {
-              "expr": "pg_long_running_queries_count{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+              "expr": "cnpg_pg_long_running_queries_count{namespace=~\"$namespace\", pod=~\"$cluster-[0-9]+\"}",
               "legendFormat": "count ({{pod}})",
               "refId": "A"
             },
             {
-              "expr": "pg_long_running_queries_max_age_seconds{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+              "expr": "cnpg_pg_long_running_queries_max_age_seconds{namespace=~\"$namespace\", pod=~\"$cluster-[0-9]+\"}",
               "legendFormat": "max age s ({{pod}})",
               "refId": "B"
             }
@@ -154,17 +156,17 @@ spec:
           "fieldConfig": { "defaults": { "unit": "short" } },
           "targets": [
             {
-              "expr": "cnpg_pgbouncer_pool_active_client_conns{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+              "expr": "cnpg_pgbouncer_pools_cl_active{namespace=~\"$namespace\", pod=~\"$cluster-[0-9]+\"}",
               "legendFormat": "active client ({{pod}} {{database}})",
               "refId": "A"
             },
             {
-              "expr": "cnpg_pgbouncer_pool_waiting_client_conns{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+              "expr": "cnpg_pgbouncer_pools_cl_waiting{namespace=~\"$namespace\", pod=~\"$cluster-[0-9]+\"}",
               "legendFormat": "waiting client ({{pod}} {{database}})",
               "refId": "B"
             },
             {
-              "expr": "cnpg_pgbouncer_pool_active_server_conns{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+              "expr": "cnpg_pgbouncer_pools_sv_active{namespace=~\"$namespace\", pod=~\"$cluster-[0-9]+\"}",
               "legendFormat": "active server ({{pod}} {{database}})",
               "refId": "C"
             }

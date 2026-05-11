@@ -110,6 +110,13 @@ for region in "${REGIONS[@]}"; do
    kubectl apply --context ${CONTEXT_NAME} -f \
      ${demo_yaml_path}/object-stores/objectstore-${region}.yaml
 
+   # Apply custom metrics ConfigMap if present for this region (must precede cluster)
+   if [ -f "${demo_yaml_path}/${region}/cnpg-custom-metrics-configmap.yaml" ]; then
+     echo "${info_icon} Applying custom metrics ConfigMap for region ${region}..."
+     kubectl apply --context ${CONTEXT_NAME} -f \
+       ${demo_yaml_path}/${region}/cnpg-custom-metrics-configmap.yaml
+   fi
+
    # Create the Postgres cluster
    echo "${info_icon} Creating PostgreSQL cluster in region ${region}..."
    kubectl apply --context ${CONTEXT_NAME} -f \

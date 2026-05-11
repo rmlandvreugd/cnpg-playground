@@ -231,6 +231,10 @@ EOF
     kubectl apply --context "${LOCAL_CONTEXT}" \
         -f "${SELF_SERVICE_YAML}/rbr-ver-db/objectstore-rbr-ver.yaml"
 
+    echo "📊 Applying custom monitoring ConfigMap (must exist before Cluster CR)..."
+    kubectl apply --context "${LOCAL_CONTEXT}" \
+        -f "${SELF_SERVICE_YAML}/rbr-ver-db/cnpg-custom-monitoring-rbr-ver.yaml"
+
     echo "🐘 Applying CNPG Cluster, Pooler, and ScheduledBackup..."
     TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
     envsubst '${TRAEFIK_IP_DASHED}' \
