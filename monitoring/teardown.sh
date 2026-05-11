@@ -72,16 +72,23 @@ for region in "${REGIONS[@]}"; do
     echo "🗑️  Deleting grafana namespace..."
     kubectl --context "${CONTEXT_NAME}" delete namespace grafana --ignore-not-found
 
-    # --- prometheus-operator namespace: Prometheus CR, RBAC, kube-prometheus-stack ---
-    echo "🗑️  Removing Prometheus CR..."
+    # --- prometheus-operator namespace: any leftover Prometheus CR + RBAC, kube-prometheus-stack ---
+    echo "🗑️  Removing leftover Prometheus CR (idempotent — may not exist)..."
     if kubectl --context "${CONTEXT_NAME}" get crd prometheuses.monitoring.coreos.com &>/dev/null; then
         kubectl --context "${CONTEXT_NAME}" -n prometheus-operator \
-            delete prometheus prometheus --ignore-not-found
+            delete prometheus.monitoring.coreos.com prometheus --ignore-not-found
     fi
 
-    echo "🗑️  Removing Prometheus RBAC resources..."
-    kubectl kustomize "${GIT_REPO_ROOT}/monitoring/prometheus-instance" | \
-        kubectl --context "${CONTEXT_NAME}" delete --ignore-not-found -f -
+    echo "🗑️  Removing leftover Prometheus RBAC resources (idempotent)..."
+    kubectl --context "${CONTEXT_NAME}" -n prometheus-operator \
+        delete sa prometheus --ignore-not-found
+    kubectl --context "${CONTEXT_NAME}" \
+        delete clusterrole prometheus --ignore-not-found
+    kubectl --context "${CONTEXT_NAME}" \
+        delete clusterrolebinding prometheus --ignore-not-found
+
+    echo "🗑️  Removing Mimir Ruler IngressRoute..."
+    kubectl --context "${CONTEXT_NAME}" -n mimir delete ingressroute mimir-ruler --ignore-not-found
 
     echo "🗑️  Uninstalling kube-prometheus-stack in '${K8S_CLUSTER_NAME}'..."
     helm_uninstall_if_present kube-prometheus-stack prometheus-operator "${CONTEXT_NAME}"
@@ -114,8 +121,9 @@ kubectl --context "${HUB_CONTEXT}" -n tempo delete endpoints objectstore-local -
 echo "🗑️  Deleting tempo namespace..."
 kubectl --context "${HUB_CONTEXT}" delete namespace tempo --ignore-not-found
 
-echo "🗑️  Removing Mimir IngressRoute..."
+echo "🗑️  Removing Mimir IngressRoutes..."
 kubectl --context "${HUB_CONTEXT}" -n mimir delete ingressroute mimir-push --ignore-not-found
+kubectl --context "${HUB_CONTEXT}" -n mimir delete ingressroute mimir-ruler --ignore-not-found
 
 echo "🗑️  Uninstalling Mimir in '$(get_cluster_name "${HUB_REGION}")'..."
 helm_uninstall_if_present mimir mimir "${HUB_CONTEXT}"

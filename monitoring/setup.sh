@@ -50,9 +50,6 @@ for region in "${REGIONS[@]}"; do
         prometheus-operator "${CONTEXT_NAME}" "${KUBE_PROMETHEUS_STACK_CHART_VERSION}" \
         --values "${GIT_REPO_ROOT}/monitoring/kube-prometheus-stack-values.yaml"
 
-    kubectl kustomize ${GIT_REPO_ROOT}/monitoring/prometheus-instance | \
-        kubectl --context=${CONTEXT_NAME} apply --force-conflicts --server-side -f -
-
     # --- Mimir: hub install (first region only) ---
     if [[ "${region}" == "${HUB_REGION}" ]]; then
         echo "📦 Wiring objectstore into mimir namespace..."
@@ -113,12 +110,6 @@ for region in "${REGIONS[@]}"; do
         MIMIR_PUSH_URL="http://mimir-push.${HUB_TRAEFIK_DASHED}.sslip.io/api/v1/push"
         MIMIR_RULER_URL="http://mimir-ruler.${HUB_TRAEFIK_DASHED}.sslip.io"
     fi
-
-    echo "📊 Applying Prometheus CR with remoteWrite → Mimir for '${region}'..."
-    REGION="${region}" MIMIR_PUSH_URL="${MIMIR_PUSH_URL}" \
-        envsubst '${REGION} ${MIMIR_PUSH_URL}' \
-        < "${GIT_REPO_ROOT}/monitoring/prometheus-instance/prometheus-cr.yaml.tpl" \
-        | kubectl --context "${CONTEXT_NAME}" apply --force-conflicts --server-side -f -
 
     # --- Tempo: hub install (first region only) ---
     if [[ "${region}" == "${HUB_REGION}" ]]; then
