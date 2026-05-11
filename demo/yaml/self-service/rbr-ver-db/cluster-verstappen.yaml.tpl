@@ -67,6 +67,15 @@ spec:
       pgaudit.log_catalog: 'off'
       pgaudit.log_relation: 'on'
 
+  monitoring:
+    enablePodMonitor: false
+    disableDefaultQueries: false
+    customQueriesConfigMap:
+      - key: queries
+        name: cnpg-default-monitoring
+      - key: queries
+        name: cnpg-custom-monitoring-rbr-ver
+
   certificates:
     serverAltDNSNames:
       - verstappen-rbr-ver-db.${TRAEFIK_IP_DASHED}.sslip.io
