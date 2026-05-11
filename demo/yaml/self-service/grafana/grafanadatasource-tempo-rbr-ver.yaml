@@ -35,3 +35,4 @@ spec:
         enabled: true
       lokiSearch:
         datasourceUid: loki
+      streamingEnabled: false
