@@ -284,6 +284,10 @@ EOF
 
     rm -f "${RENDERED_ALLOY_CONFIG}"
 
+    echo "🔄 Reloading Alloy config (config-reloader sidecar sometimes misses helm configmap update)..."
+    kubectl --context "${CONTEXT_NAME}" rollout restart deployment/alloy -n grafana
+    kubectl --context "${CONTEXT_NAME}" rollout status deployment/alloy -n grafana --timeout=120s
+
 # Restart the operator
 if kubectl get ns cnpg-system &> /dev/null; then
   CNPG_DEPLOY=$(kubectl get deployment -n cnpg-system -o name 2>/dev/null | grep -E "cnpg|cloudnative-pg" | head -1)
