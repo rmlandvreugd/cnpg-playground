@@ -208,6 +208,14 @@ for region in "${REGIONS[@]}"; do
     kubectl kustomize ${GIT_REPO_ROOT}/monitoring/grafana/ | \
       kubectl --context ${CONTEXT_NAME} apply -f -
 
+    echo "📊 Applying Mimir datasource (tenant=${region}) + prometheus alias..."
+    REGION="${region}" envsubst '${REGION}' \
+        < "${GIT_REPO_ROOT}/monitoring/grafana/grafana_datasource_mimir.yaml.tpl" \
+        | kubectl --context "${CONTEXT_NAME}" apply -f -
+    REGION="${region}" envsubst '${REGION}' \
+        < "${GIT_REPO_ROOT}/monitoring/grafana/grafana_datasource_prometheus_alias.yaml.tpl" \
+        | kubectl --context "${CONTEXT_NAME}" apply -f -
+
     # --- Loki + Alloy (pgaudit log aggregation) ---
     echo "📊 Wiring objectstore into grafana namespace for Loki..."
     RUSTFS_CONTAINER_NAME="${RUSTFS_BASE_NAME}-${region}"
