@@ -548,12 +548,12 @@ Memory mentions `docs/IST.md` + `docs/SOLL.md` (W1-W8 roadmap). Reflect Prom CR 
 ### G.1 Scrape coverage
 
 ```bash
-# Alloy targets endpoint shows all discovered ServiceMonitors
+# Alloy ServiceMonitor CRDs discovered — top-level .targets doesn't exist; use debugInfo
 kubectl --context kind-k8s-local -n grafana port-forward svc/alloy 12345 &
 sleep 2
 curl -s http://localhost:12345/api/v0/web/components/prometheus.operator.servicemonitors.scrape \
-    | jq '.targets | length'
-# expect: > 10 (kubelet, kube-state, node-exporter, cnpg, traefik, mimir, tempo, otel, grafana, alloy, loki...)
+    | python3 -c "import sys,json; d=json.load(sys.stdin); print(len([x for x in d.get('debugInfo',[]) if x.get('name')=='crds']))"
+# expect: >= 10 (all kube-prometheus-stack SMs; 10 confirmed on kind-k8s-local)
 ```
 
 ### G.2 Mimir series count (tenant scoping works)
