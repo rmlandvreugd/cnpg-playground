@@ -178,3 +178,39 @@ loki.process "events" {
   }
   forward_to = [loki.write.grafana_loki.receiver]
 }
+
+// === Metrics: ServiceMonitor + PodMonitor scrape → Mimir remote_write ===
+// MIMIR_PUSH_URL and REGION substituted at install time by monitoring/setup.sh envsubst.
+prometheus.remote_write "mimir" {
+  endpoint {
+    url = "${MIMIR_PUSH_URL}"
+    headers = {
+      "X-Scope-OrgID" = "${REGION}",
+    }
+    write_relabel_config {
+      source_labels = ["__name__"]
+      regex         = "(up|scrape_.*|kube_.*|node_.*|kubelet_.*|apiserver_.*|cnpg_.*|pg_.*|traces_.*|process_.*|go_.*)"
+      action        = "keep"
+    }
+    queue_config {
+      capacity             = 10000
+      max_shards           = 10
+      max_samples_per_send = 2000
+    }
+  }
+  external_labels = {
+    cluster = "${REGION}",
+  }
+}
+
+prometheus.operator.servicemonitors "scrape" {
+  forward_to = [prometheus.remote_write.mimir.receiver]
+}
+
+prometheus.operator.podmonitors "scrape" {
+  forward_to = [prometheus.remote_write.mimir.receiver]
+}
+
+prometheus.operator.probes "scrape" {
+  forward_to = [prometheus.remote_write.mimir.receiver]
+}

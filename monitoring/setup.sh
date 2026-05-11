@@ -261,12 +261,20 @@ EOF
         --set "loki.storage.s3.accessKeyId=${RUSTFS_ROOT_USER}" \
         --set "loki.storage.s3.secretAccessKey=${RUSTFS_ROOT_PASSWORD}"
 
+    RENDERED_ALLOY_CONFIG="$(mktemp)"
+    REGION="${region}" MIMIR_PUSH_URL="${MIMIR_PUSH_URL}" \
+        envsubst '${REGION} ${MIMIR_PUSH_URL}' \
+        < "${GIT_REPO_ROOT}/monitoring/alloy/alloy-config.river.tpl" \
+        > "${RENDERED_ALLOY_CONFIG}"
+
     echo "📊 Installing Alloy ${ALLOY_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
     helm_upgrade_install alloy alloy \
         grafana "${CONTEXT_NAME}" "${ALLOY_CHART_VERSION}" \
         --repo-url https://grafana.github.io/helm-charts \
         --values "${GIT_REPO_ROOT}/monitoring/alloy/alloy-values.yaml" \
-        --set-file "alloy.configMap.content=${GIT_REPO_ROOT}/monitoring/alloy/alloy-config.river"
+        --set-file "alloy.configMap.content=${RENDERED_ALLOY_CONFIG}"
+
+    rm -f "${RENDERED_ALLOY_CONFIG}"
 
 # Restart the operator
 if kubectl get ns cnpg-system &> /dev/null; then

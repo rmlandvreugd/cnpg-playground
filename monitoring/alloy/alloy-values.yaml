@@ -20,7 +20,7 @@ controller:
       operator: Exists
       effect: NoSchedule
 
-# RBAC required for loki.source.kubernetes (pod log access) and events/cluster-wide logs
+# RBAC required for loki.source.kubernetes, events, and prometheus.operator.* ServiceMonitor/PodMonitor scraping
 rbac:
   create: true
   extraRules:
@@ -32,7 +32,23 @@ rbac:
         - namespaces
         - nodes
         - nodes/proxy
+        - services
+        - endpoints
+        - configmaps
+        - secrets
       verbs: ["get", "list", "watch"]
+    - apiGroups: ["monitoring.coreos.com"]
+      resources:
+        - servicemonitors
+        - podmonitors
+        - probes
+        - prometheusrules
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["discovery.k8s.io"]
+      resources: ["endpointslices"]
+      verbs: ["get", "list", "watch"]
+    - nonResourceURLs: ["/metrics", "/metrics/cadvisor", "/metrics/probes"]
+      verbs: ["get"]
 
 serviceAccount:
   create: true
