@@ -2,9 +2,11 @@
 
 This directory enables monitoring of your CloudNativePG clusters using the official
 [CloudNativePG Grafana Dashboard](https://github.com/cloudnative-pg/grafana-dashboards).
-The included script installs both the [Prometheus Operator](https://github.com/prometheus-operator/prometheus-operator)
-and the [Grafana Operator](https://github.com/grafana/grafana-operator),
-and deploys the dashboard on top of your existing playground environment.
+The included script installs the [Prometheus Operator](https://github.com/prometheus-operator/prometheus-operator)
+(CRD controller only — no Prometheus pod), [Grafana Operator](https://github.com/grafana/grafana-operator),
+[Alloy](https://grafana.com/docs/alloy/) (scraper + log collector), and
+[Mimir](https://grafana.com/docs/mimir/) (long-term metrics store).
+Alloy is the sole scraper; Mimir is the sole metrics backend.
 
 ---
 
@@ -27,7 +29,7 @@ You may also specify one or more region names to match a customised setup:
 ./setup.sh local
 ```
 
-The script will automatically deploy Prometheus, Grafana, and the CloudNativePG dashboard in each region provided.
+The script will automatically deploy Alloy, Grafana, and the CloudNativePG dashboard in each region provided, plus Mimir and Tempo on the hub region.
 
 ---
 
@@ -73,18 +75,48 @@ You can find the dashboard under `Home > Dashboards > grafana > CloudNativePG`.
 | Prometheus Operator CRDs and controller | Helm — `kube-prometheus-stack` chart (release `kube-prometheus-stack`, namespace `prometheus-operator`) |
 | kube-state-metrics | Helm — `kube-prometheus-stack` chart |
 | node-exporter DaemonSet | Helm — `kube-prometheus-stack` chart (tolerations: `operator: Exists` to cover all nodes) |
-| `Prometheus` CR and `prometheus-operated` service | Plain manifest — `monitoring/prometheus-instance/` |
 | Grafana Operator controller | Helm — `grafana-operator` chart (release `grafana-operator`, namespace `grafana`) |
 | Grafana instance, datasource, dashboards | Plain manifests — `monitoring/grafana/` |
 | Loki single-binary | Helm — `loki` chart (namespace `grafana`, S3 backend via RustFS, 20Gi PVC, 3d retention) |
-| Alloy log collector | Helm — `alloy` chart (namespace `grafana`, scrapes CNPG pods + all-pods + Traefik + k8s events) |
+| Alloy (scraper + log collector) | Helm — `alloy` chart (namespace `grafana`, scrapes ServiceMonitors/PodMonitors + CNPG pods + all-pods + Traefik + k8s events, remote_write → Mimir) |
 | Traefik `IngressRoute` for Grafana | Plain template — `monitoring/grafana/ingressroute.yaml.tpl` |
-| Mimir (long-term metrics) | Helm — `mimir-distributed` chart (namespace `mimir`, hub region only, RustFS S3) |
+| Mimir (long-term metrics, sole backend) | Helm — `mimir-distributed` chart (namespace `mimir`, hub region only, RustFS S3) |
+| Mimir Ruler IngressRoute (multi-region) | Plain template — `monitoring/mimir/ingressroute-ruler.yaml.tpl` |
 | Tempo (distributed tracing) | Helm — `tempo-distributed` chart (namespace `tempo`, hub region only, RustFS S3) |
 
 Chart versions are pinned in `scripts/common.sh` as `KUBE_PROMETHEUS_STACK_CHART_VERSION`
 and `GRAFANA_OPERATOR_CHART_VERSION`. Values overrides are in
 `monitoring/kube-prometheus-stack-values.yaml`.
+
+## Metrics Scrape Architecture
+
+Alloy is the sole scraper. There is **no Prometheus pod**. The kube-prometheus-stack chart
+installs only: prometheus-operator (reconciles CRDs — required by Alloy's discovery),
+kube-state-metrics, node-exporter, and pre-built ServiceMonitors (kubelet, kube-controller-manager,
+kube-scheduler, kube-proxy, etcd, coreDNS, kube-apiserver).
+
+```
+ServiceMonitors ──┐
+PodMonitors    ───┼──> Alloy (per region) ──remote_write──> Mimir hub (X-Scope-OrgID: <region>)
+Probes         ──┘                                           │
+                                                             ├──> Mimir Ruler (PrometheusRule sync)
+                                                             └──> Grafana datasources:
+                                                                   • uid: prometheus  (alias, default)
+                                                                   • uid: mimir        (explicit)
+                                                                   • uid: mimir-tempo  (tenant: tempo)
+```
+
+`PrometheusRule` CRs are synced to Mimir Ruler via Alloy's `mimir.rules.kubernetes` component.
+No rules exist today — create a `PrometheusRule` CR and it syncs within seconds.
+
+### Debugging Metrics
+
+- **Alloy status / config**: `kubectl -n grafana port-forward svc/alloy 12345:12345` → `http://localhost:12345/`
+- **Mimir ad-hoc query**: `kubectl -n mimir port-forward svc/mimir-nginx 8080:80`
+  then `curl -H "X-Scope-OrgID: local" 'http://localhost:8080/prometheus/api/v1/query?query=up'`
+- **Grafana**: use `DS_PROMETHEUS` (uid `prometheus`, default) or `DS_MIMIR` (uid `mimir`).
+  Both alias the same Mimir backend with per-region tenant scoping.
+  Use `DS_MIMIR_TEMPO` for span-metrics (tenant `tempo`).
 
 ## Dashboards
 
@@ -146,7 +178,9 @@ is a follow-up task — flag in backlog.
 
 ## PodMonitor
 
-To enable Prometheus to scrape metrics from your PostgreSQL pods, you must
-create a `PodMonitor` resource as described in the
+To enable Alloy to scrape metrics from your PostgreSQL pods, create a `PodMonitor`
+resource as described in the
 [documentation](https://cloudnative-pg.io/documentation/current/monitoring/#creating-a-podmonitor).
+Alloy discovers `PodMonitor` CRs cluster-wide via `prometheus.operator.podmonitors` and
+forwards scraped metrics to Mimir automatically — no further configuration needed.
 
