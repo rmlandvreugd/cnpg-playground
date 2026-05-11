@@ -14,6 +14,7 @@ spec:
     type: prometheus
     access: proxy
     url: http://mimir-nginx.mimir.svc.cluster.local/prometheus
+    isDefault: false
     jsonData:
       httpHeaderName1: X-Scope-OrgID
       timeInterval: 15s
@@ -21,4 +22,4 @@ spec:
         - name: traceID
           datasourceUid: tempo
     secureJsonData:
-      httpHeaderValue1: local
+      httpHeaderValue1: ${REGION}

@@ -3,7 +3,6 @@ kind: Kustomization
 namespace: grafana
 resources:
   - grafana_instance.yaml
-  - grafana_datasource.yaml
   - grafana_datasource_loki.yaml
   - grafana_dashboard.yaml
   - grafana_dashboard_pgaudit.yaml
@@ -13,7 +12,6 @@ resources:
   - grafana_dashboard_k8s_pods.yaml
   - grafana_dashboard_k8s_events.yaml
   - grafana_dashboard_k8s_pod_logs.yaml
-  - grafana_datasource_mimir.yaml
   - grafana_datasource_mimir_tempo.yaml
   - grafana_datasource_tempo.yaml
   - grafana_dashboard_cnpg_custom.yaml
