@@ -214,3 +214,13 @@ prometheus.operator.podmonitors "scrape" {
 prometheus.operator.probes "scrape" {
   forward_to = [prometheus.remote_write.mimir.receiver]
 }
+
+// === PrometheusRule → Mimir Ruler ===
+// MIMIR_RULER_URL substituted at install time by monitoring/setup.sh envsubst.
+mimir.rules.kubernetes "rules" {
+  address   = "${MIMIR_RULER_URL}"
+  tenant_id = "${REGION}"
+
+  rule_selector           = {}
+  rule_namespace_selector = {}
+}

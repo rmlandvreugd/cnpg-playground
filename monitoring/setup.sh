@@ -97,16 +97,21 @@ for region in "${REGIONS[@]}"; do
             TRAEFIK_IP_DASHED="${HUB_TRAEFIK_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
                 < "${GIT_REPO_ROOT}/monitoring/mimir/ingressroute.yaml.tpl" \
                 | kubectl --context "${CONTEXT_NAME}" apply -f -
+            TRAEFIK_IP_DASHED="${HUB_TRAEFIK_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
+                < "${GIT_REPO_ROOT}/monitoring/mimir/ingressroute-ruler.yaml.tpl" \
+                | kubectl --context "${CONTEXT_NAME}" apply -f -
         fi
     fi
 
-    # Compute MIMIR_PUSH_URL for this region
+    # Compute MIMIR_PUSH_URL and MIMIR_RULER_URL for this region
     if [[ "${region}" == "${HUB_REGION}" ]]; then
         MIMIR_PUSH_URL="http://mimir-nginx.mimir.svc.cluster.local/api/v1/push"
+        MIMIR_RULER_URL="http://mimir-ruler.mimir.svc.cluster.local:8080"
     else
         HUB_TRAEFIK_IP="$(get_traefik_lb_ip "${HUB_CONTEXT}" 30)"
         HUB_TRAEFIK_DASHED="$(ip_to_dashed "${HUB_TRAEFIK_IP}")"
         MIMIR_PUSH_URL="http://mimir-push.${HUB_TRAEFIK_DASHED}.sslip.io/api/v1/push"
+        MIMIR_RULER_URL="http://mimir-ruler.${HUB_TRAEFIK_DASHED}.sslip.io"
     fi
 
     echo "📊 Applying Prometheus CR with remoteWrite → Mimir for '${region}'..."
@@ -270,8 +275,8 @@ EOF
         --set "loki.storage.s3.secretAccessKey=${RUSTFS_ROOT_PASSWORD}"
 
     RENDERED_ALLOY_CONFIG="$(mktemp)"
-    REGION="${region}" MIMIR_PUSH_URL="${MIMIR_PUSH_URL}" \
-        envsubst '${REGION} ${MIMIR_PUSH_URL}' \
+    REGION="${region}" MIMIR_PUSH_URL="${MIMIR_PUSH_URL}" MIMIR_RULER_URL="${MIMIR_RULER_URL}" \
+        envsubst '${REGION} ${MIMIR_PUSH_URL} ${MIMIR_RULER_URL}' \
         < "${GIT_REPO_ROOT}/monitoring/alloy/alloy-config.river.tpl" \
         > "${RENDERED_ALLOY_CONFIG}"
 
