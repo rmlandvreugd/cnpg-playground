@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cnpg-custom-monitoring-rbr-ver
+  namespace: rbr-ver-db
+  labels:
+    cnpg.io/reload: "true"
+data:
+  queries: |
+    pg_long_running_queries:
+      query: |
+        SELECT
+          count(*) AS count,
+          COALESCE(EXTRACT(EPOCH FROM max(now() - query_start)), 0) AS max_age_seconds
+        FROM pg_catalog.pg_stat_activity
+        WHERE state = 'active'
+          AND query_start < now() - interval '30 seconds'
+          AND query NOT LIKE '%pg_stat_activity%'
+      metrics:
+        - count:
+            usage: "GAUGE"
+            description: "Queries running longer than 30 seconds"
+        - max_age_seconds:
+            usage: "GAUGE"
+            description: "Age in seconds of the longest query over 30 seconds"
