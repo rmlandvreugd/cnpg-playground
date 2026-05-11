@@ -423,8 +423,13 @@ EOF
         | kubectl apply --context "${LOCAL_CONTEXT}" -f -
 
     # GrafanaDatasources + dashboards
+    REGION="local" envsubst '${REGION}' \
+        < "${SELF_SERVICE_YAML}/grafana/grafanadatasource-mimir-rbr-ver.yaml.tpl" \
+        | kubectl apply --context "${LOCAL_CONTEXT}" -f -
+    REGION="local" envsubst '${REGION}' \
+        < "${SELF_SERVICE_YAML}/grafana/grafanadatasource-prometheus-alias-rbr-ver.yaml.tpl" \
+        | kubectl apply --context "${LOCAL_CONTEXT}" -f -
     kubectl apply --context "${LOCAL_CONTEXT}" \
-        -f "${SELF_SERVICE_YAML}/grafana/grafanadatasource-prometheus-rbr-ver.yaml" \
         -f "${SELF_SERVICE_YAML}/grafana/grafanadatasource-loki-rbr-ver.yaml" \
         -f "${SELF_SERVICE_YAML}/grafana/grafanadatasource-tempo-rbr-ver.yaml" \
         -f "${SELF_SERVICE_YAML}/grafana/grafanadatasource-mimir-tempo-rbr-ver.yaml" \
