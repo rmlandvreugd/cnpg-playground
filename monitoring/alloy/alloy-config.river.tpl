@@ -200,6 +200,7 @@ prometheus.remote_write "mimir" {
   }
   external_labels = {
     cluster = "${REGION}",
+    region  = "${REGION}",
   }
 }
 

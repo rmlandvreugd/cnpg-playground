@@ -143,12 +143,27 @@ for region in "${REGIONS[@]}"; do
         kubectl --context "${CONTEXT_NAME}" -n tempo delete pod tempo-bucket-init --ignore-not-found
 
         echo "📊 Installing Tempo ${TEMPO_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
+        RENDERED_TEMPO_OVERRIDE="$(mktemp)"
+        REGION="${region}" envsubst '${REGION}' > "${RENDERED_TEMPO_OVERRIDE}" << 'TEMPO_OVERRIDE'
+metricsGenerator:
+  config:
+    storage:
+      remote_write:
+        - url: http://mimir-nginx.mimir.svc.cluster.local/api/v1/push
+          headers:
+            X-Scope-OrgID: tempo
+          external_labels:
+            cluster: ${REGION}
+            region: ${REGION}
+TEMPO_OVERRIDE
         helm_upgrade_install tempo \
             oci://ghcr.io/grafana-community/helm-charts/tempo-distributed \
             tempo "${CONTEXT_NAME}" "${TEMPO_CHART_VERSION}" \
             --values "${GIT_REPO_ROOT}/monitoring/tempo/tempo-values.yaml" \
+            --values "${RENDERED_TEMPO_OVERRIDE}" \
             --set "storage.trace.s3.access_key=${RUSTFS_ROOT_USER}" \
             --set "storage.trace.s3.secret_key=${RUSTFS_ROOT_PASSWORD}"
+        rm -f "${RENDERED_TEMPO_OVERRIDE}"
 
         echo "📡 Installing OTel Collector (tail-based sampling gateway)..."
         kubectl --context "${CONTEXT_NAME}" create namespace otel --dry-run=client -o yaml \
