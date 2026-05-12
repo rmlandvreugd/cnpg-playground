@@ -121,6 +121,7 @@ for region in "${REGIONS[@]}"; do
    echo "${info_icon} Creating PostgreSQL cluster in region ${region}..."
    kubectl apply --context ${CONTEXT_NAME} -f \
      ${demo_yaml_path}/${region}/pg-${region}${legacy}.yaml
+   label_namespace_for_scrape "${CONTEXT_NAME}" default
 
    # Create the PodMonitor if Prometheus has been installed
    if check_crd_existence podmonitors.monitoring.coreos.com

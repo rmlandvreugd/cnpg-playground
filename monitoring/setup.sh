@@ -49,6 +49,7 @@ for region in "${REGIONS[@]}"; do
         oci://ghcr.io/prometheus-community/charts/kube-prometheus-stack \
         prometheus-operator "${CONTEXT_NAME}" "${KUBE_PROMETHEUS_STACK_CHART_VERSION}" \
         --values "${GIT_REPO_ROOT}/monitoring/kube-prometheus-stack-values.yaml"
+    label_namespace_for_scrape "${CONTEXT_NAME}" prometheus-operator
 
     # --- Mimir: hub install (first region only) ---
     if [[ "${region}" == "${HUB_REGION}" ]]; then
@@ -58,6 +59,7 @@ for region in "${REGIONS[@]}"; do
             --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
         kubectl --context "${CONTEXT_NAME}" create namespace mimir --dry-run=client -o yaml \
             | kubectl --context "${CONTEXT_NAME}" apply -f -
+        label_namespace_for_scrape "${CONTEXT_NAME}" mimir
         OBJECTSTORE_IP="${OBJECTSTORE_IP}" envsubst '${OBJECTSTORE_IP}' \
             < "${GIT_REPO_ROOT}/monitoring/mimir/objectstore-bridge.yaml.tpl" \
             | kubectl --context "${CONTEXT_NAME}" apply -f -
@@ -119,6 +121,7 @@ for region in "${REGIONS[@]}"; do
             --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
         kubectl --context "${CONTEXT_NAME}" create namespace tempo --dry-run=client -o yaml \
             | kubectl --context "${CONTEXT_NAME}" apply -f -
+        label_namespace_for_scrape "${CONTEXT_NAME}" tempo
         OBJECTSTORE_IP="${OBJECTSTORE_IP}" envsubst '${OBJECTSTORE_IP}' \
             < "${GIT_REPO_ROOT}/monitoring/tempo/objectstore-bridge.yaml.tpl" \
             | kubectl --context "${CONTEXT_NAME}" apply -f -
@@ -150,6 +153,7 @@ for region in "${REGIONS[@]}"; do
         echo "📡 Installing OTel Collector (tail-based sampling gateway)..."
         kubectl --context "${CONTEXT_NAME}" create namespace otel --dry-run=client -o yaml \
             | kubectl --context "${CONTEXT_NAME}" apply -f -
+        label_namespace_for_scrape "${CONTEXT_NAME}" otel
 
         helm_upgrade_install otel-collector \
             oci://ghcr.io/open-telemetry/opentelemetry-helm-charts/opentelemetry-collector \
@@ -199,6 +203,7 @@ for region in "${REGIONS[@]}"; do
         --set "tolerations[0].key=node-role.kubernetes.io/infra" \
         --set "tolerations[0].operator=Exists" \
         --set "tolerations[0].effect=NoSchedule"
+    label_namespace_for_scrape "${CONTEXT_NAME}" grafana
 
 # Creating Grafana instance and dashboards
     kubectl kustomize ${GIT_REPO_ROOT}/monitoring/grafana/ | \
@@ -299,6 +304,7 @@ fi
             -f "${GIT_REPO_ROOT}/monitoring/cnpg/cnpg-operator-podmonitor.yaml" \
             -f "${GIT_REPO_ROOT}/monitoring/cnpg/cnpg-cluster-wildcard-podmonitor.yaml" \
             -f "${GIT_REPO_ROOT}/monitoring/cnpg/cnpg-pooler-wildcard-podmonitor.yaml"
+        label_namespace_for_scrape "${CONTEXT_NAME}" cnpg-system
     fi
 
     if TRAEFIK_LB_IP=$(get_traefik_lb_ip "${CONTEXT_NAME}" 30); then
