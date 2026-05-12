@@ -270,9 +270,17 @@ EOF
         --set "loki.storage.s3.accessKeyId=${RUSTFS_ROOT_USER}" \
         --set "loki.storage.s3.secretAccessKey=${RUSTFS_ROOT_PASSWORD}"
 
+    SCRAPE_NAMESPACES_CSV="$(get_scrape_namespaces "${CONTEXT_NAME}")"
+    SCRAPE_NAMESPACES_RIVER="$(echo "${SCRAPE_NAMESPACES_CSV}" | awk -F, '{
+        out="["
+        for (i=1;i<=NF;i++) { out=out "\"" $i "\""; if (i<NF) out=out "," }
+        out=out "]"; print out
+    }')"
+
     RENDERED_ALLOY_CONFIG="$(mktemp)"
     REGION="${region}" MIMIR_PUSH_URL="${MIMIR_PUSH_URL}" MIMIR_RULER_URL="${MIMIR_RULER_URL}" \
-        envsubst '${REGION} ${MIMIR_PUSH_URL} ${MIMIR_RULER_URL}' \
+        SCRAPE_NAMESPACES_RIVER="${SCRAPE_NAMESPACES_RIVER}" \
+        envsubst '${REGION} ${MIMIR_PUSH_URL} ${MIMIR_RULER_URL} ${SCRAPE_NAMESPACES_RIVER}' \
         < "${GIT_REPO_ROOT}/monitoring/alloy/alloy-config.river.tpl" \
         > "${RENDERED_ALLOY_CONFIG}"
 

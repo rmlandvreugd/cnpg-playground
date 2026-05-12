@@ -205,14 +205,17 @@ prometheus.remote_write "mimir" {
 
 prometheus.operator.servicemonitors "scrape" {
   forward_to = [prometheus.remote_write.mimir.receiver]
+  namespaces = ${SCRAPE_NAMESPACES_RIVER}
 }
 
 prometheus.operator.podmonitors "scrape" {
   forward_to = [prometheus.remote_write.mimir.receiver]
+  namespaces = ${SCRAPE_NAMESPACES_RIVER}
 }
 
 prometheus.operator.probes "scrape" {
   forward_to = [prometheus.remote_write.mimir.receiver]
+  namespaces = ${SCRAPE_NAMESPACES_RIVER}
 }
 
 // === PrometheusRule → Mimir Ruler ===
@@ -221,6 +224,9 @@ mimir.rules.kubernetes "rules" {
   address   = "${MIMIR_RULER_URL}"
   tenant_id = "${REGION}"
 
-  rule_selector {}
-  rule_namespace_selector {}
+  rule_namespace_selector {
+    match_labels = {
+      "monitoring/scrape" = "enabled",
+    }
+  }
 }
