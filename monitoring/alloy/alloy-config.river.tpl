@@ -221,6 +221,6 @@ mimir.rules.kubernetes "rules" {
   address   = "${MIMIR_RULER_URL}"
   tenant_id = "${REGION}"
 
-  rule_selector           = {}
-  rule_namespace_selector = {}
+  rule_selector {}
+  rule_namespace_selector {}
 }
