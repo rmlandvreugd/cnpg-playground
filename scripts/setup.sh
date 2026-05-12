@@ -109,6 +109,7 @@ for region in "${REGIONS[@]}"; do
     kubectl label node -l postgres.node.kubernetes.io node-role.kubernetes.io/postgres= --context "$(get_cluster_context "${region}")"
     kubectl label node -l infra.node.kubernetes.io node-role.kubernetes.io/infra= --context "$(get_cluster_context "${region}")"
     kubectl label node -l app.node.kubernetes.io node-role.kubernetes.io/app= --context "$(get_cluster_context "${region}")"
+    label_namespace_for_scrape "${CONTEXT_NAME}" kube-system
 
     echo "🛠️  Installing MetalLB ${METALLB_CHART_VERSION} (chart) in '${K8S_CLUSTER_NAME}'..."
     # Enable strict ARP for kube-proxy
@@ -178,6 +179,7 @@ EOF
     echo "🔧 Wiring Vault into Kubernetes cluster '${K8S_CLUSTER_NAME}'..."
     kubectl --context "${CONTEXT_NAME}" create ns vault --dry-run=client -o yaml \
         | kubectl --context "${CONTEXT_NAME}" apply -f -
+    label_namespace_for_scrape "${CONTEXT_NAME}" vault
     VAULT_IP=$(${CONTAINER_PROVIDER} inspect "${VAULT_CONTAINER_NAME}" \
         --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
     VAULT_IP="${VAULT_IP}" envsubst '${VAULT_IP}' \
@@ -190,6 +192,7 @@ EOF
         oci://quay.io/jetstack/charts/cert-manager \
         cert-manager "${CONTEXT_NAME}" "${CERT_MANAGER_CHART_VERSION}" \
         --set crds.enabled=true
+    label_namespace_for_scrape "${CONTEXT_NAME}" cert-manager
 
     # Secrets in cert-manager namespace
     echo "🔑 Creating cert-manager secrets for Vault PKI..."
@@ -217,6 +220,7 @@ EOF
     export REGION="${region}"
     export CONTEXT_NAME="${CONTEXT_NAME}"
     "${SCRIPT_DIR}/eso-setup.sh"
+    label_namespace_for_scrape "${CONTEXT_NAME}" external-secrets
 
     TRAEFIK_IP=$(echo "$IP_RANGE" | cut -d- -f1)
     TRAEFIK_IP_DASHED=$(ip_to_dashed "${TRAEFIK_IP}")
@@ -239,6 +243,7 @@ EOF
         --set "tracing.serviceName=traefik-${region}" \
         --set "tracing.resourceAttributes.cluster=${region}" \
         "${TRACING_SET_ARGS[@]}"
+    label_namespace_for_scrape "${CONTEXT_NAME}" traefik
 
     # Traefik dashboard TLS certificate
     echo "📜 Issuing Traefik dashboard TLS certificate..."

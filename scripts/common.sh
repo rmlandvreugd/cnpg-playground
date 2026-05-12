@@ -146,6 +146,7 @@ KUBE_CONFIG_PATH="${GIT_REPO_ROOT}/k8s/kube-config.yaml"
 
 # source funcs_regions.sh
 source $(git rev-parse --show-toplevel)/scripts/funcs_regions.sh
+source $(git rev-parse --show-toplevel)/scripts/funcs_namespace_scrape_label.sh
 
 # --- Traefik Configuration ---
 TRAEFIK_VERSION="${TRAEFIK_VERSION:-v3.3.0}"

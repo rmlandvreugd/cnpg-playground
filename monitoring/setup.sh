@@ -49,6 +49,7 @@ for region in "${REGIONS[@]}"; do
         oci://ghcr.io/prometheus-community/charts/kube-prometheus-stack \
         prometheus-operator "${CONTEXT_NAME}" "${KUBE_PROMETHEUS_STACK_CHART_VERSION}" \
         --values "${GIT_REPO_ROOT}/monitoring/kube-prometheus-stack-values.yaml"
+    label_namespace_for_scrape "${CONTEXT_NAME}" prometheus-operator
 
     # --- Mimir: hub install (first region only) ---
     if [[ "${region}" == "${HUB_REGION}" ]]; then
@@ -58,6 +59,7 @@ for region in "${REGIONS[@]}"; do
             --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
         kubectl --context "${CONTEXT_NAME}" create namespace mimir --dry-run=client -o yaml \
             | kubectl --context "${CONTEXT_NAME}" apply -f -
+        label_namespace_for_scrape "${CONTEXT_NAME}" mimir
         OBJECTSTORE_IP="${OBJECTSTORE_IP}" envsubst '${OBJECTSTORE_IP}' \
             < "${GIT_REPO_ROOT}/monitoring/mimir/objectstore-bridge.yaml.tpl" \
             | kubectl --context "${CONTEXT_NAME}" apply -f -
@@ -119,6 +121,7 @@ for region in "${REGIONS[@]}"; do
             --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
         kubectl --context "${CONTEXT_NAME}" create namespace tempo --dry-run=client -o yaml \
             | kubectl --context "${CONTEXT_NAME}" apply -f -
+        label_namespace_for_scrape "${CONTEXT_NAME}" tempo
         OBJECTSTORE_IP="${OBJECTSTORE_IP}" envsubst '${OBJECTSTORE_IP}' \
             < "${GIT_REPO_ROOT}/monitoring/tempo/objectstore-bridge.yaml.tpl" \
             | kubectl --context "${CONTEXT_NAME}" apply -f -
@@ -140,16 +143,32 @@ for region in "${REGIONS[@]}"; do
         kubectl --context "${CONTEXT_NAME}" -n tempo delete pod tempo-bucket-init --ignore-not-found
 
         echo "📊 Installing Tempo ${TEMPO_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
+        RENDERED_TEMPO_OVERRIDE="$(mktemp)"
+        REGION="${region}" envsubst '${REGION}' > "${RENDERED_TEMPO_OVERRIDE}" << 'TEMPO_OVERRIDE'
+metricsGenerator:
+  config:
+    storage:
+      remote_write:
+        - url: http://mimir-nginx.mimir.svc.cluster.local/api/v1/push
+          headers:
+            X-Scope-OrgID: tempo
+          external_labels:
+            cluster: ${REGION}
+            region: ${REGION}
+TEMPO_OVERRIDE
         helm_upgrade_install tempo \
             oci://ghcr.io/grafana-community/helm-charts/tempo-distributed \
             tempo "${CONTEXT_NAME}" "${TEMPO_CHART_VERSION}" \
             --values "${GIT_REPO_ROOT}/monitoring/tempo/tempo-values.yaml" \
+            --values "${RENDERED_TEMPO_OVERRIDE}" \
             --set "storage.trace.s3.access_key=${RUSTFS_ROOT_USER}" \
             --set "storage.trace.s3.secret_key=${RUSTFS_ROOT_PASSWORD}"
+        rm -f "${RENDERED_TEMPO_OVERRIDE}"
 
         echo "📡 Installing OTel Collector (tail-based sampling gateway)..."
         kubectl --context "${CONTEXT_NAME}" create namespace otel --dry-run=client -o yaml \
             | kubectl --context "${CONTEXT_NAME}" apply -f -
+        label_namespace_for_scrape "${CONTEXT_NAME}" otel
 
         helm_upgrade_install otel-collector \
             oci://ghcr.io/open-telemetry/opentelemetry-helm-charts/opentelemetry-collector \
@@ -199,6 +218,7 @@ for region in "${REGIONS[@]}"; do
         --set "tolerations[0].key=node-role.kubernetes.io/infra" \
         --set "tolerations[0].operator=Exists" \
         --set "tolerations[0].effect=NoSchedule"
+    label_namespace_for_scrape "${CONTEXT_NAME}" grafana
 
 # Creating Grafana instance and dashboards
     kubectl kustomize ${GIT_REPO_ROOT}/monitoring/grafana/ | \
@@ -265,9 +285,17 @@ EOF
         --set "loki.storage.s3.accessKeyId=${RUSTFS_ROOT_USER}" \
         --set "loki.storage.s3.secretAccessKey=${RUSTFS_ROOT_PASSWORD}"
 
+    SCRAPE_NAMESPACES_CSV="$(get_scrape_namespaces "${CONTEXT_NAME}")"
+    SCRAPE_NAMESPACES_RIVER="$(echo "${SCRAPE_NAMESPACES_CSV}" | awk -F, '{
+        out="["
+        for (i=1;i<=NF;i++) { out=out "\"" $i "\""; if (i<NF) out=out "," }
+        out=out "]"; print out
+    }')"
+
     RENDERED_ALLOY_CONFIG="$(mktemp)"
     REGION="${region}" MIMIR_PUSH_URL="${MIMIR_PUSH_URL}" MIMIR_RULER_URL="${MIMIR_RULER_URL}" \
-        envsubst '${REGION} ${MIMIR_PUSH_URL} ${MIMIR_RULER_URL}' \
+        SCRAPE_NAMESPACES_RIVER="${SCRAPE_NAMESPACES_RIVER}" \
+        envsubst '${REGION} ${MIMIR_PUSH_URL} ${MIMIR_RULER_URL} ${SCRAPE_NAMESPACES_RIVER}' \
         < "${GIT_REPO_ROOT}/monitoring/alloy/alloy-config.river.tpl" \
         > "${RENDERED_ALLOY_CONFIG}"
 
@@ -299,6 +327,7 @@ fi
             -f "${GIT_REPO_ROOT}/monitoring/cnpg/cnpg-operator-podmonitor.yaml" \
             -f "${GIT_REPO_ROOT}/monitoring/cnpg/cnpg-cluster-wildcard-podmonitor.yaml" \
             -f "${GIT_REPO_ROOT}/monitoring/cnpg/cnpg-pooler-wildcard-podmonitor.yaml"
+        label_namespace_for_scrape "${CONTEXT_NAME}" cnpg-system
     fi
 
     if TRAEFIK_LB_IP=$(get_traefik_lb_ip "${CONTEXT_NAME}" 30); then

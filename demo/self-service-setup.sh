@@ -176,6 +176,7 @@ EOF
     kubectl apply --context "${LOCAL_CONTEXT}" \
         -f "${SELF_SERVICE_YAML}/rbr-ver-db/namespace.yaml" \
         -f "${SELF_SERVICE_YAML}/rbr-ver/namespace.yaml"
+    label_namespace_for_scrape "${LOCAL_CONTEXT}" rbr-ver-db
 
     # --- ExternalSecrets ---
     echo "📋 Applying ExternalSecrets..."

@@ -118,6 +118,51 @@ No rules exist today — create a `PrometheusRule` CR and it syncs within second
   Both alias the same Mimir backend with per-region tenant scoping.
   Use `DS_MIMIR_TEMPO` for span-metrics (tenant `tempo`).
 
+## Namespace Allowlist
+
+Alloy scopes ServiceMonitor, PodMonitor, and Probe scraping to namespaces labelled:
+
+```
+monitoring/scrape=enabled
+```
+
+ServiceMonitors and PodMonitors in unlabelled namespaces are **silently ignored**.
+
+### Labelled Namespaces
+
+| Namespace | Labelled by |
+|---|---|
+| `kube-system` | `scripts/setup.sh` |
+| `vault` | `scripts/setup.sh` |
+| `cert-manager` | `scripts/setup.sh` |
+| `external-secrets` | `scripts/setup.sh` |
+| `traefik` | `scripts/setup.sh` |
+| `prometheus-operator` | `monitoring/setup.sh` |
+| `mimir` | `monitoring/setup.sh` (hub only) |
+| `tempo` | `monitoring/setup.sh` (hub only) |
+| `otel` | `monitoring/setup.sh` (hub only) |
+| `grafana` | `monitoring/setup.sh` |
+| `cnpg-system` | `monitoring/setup.sh` |
+| `default` | `demo/setup.sh` (CNPG demo clusters) |
+| `rbr-ver-db` | `demo/self-service-setup.sh` |
+
+### Adding a New Namespace
+
+1. Label the namespace:
+   ```bash
+   kubectl label namespace <ns> monitoring/scrape=enabled --overwrite
+   ```
+2. Re-run `monitoring/setup.sh` for the affected region(s).
+
+**Why re-run setup?** Alloy uses a **static** namespace list (`namespaces = [...]`) rendered
+at install time via `envsubst`. Dynamic label-selector support for
+`prometheus.operator.*` is tracked in [Alloy issue #209](https://github.com/grafana/alloy/issues/209).
+Without re-running setup, the newly labelled namespace is not included in `SCRAPE_NAMESPACES_RIVER`
+and its monitors are silently ignored.
+
+`mimir.rules.kubernetes` uses a **live** Kubernetes label selector and picks up newly labelled
+namespaces without re-installation.
+
 ## Dashboards
 
 | Dashboard | Source | Notes |

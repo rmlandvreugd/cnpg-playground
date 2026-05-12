@@ -153,6 +153,15 @@ if [[ ${#REGIONS[@]} -gt 1 ]]; then
     done
 fi
 
+echo "🏷️  Removing scrape labels from persistent namespaces..."
+for region in "${REGIONS[@]}"; do
+    CONTEXT_NAME=$(get_cluster_context "${region}")
+    for ns in kube-system cnpg-system default; do
+        kubectl --context "${CONTEXT_NAME}" label namespace "${ns}" \
+            monitoring/scrape- --ignore-not-found 2>/dev/null || true
+    done
+done
+
 echo "-------------------------------------------------------------"
 echo " ✅ Monitoring teardown complete."
 echo "-------------------------------------------------------------"
