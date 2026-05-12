@@ -189,7 +189,7 @@ prometheus.remote_write "mimir" {
     }
     write_relabel_config {
       source_labels = ["__name__"]
-      regex         = "(up|scrape_.*|kube_.*|node_.*|kubelet_.*|apiserver_.*|cnpg_.*|pg_.*|traces_.*|process_.*|go_.*)"
+      regex         = "(up|scrape_.*|kube_.*|node_.*|kubelet_.*|container_.*|machine_.*|apiserver_.*|cnpg_.*|pg_.*|traces_.*|process_.*|go_.*)"
       action        = "keep"
     }
     queue_config {
