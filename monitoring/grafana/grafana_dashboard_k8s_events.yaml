@@ -25,7 +25,7 @@ spec:
            "query":"Normal,Warning","multi":true,"includeAll":true,"allValue":".+"},
           {"name":"reason","label":"Reason","type":"query",
            "datasource":{"type":"loki","uid":"${datasource}"},
-           "query":{"type":5,"stream":"{job=\"k8s-events\"} | logfmt","label":"reason"},"refresh":2,"multi":true,"includeAll":true,"allValue":".+"}
+           "query":{"type":5,"stream":"{job=\"k8s-events\"}","label":"reason"},"refresh":2,"multi":true,"includeAll":true,"allValue":".+"}
         ]
       },
       "panels": [
