@@ -1,5 +1,72 @@
 # Plan — Cross-Region Rollup Dashboards + Mimir Federation
 
+## Execution Sequence (shared across both plans)
+
+> Identical block in `docs/monitoring-ops-plan.md`. Update both when changing order. Each row maps to one commit.
+
+### Phase 0 — Prereqs (done)
+
+- `874eb43` — Prometheus CR removed (Mimir sole metrics store)
+- `a53e108` — `mimir.rules.kubernetes` Alloy block in place
+- `7372767` — `rule_selector {}` block syntax fix
+
+### Phase 1 — Foundation (independent, parallel-safe)
+
+| # | Plan | Commit | Why first |
+|---|---|---|---|
+| 1 | Ops | C1 — label namespaces for scrape allowlist | No deps. Label scheme used downstream. |
+| 2 | Ops | C2 — scope Alloy ServiceMonitor/PodMonitor to labeled namespaces | Hardens scrape posture before adding rules. |
+| 3 | **Signals** | **C1 — dual-label emit `cluster + region` (Alloy + Tempo)** | **Critical — gates everything below.** All fleet dashboards + recording rules + CNPG alert annotations consume `region`. |
+
+### Phase 2 — Mimir multi-tenant + AM wiring (depends on Phase 1)
+
+| # | Plan | Commit | Notes |
+|---|---|---|---|
+| 4 | Signals | C2 — Mimir runtime-config per-tenant overrides | Enables `query_federation.allowed_tenants`. |
+| 5 | Ops | C3 — Mimir Ruler→AM wire + null receiver | AM fallback config + `alertmanager_url`. |
+| 6 | Signals | C3 — `mimir-fleet` cross-tenant DS + query IngressRoute | Multi-region read path. |
+
+### Phase 3 — Dashboards + alerting policies (depends on Phase 2)
+
+| # | Plan | Commit | Notes |
+|---|---|---|---|
+| 7 | Signals | C4 — 4 fleet rollup dashboards | Consumes `region` label + `mimir-fleet` DS. |
+| 8 | Ops | C4 — Grafana Unified Alerting + null contact point + smoke rule | Grafana Alerting CR scaffolding. |
+| 9 | Signals | C5 — self-service mirror of fleet DS + dashboards | rbr-ver Grafana sees fleet view. |
+| 10 | Ops | C5 — self-service mirror of Grafana Alerting | rbr-ver Grafana Alerting. |
+
+### Phase 4 — Alert content + production-grade routing (depends on Phase 3)
+
+| # | Plan | Commit | Notes |
+|---|---|---|---|
+| 11 | Ops | C6 — CNPG alert library + 3 gap alerts + hub-only fleet alert | Uses `region` label from Phase 1 #3. |
+| 12 | Signals | C6 — fleet recording rules + cross-region writer topology | Hub-only apply + non-hub purge. Speeds dashboards from #7. |
+| 13 | Ops | C7 — Mimir AM `inhibit_rules` + Grafana mute timings | Needs alert library from #11 (inhibition source/target names). |
+| 14 | Ops | C8 — Mimir AM HA 3 replicas + memberlist gossip | Independent — slot earlier if convenient. |
+| 15 | Ops | C9 — namespace-labeler CronJob + severity taxonomy lint | Lint depends on alert library from #11. |
+
+### Critical ordering rules
+
+- **Signals C1 (#3) must land before** any commit querying `region` label: signals C4 (#7), signals C6 (#12), ops C6 (#11), ops C7 (#13).
+- **Ops C3 AM wire (#5) must land before** ops C7 inhibit_rules (#13) and ops C8 HA (#14).
+- **Ops C1+C2 namespace labels (#1, #2) must land before** ops C9 labeler (#15).
+
+### Parallelizable
+
+- #4 + #5 + #6 — runtime-config, AM wire, fleet DS — different files.
+- #7 + #8 — fleet dashboards vs Grafana Alerting CRs.
+- #9 + #10 — self-service mirrors.
+- #14 AM HA — independent; slot anywhere in Phase 4.
+
+### Validation gates between phases
+
+- **End Phase 1**: signals V.1 + signals V.7 (allowlist enforced; dual-label visible on series).
+- **End Phase 2**: signals V.2 + signals V.3 + ops V.2 (cross-tenant query; federation policy; Ruler→AM smoke).
+- **End Phase 3**: signals V.5/V.6 + ops V.3/V.4 (dashboards render; Grafana Alerting routes).
+- **End Phase 4**: ops V.6 + V.7 + V.8 + V.9 + V.10 + V.11 (CNPG library; inhibit; mute; HA quorum; labeler; lint).
+
+---
+
 ## Context
 
 Follow-up to `docs/monitoring-prom-removal-plan.md`. Closes two "Out of Scope" items by adding:
