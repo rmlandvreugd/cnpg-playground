@@ -430,6 +430,11 @@ EOF
     REGION="local" envsubst '${REGION}' \
         < "${SELF_SERVICE_YAML}/grafana/grafanadatasource-prometheus-alias-rbr-ver.yaml.tpl" \
         | kubectl apply --context "${LOCAL_CONTEXT}" -f -
+    MIMIR_QUERY_URL="http://mimir-nginx.mimir.svc.cluster.local/prometheus" \
+    FLEET_TENANTS="local" \
+        envsubst '${MIMIR_QUERY_URL} ${FLEET_TENANTS}' \
+        < "${SELF_SERVICE_YAML}/grafana/grafanadatasource-mimir-fleet-rbr-ver.yaml.tpl" \
+        | kubectl apply --context "${LOCAL_CONTEXT}" -f -
     kubectl apply --context "${LOCAL_CONTEXT}" \
         -f "${SELF_SERVICE_YAML}/grafana/grafanadatasource-loki-rbr-ver.yaml" \
         -f "${SELF_SERVICE_YAML}/grafana/grafanadatasource-tempo-rbr-ver.yaml" \

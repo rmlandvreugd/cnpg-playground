@@ -13,7 +13,7 @@ spec:
     uid: prometheus
     type: prometheus
     access: proxy
-    url: http://mimir-nginx.mimir.svc.cluster.local/prometheus
+    url: ${MIMIR_QUERY_URL}
     isDefault: true
     jsonData:
       httpHeaderName1: X-Scope-OrgID
