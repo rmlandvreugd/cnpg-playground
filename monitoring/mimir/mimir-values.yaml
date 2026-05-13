@@ -35,7 +35,7 @@ mimir:
       ingestion_burst_size: 200000
     runtime_config:
       file: /var/mimir/runtime.yaml
-      reload_period: 10s
+      period: 10s
     ruler:
       alertmanager_url: http://mimir-alertmanager.mimir.svc.cluster.local:8080/alertmanager
       poll_interval: 1m
@@ -50,28 +50,20 @@ runtimeConfig:
       max_query_lookback: 30d
       ingestion_rate: 100000
       ingestion_burst_size: 200000
-      query_federation:
-        allowed_tenants: [local, eu, us, tempo]
     eu:
       max_global_series_per_user: 500000
       max_query_lookback: 30d
       ingestion_rate: 100000
       ingestion_burst_size: 200000
-      query_federation:
-        allowed_tenants: [local, eu, us, tempo]
     us:
       max_global_series_per_user: 500000
       max_query_lookback: 30d
       ingestion_rate: 100000
       ingestion_burst_size: 200000
-      query_federation:
-        allowed_tenants: [local, eu, us, tempo]
     tempo:
       max_global_series_per_user: 200000
       max_query_lookback: 7d
       ingestion_rate: 50000
-      query_federation:
-        allowed_tenants: [tempo]
 
 # Pin every component to single replica — playground footprint
 distributor:    { replicas: 1 }
