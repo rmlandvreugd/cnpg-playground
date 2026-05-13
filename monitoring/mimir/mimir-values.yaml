@@ -36,6 +36,12 @@ mimir:
     runtime_config:
       file: /var/mimir/runtime.yaml
       reload_period: 10s
+    ruler:
+      alertmanager_url: http://mimir-alertmanager.mimir.svc.cluster.local:8080/alertmanager
+      poll_interval: 1m
+      evaluation_interval: 1m
+    alertmanager:
+      external_url: http://mimir-alertmanager.mimir.svc.cluster.local:8080/alertmanager
 
 runtimeConfig:
   overrides:

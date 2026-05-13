@@ -83,12 +83,19 @@ for region in "${REGIONS[@]}"; do
         kubectl --context "${CONTEXT_NAME}" -n mimir delete pod mimir-bucket-init --ignore-not-found
 
         echo "📊 Installing Mimir ${MIMIR_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
+        AM_CONFIG_TMP="$(mktemp)"
+        SLACK_WEBHOOK_URL="${SLACK_WEBHOOK_URL:-https://hooks.slack.com/services/INVALID/INVALID/INVALID}" \
+            envsubst '${SLACK_WEBHOOK_URL}' \
+            < "${GIT_REPO_ROOT}/monitoring/mimir/alertmanager-config.yaml.tpl" \
+            > "${AM_CONFIG_TMP}"
         helm_upgrade_install mimir \
             oci://ghcr.io/grafana/helm-charts/mimir-distributed \
             mimir "${CONTEXT_NAME}" "${MIMIR_CHART_VERSION}" \
             --values "${GIT_REPO_ROOT}/monitoring/mimir/mimir-values.yaml" \
             --set "mimir.structuredConfig.common.storage.s3.access_key_id=${RUSTFS_ROOT_USER}" \
-            --set "mimir.structuredConfig.common.storage.s3.secret_access_key=${RUSTFS_ROOT_PASSWORD}"
+            --set "mimir.structuredConfig.common.storage.s3.secret_access_key=${RUSTFS_ROOT_PASSWORD}" \
+            --set-file "alertmanager.fallbackConfig=${AM_CONFIG_TMP}"
+        rm -f "${AM_CONFIG_TMP}"
 
         if [[ ${#REGIONS[@]} -gt 1 ]]; then
             HUB_TRAEFIK_IP="$(get_traefik_lb_ip "${HUB_CONTEXT}" 30)"
@@ -98,6 +105,9 @@ for region in "${REGIONS[@]}"; do
                 | kubectl --context "${CONTEXT_NAME}" apply -f -
             TRAEFIK_IP_DASHED="${HUB_TRAEFIK_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
                 < "${GIT_REPO_ROOT}/monitoring/mimir/ingressroute-ruler.yaml.tpl" \
+                | kubectl --context "${CONTEXT_NAME}" apply -f -
+            TRAEFIK_IP_DASHED="${HUB_TRAEFIK_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
+                < "${GIT_REPO_ROOT}/monitoring/mimir/ingressroute-am.yaml.tpl" \
                 | kubectl --context "${CONTEXT_NAME}" apply -f -
         fi
     fi
