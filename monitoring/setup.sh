@@ -162,14 +162,15 @@ for region in "${REGIONS[@]}"; do
         REGION="${region}" envsubst '${REGION}' > "${RENDERED_TEMPO_OVERRIDE}" << 'TEMPO_OVERRIDE'
 metricsGenerator:
   config:
+    registry:
+      external_labels:
+        cluster: ${REGION}
+        region: ${REGION}
     storage:
       remote_write:
         - url: http://mimir-nginx.mimir.svc.cluster.local/api/v1/push
           headers:
             X-Scope-OrgID: tempo
-          external_labels:
-            cluster: ${REGION}
-            region: ${REGION}
 TEMPO_OVERRIDE
         helm_upgrade_install tempo \
             oci://ghcr.io/grafana-community/helm-charts/tempo-distributed \
