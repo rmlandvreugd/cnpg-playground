@@ -1,0 +1,37 @@
+# Mimir per-tenant runtime overrides — documentation reference.
+# This content is embedded in mimir-values.yaml under runtimeConfig.overrides
+# and is NOT applied separately. The mimir-distributed chart serialises the
+# runtimeConfig block into a ConfigMap mounted at /var/mimir/runtime.yaml.
+#
+# To add a new tenant: add an entry here AND update mimir-values.yaml.
+# All region tenants must list each other in query_federation.allowed_tenants
+# to enable cross-tenant queries via the mimir-fleet datasource.
+
+overrides:
+  local:
+    max_global_series_per_user: 500000
+    max_query_lookback: 30d
+    ingestion_rate: 100000
+    ingestion_burst_size: 200000
+    query_federation:
+      allowed_tenants: [local, eu, us, tempo]
+  eu:
+    max_global_series_per_user: 500000
+    max_query_lookback: 30d
+    ingestion_rate: 100000
+    ingestion_burst_size: 200000
+    query_federation:
+      allowed_tenants: [local, eu, us, tempo]
+  us:
+    max_global_series_per_user: 500000
+    max_query_lookback: 30d
+    ingestion_rate: 100000
+    ingestion_burst_size: 200000
+    query_federation:
+      allowed_tenants: [local, eu, us, tempo]
+  tempo:
+    max_global_series_per_user: 200000
+    max_query_lookback: 7d
+    ingestion_rate: 50000
+    query_federation:
+      allowed_tenants: [tempo]

@@ -33,6 +33,39 @@ mimir:
     limits:
       ingestion_rate: 100000
       ingestion_burst_size: 200000
+    runtime_config:
+      file: /var/mimir/runtime.yaml
+      reload_period: 10s
+
+runtimeConfig:
+  overrides:
+    local:
+      max_global_series_per_user: 500000
+      max_query_lookback: 30d
+      ingestion_rate: 100000
+      ingestion_burst_size: 200000
+      query_federation:
+        allowed_tenants: [local, eu, us, tempo]
+    eu:
+      max_global_series_per_user: 500000
+      max_query_lookback: 30d
+      ingestion_rate: 100000
+      ingestion_burst_size: 200000
+      query_federation:
+        allowed_tenants: [local, eu, us, tempo]
+    us:
+      max_global_series_per_user: 500000
+      max_query_lookback: 30d
+      ingestion_rate: 100000
+      ingestion_burst_size: 200000
+      query_federation:
+        allowed_tenants: [local, eu, us, tempo]
+    tempo:
+      max_global_series_per_user: 200000
+      max_query_lookback: 7d
+      ingestion_rate: 50000
+      query_federation:
+        allowed_tenants: [tempo]
 
 # Pin every component to single replica — playground footprint
 distributor:    { replicas: 1 }
