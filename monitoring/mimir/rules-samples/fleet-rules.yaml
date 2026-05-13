@@ -1,0 +1,26 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: fleet-cnpg-rollup
+  namespace: monitoring-fleet
+  annotations:
+    # Read from all region tenants + tempo span-metrics; write result to current region tenant
+    monitoring.grafana.com/source_tenants: "local,eu,us,tempo"
+spec:
+  groups:
+    - name: cnpg-fleet
+      interval: 30s
+      rules:
+        - record: fleet:cnpg_pg_replication_lag:max
+          expr: max by (cluster) (cnpg_pg_replication_lag)
+        - record: fleet:traefik_request_rate_5m:sum
+          expr: sum by (service, cluster) (rate(traces_spanmetrics_calls_total{service_name=~".+"}[5m]))
+
+    - name: cross-purpose-red
+      interval: 30s
+      rules:
+        - record: fleet:db_request_rate_per_cnpg_cluster
+          expr: |
+            sum by (cluster, k8s_cluster) (
+              rate(traces_spanmetrics_calls_total{db_system="postgresql"}[5m])
+            )

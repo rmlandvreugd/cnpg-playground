@@ -109,6 +109,9 @@ for region in "${REGIONS[@]}"; do
             TRAEFIK_IP_DASHED="${HUB_TRAEFIK_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
                 < "${GIT_REPO_ROOT}/monitoring/mimir/ingressroute-am.yaml.tpl" \
                 | kubectl --context "${CONTEXT_NAME}" apply -f -
+            TRAEFIK_IP_DASHED="${HUB_TRAEFIK_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
+                < "${GIT_REPO_ROOT}/monitoring/mimir/ingressroute-query.yaml.tpl" \
+                | kubectl --context "${CONTEXT_NAME}" apply -f -
         fi
     fi
 
@@ -116,11 +119,13 @@ for region in "${REGIONS[@]}"; do
     if [[ "${region}" == "${HUB_REGION}" ]]; then
         MIMIR_PUSH_URL="http://mimir-nginx.mimir.svc.cluster.local/api/v1/push"
         MIMIR_RULER_URL="http://mimir-ruler.mimir.svc.cluster.local:8080"
+        MIMIR_QUERY_URL="http://mimir-nginx.mimir.svc.cluster.local/prometheus"
     else
         HUB_TRAEFIK_IP="$(get_traefik_lb_ip "${HUB_CONTEXT}" 30)"
         HUB_TRAEFIK_DASHED="$(ip_to_dashed "${HUB_TRAEFIK_IP}")"
         MIMIR_PUSH_URL="http://mimir-push.${HUB_TRAEFIK_DASHED}.sslip.io/api/v1/push"
         MIMIR_RULER_URL="http://mimir-ruler.${HUB_TRAEFIK_DASHED}.sslip.io"
+        MIMIR_QUERY_URL="http://mimir-query.${HUB_TRAEFIK_DASHED}.sslip.io/prometheus"
     fi
 
     # --- Tempo: hub install (first region only) ---
@@ -234,12 +239,17 @@ TEMPO_OVERRIDE
     kubectl kustomize ${GIT_REPO_ROOT}/monitoring/grafana/ | \
       kubectl --context ${CONTEXT_NAME} apply -f -
 
-    echo "📊 Applying Mimir datasource (tenant=${region}) + prometheus alias..."
-    REGION="${region}" envsubst '${REGION}' \
+    echo "📊 Applying Mimir datasource (tenant=${region}) + prometheus alias + fleet..."
+    FLEET_TENANTS="$(IFS='|'; echo "${REGIONS[*]}")"
+    REGION="${region}" MIMIR_QUERY_URL="${MIMIR_QUERY_URL}" envsubst '${REGION} ${MIMIR_QUERY_URL}' \
         < "${GIT_REPO_ROOT}/monitoring/grafana/grafana_datasource_mimir.yaml.tpl" \
         | kubectl --context "${CONTEXT_NAME}" apply -f -
-    REGION="${region}" envsubst '${REGION}' \
+    REGION="${region}" MIMIR_QUERY_URL="${MIMIR_QUERY_URL}" envsubst '${REGION} ${MIMIR_QUERY_URL}' \
         < "${GIT_REPO_ROOT}/monitoring/grafana/grafana_datasource_prometheus_alias.yaml.tpl" \
+        | kubectl --context "${CONTEXT_NAME}" apply -f -
+    MIMIR_QUERY_URL="${MIMIR_QUERY_URL}" FLEET_TENANTS="${FLEET_TENANTS}" \
+        envsubst '${MIMIR_QUERY_URL} ${FLEET_TENANTS}' \
+        < "${GIT_REPO_ROOT}/monitoring/grafana/grafana_datasource_mimir_fleet.yaml.tpl" \
         | kubectl --context "${CONTEXT_NAME}" apply -f -
 
     # --- Loki + Alloy (pgaudit log aggregation) ---

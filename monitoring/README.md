@@ -221,6 +221,18 @@ with `traceID` exemplars to Mimir (tenant `tempo`). Mimir histogram exemplars �
 **Pre-built Traefik/Tempo dashboard** (RED panels, service-graph node panel, traceID-pivot widgets)
 is a follow-up task — flag in backlog.
 
+## Federated Rules (`source_tenants` annotation)
+
+A `PrometheusRule` can read across tenants by annotating with:
+
+```
+monitoring.grafana.com/source_tenants: "local,eu,us,tempo"
+```
+
+The rule is owned by the region tenant where it lives (Alloy's `mimir.rules.kubernetes` sets `tenant_id = ${REGION}`). Recording-rule output lands in the region tenant. Federation read-allowed sets are enforced per-tenant via `monitoring/mimir/runtime-config.yaml` — adding a new tenant requires updating `allowed_tenants` for all consumers.
+
+Sample rules in `monitoring/mimir/rules-samples/` — not auto-applied; copy into a real namespace to activate.
+
 ## PodMonitor
 
 To enable Alloy to scrape metrics from your PostgreSQL pods, create a `PodMonitor`
