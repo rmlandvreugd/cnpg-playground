@@ -65,34 +65,36 @@ CSR=$(_vcmd write -field=csr pki_int/intermediate/generate/internal \
     common_name="CloudNativePG Playground Intermediate CA" \
     key_type=rsa key_bits=2048)
 
-# Sign the CSR with step-ca (instead of Vault's own root)
+# Sign the CSR with step-ca's intermediate CA key using openssl on the host
+# (step certificate sign requires a TTY which isn't available in docker exec)
 echo "📜 Signing Vault intermediate CSR with step-ca..."
-# Write CSR to a temp file inside the step-ca container
 CSR_FILE=$(mktemp)
 echo "${CSR}" > "${CSR_FILE}"
 
-# Copy CSR into step-ca container and sign it
-${CONTAINER_PROVIDER} cp "${CSR_FILE}" "${STEP_CA_CONTAINER_NAME}:/tmp/vault-intermediate.csr"
-rm -f "${CSR_FILE}"
+# Copy intermediate CA cert, key, and password from step-ca container
+STEP_CA_INTERMEDIATE_CERT_TMPFILE=$(mktemp)
+STEP_CA_KEY_TMPFILE=$(mktemp)
+STEP_CA_EXT_TMPFILE=$(mktemp)
+docker exec "${STEP_CA_CONTAINER_NAME}" cat /home/step/certs/intermediate_ca.crt > "${STEP_CA_INTERMEDIATE_CERT_TMPFILE}"
+docker cp "${STEP_CA_CONTAINER_NAME}:/home/step/secrets/intermediate_ca_key" "${STEP_CA_KEY_TMPFILE}"
+STEP_CA_PASSWORD=$(docker exec "${STEP_CA_CONTAINER_NAME}" cat /home/step/secrets/password)
+printf "basicConstraints=critical,CA:TRUE,pathlen:0\nkeyUsage=critical,digitalSignature,keyCertSign,cRLSign" > "${STEP_CA_EXT_TMPFILE}"
 
-# Sign and write output to a file to avoid stdout capture issues
-_scmd ca sign /tmp/vault-intermediate.csr \
-    --provisioner "${STEP_CA_PROVISIONER_NAME}" \
-    --password-file /home/step/secrets/password \
-    --ca-url "https://localhost:${STEP_CA_PORT}" \
-    --root /home/step/certs/root_ca.crt \
-    --profile intermediate-ca \
-    --not-after 43800h \
-    --force \
-    --output-file /tmp/vault-intermediate-signed.crt
+# Sign the CSR with openssl (5 years = 1825 days)
+SIGNED_TMPFILE=$(mktemp)
+openssl x509 -req -in "${CSR_FILE}" \
+    -CA "${STEP_CA_INTERMEDIATE_CERT_TMPFILE}" \
+    -CAkey "${STEP_CA_KEY_TMPFILE}" \
+    -CAcreateserial \
+    -days 1825 \
+    -passin "pass:${STEP_CA_PASSWORD}" \
+    -extfile "${STEP_CA_EXT_TMPFILE}" \
+    -out "${SIGNED_TMPFILE}" 2>&1
 
-# Copy signed cert back to host
-${CONTAINER_PROVIDER} cp "${STEP_CA_CONTAINER_NAME}:/tmp/vault-intermediate-signed.crt" "${VAULT_PKI_DIR}/.signed.tmp"
-SIGNED=$(sudo cat "${VAULT_PKI_DIR}/.signed.tmp")
-sudo rm -f "${VAULT_PKI_DIR}/.signed.tmp"
+SIGNED=$(cat "${SIGNED_TMPFILE}")
 
-# Clean up from step-ca container
-${CONTAINER_PROVIDER} exec "${STEP_CA_CONTAINER_NAME}" rm -f /tmp/vault-intermediate.csr /tmp/vault-intermediate-signed.crt
+# Clean up temp files
+rm -f "${CSR_FILE}" "${STEP_CA_INTERMEDIATE_CERT_TMPFILE}" "${STEP_CA_KEY_TMPFILE}" "${STEP_CA_EXT_TMPFILE}" "${SIGNED_TMPFILE}"
 
 # Build the full certificate chain (intermediate + root)
 STEP_CA_ROOT_PEM=$(sudo cat "${STEP_CA_PKI_DIR}/root_ca.crt")
