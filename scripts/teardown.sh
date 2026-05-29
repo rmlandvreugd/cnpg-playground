@@ -77,6 +77,7 @@ done
 echo "--------------------------------------------------"
 echo "🔥 Tearing down shared services..."
 echo "--------------------------------------------------"
+"${SCRIPT_DIR}/step-ca-teardown.sh"
 "${SCRIPT_DIR}/vault-teardown.sh"
 "${SCRIPT_DIR}/dex-teardown.sh"
 
