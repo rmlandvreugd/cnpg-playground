@@ -2,6 +2,7 @@
 #
 # This script deploys a standalone HashiCorp Vault container in "dev mode"
 # with persistent storage and TLS, connected to the 'kind' Docker network.
+# Vault's TLS certificate is issued by step-ca.
 # It also wires Vault into all running Kubernetes clusters via a K8s Service
 # and Traefik TCP IngressRoute for passthrough access on port 8200.
 #
@@ -31,6 +32,9 @@ VAULT_CONFIG_DIR="${VAULT_DIR}/config"
 VAULT_DATA_DIR="${VAULT_DIR}/data"
 VAULT_LOG_DIR="${VAULT_DIR}/logs"
 VAULT_CERT_DIR="${VAULT_DIR}/certs"
+STEP_CA_DIR="${GIT_REPO_ROOT}/step-ca"
+STEP_CA_PKI_DIR="${STEP_CA_DIR}/pki"
+STEP_CA_SECRETS_DIR="${STEP_CA_DIR}/secrets"
 
 echo "🚀 Setting up Vault container..."
 
@@ -51,10 +55,53 @@ fi
 # Ensure directories exist
 sudo mkdir -p "${VAULT_DATA_DIR}" "${VAULT_LOG_DIR}" "${VAULT_CERT_DIR}"
 
+# --- Request Vault TLS certificate from step-ca ---
+echo "📜 Requesting Vault TLS certificate from step-ca..."
+
+HOST_IP=$(hostname -I | awk '{print $1}')
+HOST_IP_DASHED=$(echo "$HOST_IP" | tr '.' '-')
+VAULT_HOST="vault.${HOST_IP_DASHED}.sslip.io"
+
+STEP_CA_PASSWORD=$(sudo cat "${STEP_CA_SECRETS_DIR}/.ca_password")
+
+# Request a server TLS cert from step-ca for Vault
+# The cert includes SANs for: Vault's sslip.io hostname, localhost, and the host IP
+${CONTAINER_PROVIDER} exec \
+    -e STEPPATH=/home/step \
+    "${STEP_CA_CONTAINER_NAME}" \
+    step ca certificate "${VAULT_HOST}" /tmp/vault.crt /tmp/vault.key \
+    --provisioner "${STEP_CA_PROVISIONER_NAME}" \
+    --password-file /home/step/secrets/password \
+    --ca-url "https://127.0.0.1:${STEP_CA_PORT}" \
+    --root /home/step/certs/root_ca.crt \
+    --san "${VAULT_HOST}" \
+    --san "vault" \
+    --san "localhost" \
+    --san "vault.vault.svc.cluster.local" \
+    --san "${HOST_IP}" \
+    --san "127.0.0.1" \
+    --not-after 720h \
+    --force
+
+# Copy the cert and key from step-ca container to host
+${CONTAINER_PROVIDER} cp "${STEP_CA_CONTAINER_NAME}:/tmp/vault.crt" "${VAULT_CERT_DIR}/vault.crt"
+${CONTAINER_PROVIDER} cp "${STEP_CA_CONTAINER_NAME}:/tmp/vault.key" "${VAULT_CERT_DIR}/vault.key"
+
+# Clean up sensitive key material from step-ca container
+${CONTAINER_PROVIDER} exec "${STEP_CA_CONTAINER_NAME}" rm -f /tmp/vault.crt /tmp/vault.key
+
+# Build the CA chain: step-ca root + intermediate
+sudo cat "${STEP_CA_PKI_DIR}/root_ca.crt" "${STEP_CA_PKI_DIR}/intermediate_ca.crt" \
+    | sudo tee "${VAULT_CERT_DIR}/vault-ca.pem" > /dev/null
+
+sudo chmod 644 "${VAULT_CERT_DIR}/vault.crt" "${VAULT_CERT_DIR}/vault-ca.pem"
+sudo chmod 640 "${VAULT_CERT_DIR}/vault.key"
+
+echo "✅ Vault TLS certificate issued by step-ca"
+
 # Use ACLs to grant the container's vault user (UID 100) permissions on the host
 echo "🔐 Setting ACLs for Vault container user (UID 100)..."
 if [ "$CONTAINER_PROVIDER" = "podman" ]; then
-    # podman unshare sudo chown -R 100:100 "${VAULT_DIR}"
     # Clear stale/malformed ACL entries from previous runs
     sudo setfacl -R -b "${VAULT_DIR}"
     SUBUID_START=$(grep "^$(id -un):" /etc/subuid | head -n1 | cut -d: -f2)
@@ -69,7 +116,7 @@ fi
 # Run the container
 # We use -dev for automatic unseal and root token generation.
 # We use -config to point to our persistent storage.
-# We use -dev-tls and -dev-tls-cert-dir to enable TLS and store generated certs.
+# TLS is provided by step-ca-issued certificates (not dev-tls auto-generation).
 # We use SKIP_CHOWN=true to avoid permission issues with mounted volumes.
 # Podman on SELinux-enabled hosts tries to relabel bind-mount xattrs; if the
 # filesystem does not support xattrs that fails. Disable labeling instead.
@@ -84,19 +131,15 @@ ${CONTAINER_PROVIDER} run -d \
     ${SECURITY_OPTS} \
     -p "${VAULT_PORT}:${VAULT_PORT}" \
     -p "${VAULT_HTTP_PORT}:${VAULT_HTTP_PORT}" \
-    -e SKIP_CHOWN=true \
     -v "${VAULT_CONFIG_DIR}:/vault/config" \
     -v "${VAULT_DATA_DIR}:/vault/data" \
     -v "${VAULT_LOG_DIR}:/vault/logs" \
     -v "${VAULT_CERT_DIR}:/vault/certs" \
     --cap-add=IPC_LOCK \
     -e SKIP_SETCAP=true \
-    -e SKIP_CHOWN=true \
     "${VAULT_IMAGE}" \
     server -dev \
-    -dev-listen-address="0.0.0.0:${VAULT_PORT}" \
-    -dev-tls \
-    -dev-tls-cert-dir=/vault/certs
+    -config=/vault/config/vault-config.hcl
 
 echo "⏳ Waiting for Vault to start and generate root token..."
 MAX_RETRIES=15

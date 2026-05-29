@@ -60,6 +60,7 @@ HUB_REGION="${REGIONS[0]}"
 echo "=================================================="
 echo "🔐 Phase 0: Bootstrapping external services"
 echo "=================================================="
+"${SCRIPT_DIR}/step-ca-setup.sh"
 "${SCRIPT_DIR}/vault-setup.sh"
 "${SCRIPT_DIR}/vault-pki-setup.sh"
 "${SCRIPT_DIR}/vault-eso-setup.sh"
@@ -171,8 +172,19 @@ EOF
 
     echo "🌐 Connecting containers to the Kind network..."
     $CONTAINER_PROVIDER network connect kind "${RUSTFS_CONTAINER_NAME}"
+    $CONTAINER_PROVIDER network connect kind "${STEP_CA_CONTAINER_NAME}" 2>/dev/null || true
     $CONTAINER_PROVIDER network connect kind "${VAULT_CONTAINER_NAME}" 2>/dev/null || true
     $CONTAINER_PROVIDER network connect kind "${DEX_CONTAINER_NAME}"   2>/dev/null || true
+
+    # Wire step-ca into K8s (namespace + headless Service/Endpoints)
+    echo "🔧 Wiring step-ca into Kubernetes cluster '${K8S_CLUSTER_NAME}'..."
+    kubectl --context "${CONTEXT_NAME}" create ns step-ca --dry-run=client -o yaml \
+        | kubectl --context "${CONTEXT_NAME}" apply -f -
+    STEP_CA_IP=$(${CONTAINER_PROVIDER} inspect "${STEP_CA_CONTAINER_NAME}" \
+        --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
+    STEP_CA_IP="${STEP_CA_IP}" envsubst '${STEP_CA_IP}' \
+        < "${GIT_REPO_ROOT}/step-ca/traefik/service.yaml.tpl" \
+        | kubectl --context "${CONTEXT_NAME}" apply -f -
 
     # Wire Vault into K8s (namespace + headless Service/Endpoints)
     echo "🔧 Wiring Vault into Kubernetes cluster '${K8S_CLUSTER_NAME}'..."
@@ -190,6 +202,28 @@ EOF
         oci://quay.io/jetstack/charts/cert-manager \
         cert-manager "${CONTEXT_NAME}" "${CERT_MANAGER_CHART_VERSION}" \
         --set crds.enabled=true
+
+    # trust-manager (distributes step-ca root bundle to all namespaces)
+    echo "🔧 Installing trust-manager ${TRUST_MANAGER_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
+    helm_upgrade_install trust-manager \
+        oci://quay.io/jetstack/charts/trust-manager \
+        cert-manager "${CONTEXT_NAME}" "${TRUST_MANAGER_CHART_VERSION}" \
+        --set app.webhook.tls.helmCert.enabled=true
+
+    # Create ConfigMap with step-ca root + intermediate CA bundle
+    echo "📜 Creating step-ca root CA ConfigMap for trust-manager..."
+    STEP_CA_ROOT_CERT=$(sudo cat "${GIT_REPO_ROOT}/step-ca/pki/root_ca.crt")
+    STEP_CA_INT_CERT=$(sudo cat "${GIT_REPO_ROOT}/step-ca/pki/intermediate_ca.crt")
+    kubectl create configmap step-ca-roots \
+        --namespace cert-manager --context "${CONTEXT_NAME}" \
+        --from-literal=ca-certificates.crt="${STEP_CA_ROOT_CERT}
+${STEP_CA_INT_CERT}" \
+        --dry-run=client -o yaml | kubectl apply --context "${CONTEXT_NAME}" -f -
+
+    # Apply trust-manager Bundle resource
+    echo "📋 Applying trust-manager Bundle..."
+    envsubst < "${GIT_REPO_ROOT}/step-ca/trust-manager/bundle.yaml.tpl" \
+        | kubectl --context "${CONTEXT_NAME}" -n cert-manager apply -f -
 
     # Secrets in cert-manager namespace
     echo "🔑 Creating cert-manager secrets for Vault PKI..."
@@ -267,6 +301,27 @@ echo "=================================================="
 echo "🔑 Configuring Vault OIDC auth (once, post-loop)..."
 echo "=================================================="
 "${SCRIPT_DIR}/vault-oidc-setup.sh"
+echo
+
+echo "=================================================="
+echo "🔑 Adding step-ca OIDC provisioner (post-Dex)..."
+echo "=================================================="
+HOST_IP=$(hostname -I | awk '{print $1}')
+HOST_IP_DASHED=$(echo "$HOST_IP" | tr '.' '-')
+DEX_HOST="dex.${HOST_IP_DASHED}.sslip.io"
+STEP_CA_PASSWORD=$(sudo cat "${GIT_REPO_ROOT}/step-ca/secrets/.ca_password")
+${CONTAINER_PROVIDER} exec \
+    -e STEPPATH=/home/step \
+    "${STEP_CA_CONTAINER_NAME}" \
+    step ca provisioner add dex --type OIDC \
+    --client-id "${DEX_OIDC_CLIENT_ID}" \
+    --client-secret "${DEX_OIDC_CLIENT_SECRET}" \
+    --configuration-endpoint "https://${DEX_HOST}:${DEX_PORT}/dex/.well-known/openid-configuration" \
+    --password-file /home/step/secrets/password \
+    --ca-config /home/step/config/ca.json
+# Reload step-ca to pick up the new provisioner
+${CONTAINER_PROVIDER} exec "${STEP_CA_CONTAINER_NAME}" kill -HUP 1
+echo "✅ step-ca OIDC provisioner added"
 echo
 
 # --- Phase 2: Distribute RustFS Secrets to all Clusters ---
