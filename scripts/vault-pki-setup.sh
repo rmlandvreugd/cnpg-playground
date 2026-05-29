@@ -79,7 +79,7 @@ rm -f "${CSR_FILE}"
 _scmd ca sign /tmp/vault-intermediate.csr \
     --provisioner "${STEP_CA_PROVISIONER_NAME}" \
     --password-file /home/step/secrets/password \
-    --ca-url "https://127.0.0.1:${STEP_CA_PORT}" \
+    --ca-url "https://localhost:${STEP_CA_PORT}" \
     --root /home/step/certs/root_ca.crt \
     --profile intermediate-ca \
     --not-after 43800h \

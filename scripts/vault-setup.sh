@@ -72,7 +72,7 @@ ${CONTAINER_PROVIDER} exec \
     step ca certificate "${VAULT_HOST}" /tmp/vault.crt /tmp/vault.key \
     --provisioner "${STEP_CA_PROVISIONER_NAME}" \
     --password-file /home/step/secrets/password \
-    --ca-url "https://127.0.0.1:${STEP_CA_PORT}" \
+    --ca-url "https://localhost:${STEP_CA_PORT}" \
     --root /home/step/certs/root_ca.crt \
     --san "${VAULT_HOST}" \
     --san "vault" \
