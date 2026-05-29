@@ -135,6 +135,19 @@ sudo chmod 600 "${STEP_CA_SECRETS_DIR}/.ca_fingerprint"
 sudo chmod 644 "${STEP_CA_PKI_DIR}/root_ca.crt" 2>/dev/null || true
 sudo chmod 644 "${STEP_CA_PKI_DIR}/intermediate_ca.crt" 2>/dev/null || true
 
+# Update the default JWK provisioner to allow longer certificate durations
+# Default max is 24h; we need 720h (30d) for server certs and 168h (7d) for mTLS clients
+echo "🔧 Updating JWK provisioner max TTL..."
+${CONTAINER_PROVIDER} exec \
+    -e STEPPATH=/home/step \
+    "${STEP_CA_CONTAINER_NAME}" \
+    step ca provisioner update "${STEP_CA_PROVISIONER_NAME}" \
+    --x509-max-dur=2160h \
+    --x509-default-dur=720h \
+    --password-file /home/step/secrets/password \
+    --ca-config /home/step/config/ca.json \
+    || { echo "❌ Error: Failed to update JWK provisioner TTL."; exit 1; }
+
 # Add X5C provisioner (for cert-based authentication, e.g. Vault intermediate signing)
 echo "🔐 Adding X5C provisioner..."
 ${CONTAINER_PROVIDER} exec \

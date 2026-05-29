@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 #
-# This script deploys a standalone HashiCorp Vault container in "dev mode"
-# with persistent storage and TLS, connected to the 'kind' Docker network.
-# Vault's TLS certificate is issued by step-ca.
-# It also wires Vault into all running Kubernetes clusters via a K8s Service
-# and Traefik TCP IngressRoute for passthrough access on port 8200.
+# This script deploys a standalone HashiCorp Vault container with TLS
+# (cert issued by step-ca), connected to the 'kind' Docker network.
+# It runs Vault in non-dev mode with 1 unseal key, initializes and
+# unseals automatically, then enables userpass auth.
 #
 # Copyright The CloudNativePG Contributors
 #
@@ -62,14 +61,12 @@ HOST_IP=$(hostname -I | awk '{print $1}')
 HOST_IP_DASHED=$(echo "$HOST_IP" | tr '.' '-')
 VAULT_HOST="vault.${HOST_IP_DASHED}.sslip.io"
 
-STEP_CA_PASSWORD=$(sudo cat "${STEP_CA_SECRETS_DIR}/.ca_password")
-
 # Request a server TLS cert from step-ca for Vault
 # The cert includes SANs for: Vault's sslip.io hostname, localhost, and the host IP
 ${CONTAINER_PROVIDER} exec \
     -e STEPPATH=/home/step \
     "${STEP_CA_CONTAINER_NAME}" \
-    step ca certificate "${VAULT_HOST}" /tmp/vault.crt /tmp/vault.key \
+    step ca certificate "${VAULT_HOST}" /tmp/vault-cert.pem /tmp/vault-key.pem \
     --provisioner "${STEP_CA_PROVISIONER_NAME}" \
     --password-file /home/step/secrets/password \
     --ca-url "https://localhost:${STEP_CA_PORT}" \
@@ -84,18 +81,23 @@ ${CONTAINER_PROVIDER} exec \
     --force
 
 # Copy the cert and key from step-ca container to host
-${CONTAINER_PROVIDER} cp "${STEP_CA_CONTAINER_NAME}:/tmp/vault.crt" "${VAULT_CERT_DIR}/vault.crt"
-${CONTAINER_PROVIDER} cp "${STEP_CA_CONTAINER_NAME}:/tmp/vault.key" "${VAULT_CERT_DIR}/vault.key"
+# Use a temp dir since vault/certs/ may not be writable by the current user yet
+VAULT_CERT_TMPDIR=$(mktemp -d)
+${CONTAINER_PROVIDER} cp "${STEP_CA_CONTAINER_NAME}:/tmp/vault-cert.pem" "${VAULT_CERT_TMPDIR}/vault-cert.pem"
+${CONTAINER_PROVIDER} cp "${STEP_CA_CONTAINER_NAME}:/tmp/vault-key.pem" "${VAULT_CERT_TMPDIR}/vault-key.pem"
+sudo cp "${VAULT_CERT_TMPDIR}/vault-cert.pem" "${VAULT_CERT_DIR}/vault-cert.pem"
+sudo cp "${VAULT_CERT_TMPDIR}/vault-key.pem" "${VAULT_CERT_DIR}/vault-key.pem"
+rm -rf "${VAULT_CERT_TMPDIR}"
 
 # Clean up sensitive key material from step-ca container
-${CONTAINER_PROVIDER} exec "${STEP_CA_CONTAINER_NAME}" rm -f /tmp/vault.crt /tmp/vault.key
+${CONTAINER_PROVIDER} exec "${STEP_CA_CONTAINER_NAME}" rm -f /tmp/vault-cert.pem /tmp/vault-key.pem
 
 # Build the CA chain: step-ca root + intermediate
 sudo cat "${STEP_CA_PKI_DIR}/root_ca.crt" "${STEP_CA_PKI_DIR}/intermediate_ca.crt" \
     | sudo tee "${VAULT_CERT_DIR}/vault-ca.pem" > /dev/null
 
-sudo chmod 644 "${VAULT_CERT_DIR}/vault.crt" "${VAULT_CERT_DIR}/vault-ca.pem"
-sudo chmod 640 "${VAULT_CERT_DIR}/vault.key"
+sudo chmod 644 "${VAULT_CERT_DIR}/vault-cert.pem" "${VAULT_CERT_DIR}/vault-ca.pem"
+sudo chmod 640 "${VAULT_CERT_DIR}/vault-key.pem"
 
 echo "✅ Vault TLS certificate issued by step-ca"
 
@@ -113,11 +115,7 @@ else
     sudo setfacl -R -d -m u:100:rwx "${VAULT_DIR}"
 fi
 
-# Run the container
-# We use -dev for automatic unseal and root token generation.
-# We use -config to point to our persistent storage.
-# TLS is provided by step-ca-issued certificates (not dev-tls auto-generation).
-# We use SKIP_CHOWN=true to avoid permission issues with mounted volumes.
+# Run the container in non-dev mode with the HCL config
 # Podman on SELinux-enabled hosts tries to relabel bind-mount xattrs; if the
 # filesystem does not support xattrs that fails. Disable labeling instead.
 SECURITY_OPTS=""
@@ -136,64 +134,95 @@ ${CONTAINER_PROVIDER} run -d \
     -v "${VAULT_LOG_DIR}:/vault/logs" \
     -v "${VAULT_CERT_DIR}:/vault/certs" \
     --cap-add=IPC_LOCK \
-    -e SKIP_SETCAP=true \
     "${VAULT_IMAGE}" \
-    server -dev \
-    -config=/vault/config/vault-config.hcl
+    vault server -config=/vault/config/vault-config.hcl
 
-echo "⏳ Waiting for Vault to start and generate root token..."
-MAX_RETRIES=15
+# Wait for Vault to start (use host curl against the TLS endpoint)
+echo "⏳ Waiting for Vault to start..."
+MAX_RETRIES=30
 COUNT=0
-UNSEAL_KEY=""
-ROOT_TOKEN=""
 while [ $COUNT -lt $MAX_RETRIES ]; do
-    LOGS=$(${CONTAINER_PROVIDER} logs "${VAULT_CONTAINER_NAME}" 2>&1)
-    if echo "$LOGS" | grep -q "Unseal Key:"; then
-        UNSEAL_KEY=$(echo "$LOGS" | grep "Unseal Key:" | awk '{print $3}')
-    fi
-    if echo "$LOGS" | grep -q "Root Token:"; then
-        ROOT_TOKEN=$(echo "$LOGS" | grep "Root Token:" | awk '{print $3}')
+    if curl -skf "https://127.0.0.1:${VAULT_PORT}/v1/sys/seal-status" >/dev/null 2>&1; then
         break
     fi
-    sleep 10
+    sleep 2
     COUNT=$((COUNT + 1))
 done
 
-if [ -z "${UNSEAL_KEY}" ]; then
-    echo "❌ Error: Failed to retrieve Vault unseal key."
+if [ $COUNT -eq $MAX_RETRIES ]; then
+    echo "❌ Error: Vault did not start within the expected time."
     exit 1
 fi
 
-if [ -z "${ROOT_TOKEN}" ]; then
-    echo "❌ Error: Failed to retrieve Vault root token."
+echo "✅ Vault is up and responding!"
+
+if [ $COUNT -eq $MAX_RETRIES ]; then
+    echo "❌ Error: Vault did not start within the expected time."
     exit 1
 fi
 
-echo "✅ Vault is up and running!"
-echo "🔑 Unseal Key: ${UNSEAL_KEY}"
-echo "🗝️ Root Token: ${ROOT_TOKEN}"
+echo "✅ Vault is up and responding!"
 
-# Store the root token for other scripts
-echo "${UNSEAL_KEY}" | sudo tee "${VAULT_DIR}/.unseal_key" > /dev/null
-sudo chmod 600 "${VAULT_DIR}/.unseal_key"
-echo "${ROOT_TOKEN}" | sudo tee "${VAULT_DIR}/.root_token" > /dev/null
-sudo chmod 600 "${VAULT_DIR}/.root_token"
+# --- Initialize Vault (if not already initialized) ---
+INIT_STATUS=$(curl -sk "https://127.0.0.1:${VAULT_PORT}/v1/sys/init" 2>/dev/null)
 
-# Store the CA certificate for vault CLI usage
-COUNT=0
-while [ $COUNT -lt 10 ]; do
-    if [ -f "${VAULT_CERT_DIR}/vault-ca.pem" ]; then
-        break
-    fi
-    sleep 1
-    COUNT=$((COUNT + 1))
-done
+if echo "${INIT_STATUS}" | jq -e '.initialized == false' > /dev/null 2>&1; then
+    echo "🔧 Initializing Vault with 1 unseal key..."
+    INIT_OUTPUT=$(${CONTAINER_PROVIDER} exec \
+        -e VAULT_ADDR="https://127.0.0.1:${VAULT_PORT}" \
+        -e VAULT_CACERT=/vault/certs/vault-ca.pem \
+        "${VAULT_CONTAINER_NAME}" \
+        vault operator init -key-shares=1 -key-threshold=1 -format=json)
 
-if [ ! -f "${VAULT_CERT_DIR}/vault-ca.pem" ]; then
-    echo "⚠️ Warning: vault-ca.pem not found in ${VAULT_CERT_DIR}."
+    UNSEAL_KEY=$(echo "${INIT_OUTPUT}" | jq -r '.unseal_keys_b64[0]')
+    ROOT_TOKEN=$(echo "${INIT_OUTPUT}" | jq -r '.root_token')
+
+    echo "🔑 Unseal Key: ${UNSEAL_KEY}"
+    echo "🗝️ Root Token: ${ROOT_TOKEN}"
+
+    # Store the unseal key and root token for other scripts
+    echo "${UNSEAL_KEY}" | sudo tee "${VAULT_DIR}/.unseal_key" > /dev/null
+    sudo chmod 600 "${VAULT_DIR}/.unseal_key"
+    echo "${ROOT_TOKEN}" | sudo tee "${VAULT_DIR}/.root_token" > /dev/null
+    sudo chmod 600 "${VAULT_DIR}/.root_token"
+
+    # Unseal Vault
+    echo "🔓 Unsealing Vault..."
+    ${CONTAINER_PROVIDER} exec \
+        -e VAULT_ADDR="https://127.0.0.1:${VAULT_PORT}" \
+        -e VAULT_CACERT=/vault/certs/vault-ca.pem \
+        "${VAULT_CONTAINER_NAME}" \
+        vault operator unseal "${UNSEAL_KEY}"
 else
-    echo "✅ CA Certificate found: ${VAULT_CERT_DIR}/vault-ca.pem"
+    echo "🔷 Vault is already initialized. Skipping init."
+    ROOT_TOKEN=$(sudo cat "${VAULT_DIR}/.root_token" 2>/dev/null || echo "")
+
+    # Unseal if sealed
+    SEAL_STATUS=$(curl -sk "https://127.0.0.1:${VAULT_PORT}/v1/sys/seal-status" 2>/dev/null || true)
+
+    if echo "${SEAL_STATUS}" | jq -e '.sealed == true' > /dev/null 2>&1; then
+        UNSEAL_KEY=$(sudo cat "${VAULT_DIR}/.unseal_key" 2>/dev/null || echo "")
+        if [ -n "${UNSEAL_KEY}" ]; then
+            echo "🔓 Unsealing Vault..."
+            ${CONTAINER_PROVIDER} exec \
+                -e VAULT_ADDR="https://127.0.0.1:${VAULT_PORT}" \
+                -e VAULT_CACERT=/vault/certs/vault-ca.pem \
+                "${VAULT_CONTAINER_NAME}" \
+                vault operator unseal "${UNSEAL_KEY}"
+        else
+            echo "⚠️ Warning: Vault is sealed but no unseal key found."
+        fi
+    fi
 fi
+
+# Verify Vault is unsealed
+echo "🔎 Verifying Vault is unsealed..."
+${CONTAINER_PROVIDER} exec \
+    -e VAULT_ADDR="https://127.0.0.1:${VAULT_PORT}" \
+    -e VAULT_CACERT=/vault/certs/vault-ca.pem \
+    -e VAULT_TOKEN="${ROOT_TOKEN}" \
+    "${VAULT_CONTAINER_NAME}" \
+    vault status > /dev/null
 
 # Enable audit device to log all operations to a file
 echo "📋 Enabling Vault audit logging..."
@@ -203,7 +232,7 @@ ${CONTAINER_PROVIDER} exec \
     -e VAULT_TOKEN="${ROOT_TOKEN}" \
     "${VAULT_CONTAINER_NAME}" \
     vault audit enable \
-    file file_path=/vault/logs/audit.log
+    file file_path=/vault/logs/audit.log 2>/dev/null || echo "  Audit already enabled, continuing"
 
 echo "👤 Enabling userpass auth and creating admin user..."
 ${CONTAINER_PROVIDER} exec \
@@ -212,7 +241,7 @@ ${CONTAINER_PROVIDER} exec \
     -e VAULT_TOKEN="${ROOT_TOKEN}" \
     "${VAULT_CONTAINER_NAME}" \
     vault auth enable \
-    userpass
+    userpass 2>/dev/null || echo "  userpass already enabled, continuing"
 
 echo 'path "*" { capabilities = ["create","read","update","delete","list","sudo"] }' \
     | ${CONTAINER_PROVIDER} exec -i \
