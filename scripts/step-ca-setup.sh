@@ -53,6 +53,19 @@ fi
 echo "📁 Creating step-ca directories..."
 sudo mkdir -p "${STEP_CA_CONFIG_DIR}" "${STEP_CA_PKI_DIR}" "${STEP_CA_SECRETS_DIR}" "${STEP_CA_DB_DIR}"
 
+# Use ACLs to grant the container's step user (UID 1000) permissions on the host
+echo "🔐 Setting ACLs for step-ca container user (UID 1000)..."
+if [ "$CONTAINER_PROVIDER" = "podman" ]; then
+    sudo setfacl -R -b "${STEP_CA_DIR}"
+    SUBUID_START=$(grep "^$(id -un):" /etc/subuid | head -n1 | cut -d: -f2)
+    STEP_CA_HOST_UID=$((SUBUID_START + 999))
+    sudo setfacl -R -m "u:${STEP_CA_HOST_UID}:rwx" "${STEP_CA_DIR}"
+    sudo setfacl -R -d -m "u:${STEP_CA_HOST_UID}:rwx" "${STEP_CA_DIR}"
+else
+    sudo setfacl -R -m u:1000:rwx "${STEP_CA_DIR}"
+    sudo setfacl -R -d -m u:1000:rwx "${STEP_CA_DIR}"
+fi
+
 # Store the CA password
 echo "${STEP_CA_PASSWORD}" | sudo tee "${STEP_CA_SECRETS_DIR}/.ca_password" > /dev/null
 sudo chmod 600 "${STEP_CA_SECRETS_DIR}/.ca_password"
@@ -72,7 +85,7 @@ ${CONTAINER_PROVIDER} run -d \
     ${SECURITY_OPTS} \
     -p "${STEP_CA_PORT}:${STEP_CA_PORT}" \
     -e "DOCKER_STEPCA_INIT_NAME=${STEP_CA_CA_NAME}" \
-    -e "DOCKER_STEPCA_INIT_DNS_NAMES=localhost,${STEP_CA_DNS_NAME}" \
+    -e "DOCKER_STEPCA_INIT_DNS_NAMES=localhost,step-ca,127.0.0.1" \
     -e "DOCKER_STEPCA_INIT_ADDRESS=:${STEP_CA_PORT}" \
     -e "DOCKER_STEPCA_INIT_PROVISIONER_NAME=${STEP_CA_PROVISIONER_NAME}" \
     -e "DOCKER_STEPCA_INIT_PASSWORD=${STEP_CA_PASSWORD}" \
@@ -91,7 +104,7 @@ while [ $COUNT -lt $MAX_RETRIES ]; do
     if ${CONTAINER_PROVIDER} exec \
         -e STEPPATH=/home/step \
         "${STEP_CA_CONTAINER_NAME}" \
-        step ca health --ca-url "https://127.0.0.1:${STEP_CA_PORT}" \
+        step ca health --ca-url "https://localhost:${STEP_CA_PORT}" \
         --root /home/step/certs/root_ca.crt 2>/dev/null; then
         echo "✅ step-ca is healthy"
         break
@@ -122,6 +135,7 @@ ${CONTAINER_PROVIDER} exec \
     -e STEPPATH=/home/step \
     "${STEP_CA_CONTAINER_NAME}" \
     step ca provisioner add x5c-provisioner --type X5C \
+    --x5c-roots /home/step/certs/root_ca.crt \
     --password-file /home/step/secrets/password \
     --ca-config /home/step/config/ca.json \
     || { echo "❌ Error: Failed to add X5C provisioner."; exit 1; }
