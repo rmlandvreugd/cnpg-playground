@@ -179,9 +179,14 @@ ${CONTAINER_PROVIDER} exec "${STEP_CA_CONTAINER_NAME}" \
 # Add step-ca's own root + intermediate CAs to the container's system trust store
 # so that outbound TLS connections (e.g. OIDC discovery) can verify certs in the
 # full PKI hierarchy: step-ca root → step-ca intermediate → Vault intermediate → leaf
+# The container runs as UID 1000, so we copy out, append, and copy back as root
 echo "🔐 Adding step-ca CAs to container trust store..."
-${CONTAINER_PROVIDER} exec "${STEP_CA_CONTAINER_NAME}" \
-    sh -c 'cat /home/step/certs/root_ca.crt /home/step/certs/intermediate_ca.crt >> /etc/ssl/certs/ca-certificates.crt'
+CA_CERTS_TMPFILE=$(mktemp)
+${CONTAINER_PROVIDER} cp "${STEP_CA_CONTAINER_NAME}:/etc/ssl/certs/ca-certificates.crt" "${CA_CERTS_TMPFILE}"
+cat "${STEP_CA_PKI_DIR}/root_ca.crt" "${STEP_CA_PKI_DIR}/intermediate_ca.crt" >> "${CA_CERTS_TMPFILE}"
+${CONTAINER_PROVIDER} cp "${CA_CERTS_TMPFILE}" "${STEP_CA_CONTAINER_NAME}:/tmp/ca-certificates.crt"
+${CONTAINER_PROVIDER} exec -u 0 "${STEP_CA_CONTAINER_NAME}" sh -c 'cp /tmp/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt && rm /tmp/ca-certificates.crt'
+rm -f "${CA_CERTS_TMPFILE}"
 
 echo "✅ step-ca is up and running!"
 echo "🔑 CA URL: https://127.0.0.1:${STEP_CA_PORT}"

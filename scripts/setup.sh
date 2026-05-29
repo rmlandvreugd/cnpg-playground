@@ -203,12 +203,20 @@ EOF
         cert-manager "${CONTEXT_NAME}" "${CERT_MANAGER_CHART_VERSION}" \
         --set crds.enabled=true
 
+    # Wait for cert-manager to be ready before creating Issuers/ClusterIssuers
+    echo "⏳ Waiting for cert-manager webhook to be ready..."
+    kubectl --context "${CONTEXT_NAME}" wait --for=condition=Available deployment/cert-manager-webhook -n cert-manager --timeout=120s
+
     # trust-manager (distributes step-ca root bundle to all namespaces)
     echo "🔧 Installing trust-manager ${TRUST_MANAGER_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
     helm_upgrade_install trust-manager \
         oci://quay.io/jetstack/charts/trust-manager \
         cert-manager "${CONTEXT_NAME}" "${TRUST_MANAGER_CHART_VERSION}" \
         --set app.webhook.tls.helmCert.enabled=true
+
+    # Wait for trust-manager webhook to be ready before creating Bundle resources
+    echo "⏳ Waiting for trust-manager webhook to be ready..."
+    kubectl --context "${CONTEXT_NAME}" wait --for=condition=Available deployment/trust-manager -n cert-manager --timeout=120s
 
     # Create ConfigMap with step-ca root + intermediate CA bundle
     echo "📜 Creating step-ca root CA ConfigMap for trust-manager..."
@@ -314,9 +322,14 @@ DEX_HOST="dex.${HOST_IP_DASHED}.sslip.io"
 
 # Add Vault's intermediate CA to step-ca's trust store so step-ca can verify
 # Dex's TLS cert (which is signed by Vault's intermediate → step-ca intermediate → step-ca root)
-VAULT_INT_CERT=$(sudo cat "${GIT_REPO_ROOT}/vault/pki/intermediate.crt")
-echo "${VAULT_INT_CERT}" | ${CONTAINER_PROVIDER} exec -i "${STEP_CA_CONTAINER_NAME}" \
-    sh -c 'cat >> /etc/ssl/certs/ca-certificates.crt'
+# The container runs as UID 1000, so we copy out, append, and copy back as root
+echo "🔐 Adding Vault intermediate CA to step-ca trust store..."
+CA_CERTS_TMPFILE=$(mktemp)
+${CONTAINER_PROVIDER} cp "${STEP_CA_CONTAINER_NAME}:/etc/ssl/certs/ca-certificates.crt" "${CA_CERTS_TMPFILE}"
+sudo cat "${GIT_REPO_ROOT}/vault/pki/intermediate.crt" >> "${CA_CERTS_TMPFILE}"
+${CONTAINER_PROVIDER} cp "${CA_CERTS_TMPFILE}" "${STEP_CA_CONTAINER_NAME}:/tmp/ca-certificates.crt"
+${CONTAINER_PROVIDER} exec -u 0 "${STEP_CA_CONTAINER_NAME}" sh -c 'cp /tmp/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt && rm /tmp/ca-certificates.crt'
+rm -f "${CA_CERTS_TMPFILE}"
 
 STEP_CA_PASSWORD=$(sudo cat "${GIT_REPO_ROOT}/step-ca/secrets/.ca_password")
 ${CONTAINER_PROVIDER} exec \
