@@ -176,6 +176,13 @@ echo "🔄 Reloading step-ca..."
 ${CONTAINER_PROVIDER} exec "${STEP_CA_CONTAINER_NAME}" \
     kill -HUP 1
 
+# Add step-ca's own root + intermediate CAs to the container's system trust store
+# so that outbound TLS connections (e.g. OIDC discovery) can verify certs in the
+# full PKI hierarchy: step-ca root → step-ca intermediate → Vault intermediate → leaf
+echo "🔐 Adding step-ca CAs to container trust store..."
+${CONTAINER_PROVIDER} exec "${STEP_CA_CONTAINER_NAME}" \
+    sh -c 'cat /home/step/certs/root_ca.crt /home/step/certs/intermediate_ca.crt >> /etc/ssl/certs/ca-certificates.crt'
+
 echo "✅ step-ca is up and running!"
 echo "🔑 CA URL: https://127.0.0.1:${STEP_CA_PORT}"
 echo "🔑 CA Fingerprint: ${CA_FINGERPRINT}"

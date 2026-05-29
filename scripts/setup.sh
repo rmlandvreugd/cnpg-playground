@@ -311,6 +311,13 @@ echo "=================================================="
 HOST_IP=$(hostname -I | awk '{print $1}')
 HOST_IP_DASHED=$(echo "$HOST_IP" | tr '.' '-')
 DEX_HOST="dex.${HOST_IP_DASHED}.sslip.io"
+
+# Add Vault's intermediate CA to step-ca's trust store so step-ca can verify
+# Dex's TLS cert (which is signed by Vault's intermediate → step-ca intermediate → step-ca root)
+VAULT_INT_CERT=$(sudo cat "${GIT_REPO_ROOT}/vault/pki/intermediate.crt")
+echo "${VAULT_INT_CERT}" | ${CONTAINER_PROVIDER} exec -i "${STEP_CA_CONTAINER_NAME}" \
+    sh -c 'cat >> /etc/ssl/certs/ca-certificates.crt'
+
 STEP_CA_PASSWORD=$(sudo cat "${GIT_REPO_ROOT}/step-ca/secrets/.ca_password")
 ${CONTAINER_PROVIDER} exec \
     -e STEPPATH=/home/step \

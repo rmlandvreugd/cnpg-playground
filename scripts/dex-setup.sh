@@ -8,6 +8,7 @@ VAULT_DIR="${GIT_REPO_ROOT}/vault"
 DEX_DIR="${GIT_REPO_ROOT}/dex"
 DEX_CONFIG_DIR="${DEX_DIR}/config"
 DEX_TLS_DIR="${DEX_DIR}/tls"
+STEP_CA_PKI_DIR="${GIT_REPO_ROOT}/step-ca/pki"
 
 echo "🚀 Setting up Dex OIDC container..."
 
@@ -59,7 +60,15 @@ CERT_JSON=$(_vcmd write -format=json pki_int/issue/dex-server \
 jq -r '.data.certificate'            <<< "${CERT_JSON}" | sudo tee "${DEX_TLS_DIR}/dex.crt"      > /dev/null
 jq -r '.data.private_key'            <<< "${CERT_JSON}" | sudo tee "${DEX_TLS_DIR}/dex.key"      > /dev/null
 jq -r '.data.issuing_ca'             <<< "${CERT_JSON}" | sudo tee "${DEX_TLS_DIR}/ca.crt"       > /dev/null
+# Build the full CA chain: Vault intermediate + step-ca intermediate + step-ca root
+# (Vault's ca_chain only includes the Vault intermediate; clients need the full chain)
 jq -r '.data.ca_chain | join("\n")'  <<< "${CERT_JSON}" | sudo tee "${DEX_TLS_DIR}/ca-chain.pem" > /dev/null
+sudo bash -c "cat '${STEP_CA_PKI_DIR}/intermediate_ca.crt' '${STEP_CA_PKI_DIR}/root_ca.crt' >> '${DEX_TLS_DIR}/ca-chain.pem'"
+# Also append the step-ca chain to ca.crt for completeness
+sudo bash -c "cat '${STEP_CA_PKI_DIR}/intermediate_ca.crt' '${STEP_CA_PKI_DIR}/root_ca.crt' >> '${DEX_TLS_DIR}/ca.crt'"
+# Dex serves tlsCert as the server certificate; include the full chain so clients
+# can verify the complete path: leaf → Vault intermediate → step-ca intermediate → step-ca root
+sudo bash -c "cat '${STEP_CA_PKI_DIR}/intermediate_ca.crt' '${STEP_CA_PKI_DIR}/root_ca.crt' >> '${DEX_TLS_DIR}/dex.crt'"
 
 sudo chmod 644 "${DEX_TLS_DIR}/dex.crt" "${DEX_TLS_DIR}/ca.crt" "${DEX_TLS_DIR}/ca-chain.pem"
 sudo chmod 640 "${DEX_TLS_DIR}/dex.key"
