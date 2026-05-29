@@ -10,6 +10,10 @@ STEP_CA_DIR="${GIT_REPO_ROOT}/step-ca"
 STEP_CA_PKI_DIR="${STEP_CA_DIR}/pki"
 STEP_CA_SECRETS_DIR="${STEP_CA_DIR}/secrets"
 
+HOST_IP=$(hostname -I | awk '{print $1}')
+HOST_IP_DASHED=$(echo "$HOST_IP" | tr '.' '-')
+VAULT_HOST="vault.${HOST_IP_DASHED}.sslip.io"
+
 echo "🔐 Bootstrapping Vault PKI (signed by step-ca)..."
 
 ROOT_TOKEN=$(sudo cat "${VAULT_DIR}/.root_token")
@@ -52,8 +56,8 @@ echo "${STEP_CA_ROOT_CERT}" | sudo tee "${VAULT_PKI_DIR}/root.crt" > /dev/null
 sudo chmod 644 "${VAULT_PKI_DIR}/root.crt"
 
 _vcmd write pki/config/urls \
-    issuing_certificates="https://127.0.0.1:${VAULT_PORT}/v1/pki/ca" \
-    crl_distribution_points="https://127.0.0.1:${VAULT_PORT}/v1/pki/crl"
+    issuing_certificates="https://${VAULT_HOST}:${VAULT_PORT}/v1/pki/ca" \
+    crl_distribution_points="https://${VAULT_HOST}:${VAULT_PORT}/v1/pki/crl"
 
 # --- Intermediate PKI engine (signed by step-ca) ---
 echo "📜 Enabling intermediate PKI engine..."
@@ -108,8 +112,8 @@ sudo chmod 644 "${VAULT_PKI_DIR}/intermediate.crt"
 _vcmd write pki_int/intermediate/set-signed certificate="${SIGNED_WITH_CHAIN}"
 
 _vcmd write pki_int/config/urls \
-    issuing_certificates="https://127.0.0.1:${VAULT_PORT}/v1/pki_int/ca" \
-    crl_distribution_points="https://127.0.0.1:${VAULT_PORT}/v1/pki_int/crl"
+    issuing_certificates="https://${VAULT_HOST}:${VAULT_PORT}/v1/pki_int/ca" \
+    crl_distribution_points="https://${VAULT_HOST}:${VAULT_PORT}/v1/pki_int/crl"
 
 # --- Issuance roles ---
 echo "📋 Creating PKI roles..."
