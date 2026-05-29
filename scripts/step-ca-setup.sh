@@ -70,6 +70,11 @@ fi
 echo "${STEP_CA_PASSWORD}" | sudo tee "${STEP_CA_SECRETS_DIR}/.ca_password" > /dev/null
 sudo chmod 600 "${STEP_CA_SECRETS_DIR}/.ca_password"
 
+# Compute the sslip.io hostname for step-ca (same pattern as Dex/Vault)
+HOST_IP=$(hostname -I | awk '{print $1}')
+HOST_IP_DASHED=$(echo "$HOST_IP" | tr '.' '-')
+STEP_CA_HOST="step-ca.${HOST_IP_DASHED}.sslip.io"
+
 # Run the container
 # Podman on SELinux-enabled hosts tries to relabel bind-mount xattrs; if the
 # filesystem does not support xattrs that fails. Disable labeling instead.
@@ -85,7 +90,7 @@ ${CONTAINER_PROVIDER} run -d \
     ${SECURITY_OPTS} \
     -p "${STEP_CA_PORT}:${STEP_CA_PORT}" \
     -e "DOCKER_STEPCA_INIT_NAME=${STEP_CA_CA_NAME}" \
-    -e "DOCKER_STEPCA_INIT_DNS_NAMES=localhost,step-ca,127.0.0.1" \
+    -e "DOCKER_STEPCA_INIT_DNS_NAMES=localhost,step-ca,127.0.0.1,${STEP_CA_HOST}" \
     -e "DOCKER_STEPCA_INIT_ADDRESS=:${STEP_CA_PORT}" \
     -e "DOCKER_STEPCA_INIT_PROVISIONER_NAME=${STEP_CA_PROVISIONER_NAME}" \
     -e "DOCKER_STEPCA_INIT_PASSWORD=${STEP_CA_PASSWORD}" \
