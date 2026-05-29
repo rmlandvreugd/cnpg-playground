@@ -25,18 +25,20 @@ The **`local` region** is the primary learning environment — a single-region s
 ┌───────────────────────────────────────────────────────────────────────┐
 │                        Host Machine (Docker)                          │
 │                                                                       │
-│  ┌──────────┐   ┌──────────┐   ┌──────────┐                           │
-│  │  Vault   │   │   Dex    │   │  RustFS  │  (S3-compatible storage)  │
-│  │ (8200)   │   │ (5556)   │   │ (9000)   │                           │
-│  └────┬─────┘   └────┬─────┘   └────┬─────┘                           │
-│       │              │              │                                 │
-│  ┌────┴──────────────┴──────────────┴─────────────────────────────┐   │
+│  ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐          │
+│  │ step-ca  │   │  Vault   │   │   Dex    │   │  RustFS  │          │
+│  │ (8443)   │   │ (8200)   │   │ (5556)   │   │ (9000)   │          │
+│  │ Root CA  │   │ TLS via  │   │ TLS via  │   │          │          │
+│  │          │   │ step-ca  │   │ Vault PKI│   │          │          │
+│  └────┬─────┘   └────┬─────┘   └────┬─────┘   └────┬─────┘          │
+│       │              │              │              │                 │
+│  ┌────┴──────────────┴──────────────┴──────────────┴──────────────┐   │
 │  │              Kind Cluster (per region: local, eu, us)          │   │
 │  │                                                                │   │
-│  │  ┌───────────┐  ┌──────────┐  ┌──────────┐  ┌─────────────┐    │   │
-│  │  │ Traefik   │  │ cert-mgr │  │   ESO    │  │ MetalLB     │    │   │
-│  │  │ (ingress) │  │  (TLS)   │  │ (secrets)│  │ (LB)        │    │   │
-│  │  └────┬──────┘  └──────────┘  └──────────┘  └─────────────┘    │   │
+│  │  ┌───────────┐  ┌──────────┐  ┌──────────┐  ┌─────────────┐  │   │
+│  │  │ Traefik   │  │ cert-mgr │  │   ESO    │  │ trust-mgr   │  │   │
+│  │  │ (ingress) │  │  (TLS)   │  │ (secrets)│  │ (CA bundle) │  │   │
+│  │  └────┬──────┘  └──────────┘  └──────────┘  └─────────────┘  │   │
 │  │       │                                                        │   │
 │  │  ┌────┴──────────────────────────────────────────────────────┐ │   │
 │  │  │              CloudNativePG Operator                       │ │   │
@@ -53,11 +55,19 @@ The **`local` region** is the primary learning environment — a single-region s
 │  │  └────────────────────────────────────────────────────────┘    │   │
 │  └────────────────────────────────────────────────────────────────┘   │
 └───────────────────────────────────────────────────────────────────────┘
+
+PKI Trust Chain:
+  step-ca Root CA → step-ca Intermediate CA → Vault Intermediate CA → leaf certs
+                                                  ↳ Vault TLS cert (step-ca direct)
+                                                  ↳ Dex TLS cert
+                                                  ↳ Traefik dashboard cert
+                                                  ↳ cluster-certs (via cert-manager)
+                                                  ↳ mTLS client certs (via cert-manager)
 ```
 
 ## Setup Lifecycle
 
-1. **`scripts/setup.sh`** — Phase 0: Bootstrap Vault + Dex (Docker containers); Phase 1: Create Kind clusters, deploy RustFS, MetalLB, Traefik, cert-manager, ESO per region; Phase 2: Distribute RustFS secrets
+1. **`scripts/setup.sh`** — Phase 0: Bootstrap step-ca (Root CA) + Vault (non-dev, step-ca TLS) + Vault PKI + ESO + Dex; Phase 1: Create Kind clusters, deploy RustFS, MetalLB, cert-manager, trust-manager, ESO, Traefik per region; Phase 2: Distribute RustFS secrets; Post-loop: Vault OIDC + step-ca OIDC provisioner
 2. **`demo/setup.sh`** — Deploy CNPG operator, Barman Cloud Plugin, ObjectStore CRs, PostgreSQL clusters with distributed topology
 3. **`monitoring/setup.sh`** — Deploy Prometheus Operator, Grafana Operator, Loki, Alloy, Mimir, Tempo, OTel Collector, dashboards
 
@@ -80,7 +90,11 @@ The **`local` region** is the primary learning environment — a single-region s
 | `demo/yaml/self-service/traefik/` | TCP IngressRoute for PostgreSQL external access | [View Map](demo/yaml/self-service/traefik/codemap.md) |
 | `k8s/` | Kind cluster topology definition (7-node per region) | [View Map](k8s/codemap.md) |
 | `traefik/` | Traefik v3 ingress controller Helm values and IngressRoutes | [View Map](traefik/codemap.md) |
-| `vault/` | HashiCorp Vault configuration for secrets, PKI, and auth | [View Map](vault/codemap.md) |
+| `step-ca/` | SmallStep step-ca Root CA — 3-tier PKI hierarchy root, trust anchor for all playground TLS | [View Map](step-ca/codemap.md) |
+| `step-ca/config/` | step-ca configuration template (ca.json.tpl) with CRL, TLS, and provisioner overrides | [View Map](step-ca/config/codemap.md) |
+| `step-ca/traefik/` | K8s Service/Endpoints wiring step-ca into the cluster | [View Map](step-ca/traefik/codemap.md) |
+| `step-ca/trust-manager/` | trust-manager Bundle resource template distributing step-ca root+intermediate to all namespaces | [View Map](step-ca/trust-manager/codemap.md) |
+| `vault/` | HashiCorp Vault (non-dev mode) — secrets, 3-tier PKI, and auth, signed by step-ca | [View Map](vault/codemap.md) |
 | `vault/config/` | Vault server HCL configuration | [View Map](vault/config/codemap.md) |
 | `vault/eso/` | External Secrets Operator ClusterSecretStore templates | [View Map](vault/eso/codemap.md) |
 | `vault/cert-manager/` | cert-manager ClusterIssuer templates for Vault PKI | [View Map](vault/cert-manager/codemap.md) |
@@ -101,9 +115,12 @@ The **`local` region** is the primary learning environment — a single-region s
 
 ## Key Configuration Patterns
 
+- **3-Tier PKI Hierarchy**: step-ca Root CA → step-ca Intermediate CA → Vault Intermediate CA → leaf certs. step-ca is the trust anchor; Vault's intermediate is signed by step-ca's intermediate via openssl on the host (step CLI needs TTY). trust-manager distributes the step-ca root+intermediate bundle to all namespaces.
+- **Split mTLS**: Vault issues in-cluster mTLS client certs (role `mtls-client`, 168h TTL) while step-ca issues external-facing certs directly (e.g., Vault's own TLS cert).
 - **Three First-Class Regions**: `local` (primary learning environment, single-region standalone), `eu` (primary in multi-region setup), `us` (DR replica bootstrapping from EU). `local` is not in the default `REGIONS=("eu" "us")` but is fully supported — pass `local` as an argument to `scripts/setup.sh`
 - **Distributed Topology**: In multi-region mode, pg-eu is primary, pg-us bootstraps from pg-eu via recovery, continuous backup via Barman Cloud to RustFS
 - **Self-Service Demo**: Only runs in the `local` region. Vault ESO injects credentials, Vault Database engine provides dynamic creds, Dex provides OAuth, Traefik TCP IngressRoute exposes PostgreSQL
 - **Template-Driven Configuration**: Most YAML files use `.tpl` variants with `envsubst` for region-specific variable injection
 - **Hub-and-Spoke Monitoring**: Hub region runs Mimir + Tempo; spoke regions push metrics/traces via IngressRoute
 - **Node Isolation**: Kind clusters use labeled node pools (infra, app, postgres) with taints for dedicated PostgreSQL nodes
+- **Full-Chain TLS**: All TLS-serving containers (Dex, Vault) include the complete certificate chain (leaf + intermediates + root) so clients can verify without out-of-band CA distribution
