@@ -41,4 +41,9 @@ sudo rm -rf "${STEP_CA_DIR}/pki"
 sudo rm -rf "${STEP_CA_DIR}/secrets"
 sudo rm -rf "${STEP_CA_DIR}/db"
 
+# Clean up generated config files (keep templates)
+sudo rm -f "${STEP_CA_DIR}/config/ca.json"
+sudo rm -f "${STEP_CA_DIR}/config/defaults.json"
+sudo rm -f "${STEP_CA_DIR}/config/ca.json.override"
+
 echo "✅ step-ca teardown complete!"

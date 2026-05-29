@@ -47,6 +47,7 @@ if ${CONTAINER_PROVIDER} ps -a --format '{{.Names}}' | grep -q "^${STEP_CA_CONTA
     ${CONTAINER_PROVIDER} stop "${STEP_CA_CONTAINER_NAME}" > /dev/null 2>&1
     ${CONTAINER_PROVIDER} rm "${STEP_CA_CONTAINER_NAME}" > /dev/null 2>&1
     sudo rm -rf "${STEP_CA_PKI_DIR}" "${STEP_CA_SECRETS_DIR}" "${STEP_CA_DB_DIR}"
+    sudo rm -f "${STEP_CA_CONFIG_DIR}/ca.json" "${STEP_CA_CONFIG_DIR}/defaults.json" "${STEP_CA_CONFIG_DIR}/ca.json.override"
 fi
 
 # Ensure directories exist
