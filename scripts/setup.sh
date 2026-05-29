@@ -240,9 +240,11 @@ ${STEP_CA_INT_CERT}" \
 
     # ClusterIssuer
     echo "📋 Applying vault-pki ClusterIssuer..."
-    VAULT_HTTP_PORT="${VAULT_HTTP_PORT}" \
+    VAULT_CA_BUNDLE=$(sudo cat "${GIT_REPO_ROOT}/vault/certs/vault-ca.pem" | base64 -w0)
+    VAULT_PORT="${VAULT_PORT}" \
     VAULT_APPROLE_ROLE_ID="${APPROLE_ROLE_ID}" \
-    envsubst '${VAULT_HTTP_PORT} ${VAULT_APPROLE_ROLE_ID}' \
+    VAULT_CA_BUNDLE="${VAULT_CA_BUNDLE}" \
+    envsubst '${VAULT_PORT} ${VAULT_APPROLE_ROLE_ID} ${VAULT_CA_BUNDLE}' \
         < "${GIT_REPO_ROOT}/vault/cert-manager/clusterissuer.yaml.tpl" \
         | kubectl --context "${CONTEXT_NAME}" apply -f -
 

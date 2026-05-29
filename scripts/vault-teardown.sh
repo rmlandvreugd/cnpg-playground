@@ -38,10 +38,11 @@ else
 fi
 
 # Clean up directories
-echo "🧹 Cleaning up Vault directories (data, logs, certs)..."
+echo "🧹 Cleaning up Vault directories (data, logs, certs, pki)..."
 sudo rm -rf "${VAULT_DIR}/data"
 sudo rm -rf "${VAULT_DIR}/logs"
 sudo rm -rf "${VAULT_DIR}/certs"
+sudo rm -rf "${VAULT_DIR}/pki"
 
 # Remove the unseal key file
 if [ -f "${VAULT_DIR}/.unseal_key" ]; then
@@ -53,6 +54,17 @@ fi
 if [ -f "${VAULT_DIR}/.root_token" ]; then
     echo "🧹 Removing .root_token file..."
     sudo rm -f "${VAULT_DIR}/.root_token"
+fi
+
+# Remove AppRole credentials
+if [ -f "${VAULT_DIR}/.approle_role_id" ]; then
+    echo "🧹 Removing .approle_role_id file..."
+    sudo rm -f "${VAULT_DIR}/.approle_role_id"
+fi
+
+if [ -f "${VAULT_DIR}/.approle_secret_id" ]; then
+    echo "🧹 Removing .approle_secret_id file..."
+    sudo rm -f "${VAULT_DIR}/.approle_secret_id"
 fi
 
 echo "✅ Vault teardown complete!"

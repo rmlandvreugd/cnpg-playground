@@ -4,8 +4,9 @@ metadata:
   name: vault-pki
 spec:
   vault:
-    server: http://vault.vault.svc.cluster.local:${VAULT_HTTP_PORT}
+    server: https://vault.vault.svc.cluster.local:${VAULT_PORT}
     path: pki_int/sign/cluster-certs
+    caBundle: ${VAULT_CA_BUNDLE}
     auth:
       appRole:
         path: approle
