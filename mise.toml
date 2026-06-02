@@ -1,3 +1,4 @@
 [tools]
+"aqua:theseus-rs/postgresql-binaries" = "latest"
 envsubst = "latest"
 kind = "latest"
