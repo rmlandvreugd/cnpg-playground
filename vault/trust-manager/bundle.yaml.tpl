@@ -10,7 +10,6 @@ spec:
     - secret:
         name: vault-pki-int-ca
         key: ca.crt
-      namespace: cert-manager
   target:
     configMap:
       key: ca-certificates.crt
