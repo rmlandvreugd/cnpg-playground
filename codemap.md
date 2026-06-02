@@ -113,6 +113,131 @@ PKI Trust Chain:
 | `monitoring/tempo/` | Tempo Helm values for distributed tracing | [View Map](monitoring/tempo/codemap.md) |
 | `pgadmin/` | pgAdmin4 deployment manifests for PostgreSQL management | [View Map](pgadmin/codemap.md) |
 
+## Current Cluster State (local region)
+
+### Nodes
+
+| Node | Role | Labels |
+|------|------|--------|
+| k8s-local-control-plane | control-plane | node-role.kubernetes.io/control-plane |
+| k8s-local-worker | worker | node.kubernetes.io/role=worker |
+| k8s-local-worker2 | worker | node.kubernetes.io/role=worker |
+| k8s-local-worker3 | worker | node.kubernetes.io/role=worker |
+| k8s-local-worker4 | worker | node.kubernetes.io/role=worker |
+| k8s-local-worker5 | worker | node.kubernetes.io/role=worker |
+| k8s-local-worker6 | worker | node.kubernetes.io/role=worker |
+
+### Namespaces
+
+| Namespace | Purpose |
+|-----------|---------|
+| cert-manager | cert-manager + trust-manager (TLS/PKI) |
+| cnpg-system | CloudNativePG operator + Barman Cloud Plugin |
+| default | pg-local cluster (3 instances + pooler) from `demo/setup.sh` |
+| demo-local-db | pg-local ESO cluster (3 instances + pooler) from `demo/eso-vault.sh` |
+| external-secrets | External Secrets Operator |
+| grafana | Grafana Operator, Grafana, Loki, Alloy |
+| metallb-system | MetalLB load balancer |
+| mimir | Mimir (long-term metrics storage) |
+| otel | OpenTelemetry Collector (tail-based sampling) |
+| prometheus-operator | Prometheus Operator + kube-prometheus-stack |
+| step-ca | SmallStep step-ca (Root CA) |
+| tempo | Tempo (distributed tracing) |
+| traefik | Traefik v3 ingress controller |
+| vault | HashiCorp Vault |
+
+### CNPG Clusters
+
+| Namespace | Cluster | Instances | Primary | Pooler | Backup | Credentials |
+|-----------|---------|-----------|---------|--------|--------|-------------|
+| default | pg-local | 3 (1 primary + 2 replicas) | pg-local-1 | pooler-local-rw (2 replicas) | ScheduledBackup → objectstore-local (RustFS) | CNPG-managed |
+| demo-local-db | pg-local | 3 (1 primary + 2 replicas) | pg-local-1 | pooler-local-rw (2 replicas) | — | Vault-managed via ESO (superuser, app, readonly) |
+
+### Observability Stack
+
+| Component | Namespace | Version | Notes |
+|-----------|-----------|---------|-------|
+| Prometheus Operator | prometheus-operator | v0.90.1 | kube-prometheus-stack 83.6.0 |
+| Prometheus | prometheus-operator | v3.10.0 | Single instance, remoteWrites to Mimir |
+| Mimir | mimir | 2.16.0 | Distributed mode (3 zones), S3 backend via RustFS |
+| Loki | grafana | 3.7.1 | Single-binary mode, S3 backend via RustFS |
+| Tempo | tempo | 2.10.5 | Distributed mode, S3 backend via RustFS |
+| Alloy | grafana | v1.16.0 | Log collection → Loki |
+| OTel Collector | otel | 0.151.0 | Tail-based sampling gateway → Tempo |
+| Grafana | grafana | 12.4.1 | Operator-managed, 5 datasources, 10 dashboards |
+| Grafana Operator | grafana | v5.22.2 | Manages Grafana CR + dashboards + datasources |
+
+### Grafana Datasources
+
+| Name | Type | Purpose |
+|------|------|---------|
+| mimir | Prometheus | Long-term metrics via Mimir nginx |
+| mimir-tempo | Prometheus | Tempo metrics via Mimir |
+| prometheus | Prometheus | Short-term metrics via Prometheus |
+| loki | Loki | Log aggregation |
+| tempo | Tempo | Distributed tracing |
+
+### Grafana Dashboards
+
+| Dashboard | Purpose |
+|-----------|---------|
+| cloudnativepg-dashboard | CNPG cluster overview |
+| cnpg-custom-pg | Custom PostgreSQL metrics |
+| k8s-events | Kubernetes events |
+| k8s-pod-logs | Pod log viewer |
+| k8s-resources-cluster | Cluster resource overview |
+| k8s-views-global | Global cluster views |
+| k8s-views-pods | Pod detail views |
+| node-exporter-full | Node metrics |
+| pgaudit-dashboard | PGAudit logging |
+| traefik-traces | Traefik request tracing |
+
+### PKI & Secrets
+
+| Resource | Namespace | Purpose |
+|----------|-----------|---------|
+| ClusterIssuer vault-pki | cert-manager | Issues in-cluster TLS certs via Vault PKI |
+| Bundle step-ca-bundle | trust-manager | Distributes step-ca root+intermediate CA to all namespaces |
+| ClusterSecretStore vault-approle | external-secrets | Vault AppRole auth for ESO secret sync |
+| ExternalSecret pg-local-superuser | demo-local-db | Syncs superuser creds from Vault |
+| ExternalSecret pg-local-app | demo-local-db | Syncs app user creds from Vault |
+| ExternalSecret pg-local-readonly | demo-local-db | Syncs readonly user creds from Vault |
+
+### Ingress (Traefik)
+
+| IngressRoute | Namespace | Routes To |
+|--------------|-----------|-----------|
+| grafana | grafana | Grafana UI (http://grafana.172-18-255-200.sslip.io) |
+| traefik-dashboard | traefik | Traefik dashboard |
+
+### Helm Releases
+
+| Release | Namespace | Chart | App Version |
+|---------|-----------|-------|-------------|
+| alloy | grafana | alloy-1.8.0 | v1.16.0 |
+| barman-cloud | cnpg-system | plugin-barman-cloud-0.6.0 | v0.12.0 |
+| cert-manager | cert-manager | cert-manager-v1.20.2 | v1.20.2 |
+| cnpg-operator | cnpg-system | cloudnative-pg-0.28.0 | 1.29.0 |
+| external-secrets | external-secrets | external-secrets-2.4.1 | v2.4.1 |
+| grafana-operator | grafana | grafana-operator-5.22.2 | v5.22.2 |
+| kube-prometheus-stack | prometheus-operator | kube-prometheus-stack-83.6.0 | v0.90.1 |
+| loki | grafana | loki-13.5.0 | 3.7.1 |
+| metallb | metallb-system | metallb-0.15.3 | v0.15.3 |
+| mimir | mimir | mimir-distributed-5.7.0 | 2.16.0 |
+| otel-collector | otel | opentelemetry-collector-0.153.0 | 0.151.0 |
+| tempo | tempo | tempo-distributed-2.19.0 | 2.10.5 |
+| traefik | traefik | traefik-39.0.8 | v3.6.13 |
+| trust-manager | cert-manager | trust-manager-v0.17.1 | v0.17.1 |
+
+### External Services (Docker containers on host)
+
+| Service | Port | Purpose |
+|---------|------|---------|
+| step-ca | 8443 | Root CA + intermediate CA, TLS provider |
+| Vault | 8200 | Secrets management, PKI, AppRole auth |
+| Dex | 5556 | OIDC identity provider |
+| RustFS | 9000 | S3-compatible object storage (backups, Mimir, Loki, Tempo) |
+
 ## Key Configuration Patterns
 
 - **3-Tier PKI Hierarchy**: step-ca Root CA → step-ca Intermediate CA → Vault Intermediate CA → leaf certs. step-ca is the trust anchor; Vault's intermediate is signed by step-ca's intermediate via openssl on the host (step CLI needs TTY). trust-manager distributes the step-ca root+intermediate bundle to all namespaces.
