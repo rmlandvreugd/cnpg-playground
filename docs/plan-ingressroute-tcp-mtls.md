@@ -427,11 +427,15 @@ metadata:
   namespace: traefik
 spec:
   minVersion: VersionTLS13
+  alpnProtocols:
+    - postgresql          # Required for psql clients; Traefik defaults to h2/http1.1/acme-tls only
   clientAuth:
     secretNames:
       - vault-pki-bundle    # ← trust-manager Bundle Secret (full chain)
     clientAuthType: RequireAndVerifyClientCert
 ```
+
+> **ALPN note**: Traefik's default `alpnProtocols` list is `["h2", "http/1.1", "acme-tls/1"]`. PostgreSQL clients send ALPN `"postgresql"` during the TLS handshake. Without this entry, the handshake fails with `tlsv1 alert no application protocol`.
 
 The `vault-pki-bundle` Secret in the `traefik` namespace contains Root CA + Int CA 1 + Int CA 2 — the complete chain needed to verify any Vault PKI issued client certificate.
 
