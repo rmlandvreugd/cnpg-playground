@@ -583,9 +583,151 @@ Phase 5: Pooler Update (rolling restart)
       └── PgBouncer pods restart with TLS enabled
 
 Phase 6: Verification
-  ├── Test Route 1: psql with mTLS → TLS-termination endpoint
-  └── Test Route 2: psql with mTLS → TLS-passthrough endpoint
+  ├── 6a. Verify CA chain integrity
+  │      Root CA (no pathlen) → Int CA 1 (pathlen:1) → Int CA 2 (pathlen:0) → Leaf
+  ├── 6b. Verify certificate issuance (all certs Ready, correct SANs, ECDSA keys)
+  ├── 6c. Verify trust-manager Bundle sync (vault-pki-bundle in all namespaces)
+  ├── 6d. Test Route 1: psql with mTLS → TLS-termination endpoint
+  └── 6e. Test Route 2: psql with mTLS → TLS-passthrough endpoint
 ```
+
+## Phase 6: Verification Commands
+
+### 6a. Verify CA Chain Integrity
+
+```bash
+# Check pathlen constraints on each CA in the chain
+echo "Root CA (should have no pathlen):"
+openssl x509 -in step-ca/pki/root_ca.crt -noout -text | grep -A1 "Basic Constraints"
+
+echo "step-ca Int CA (should have pathlen:1):"
+openssl x509 -in step-ca/pki/intermediate_ca.crt -noout -text | grep -A1 "Basic Constraints"
+
+echo "Vault PKI Int CA (should have pathlen:0):"
+awk '/BEGIN CERTIFICATE/{n++; if(n==1) found=1} found{print} /END CERTIFICATE/{if(found) found=0}' \
+  vault/pki/intermediate.crt | openssl x509 -noout -text | grep -A1 "Basic Constraints"
+
+# Verify full chain: Root → Int CA 1 → Int CA 2
+cat step-ca/pki/root_ca.crt step-ca/pki/intermediate_ca.crt > /tmp/ca_chain.pem
+openssl verify -trusted step-ca/pki/root_ca.crt \
+  -untrusted step-ca/pki/intermediate_ca.crt \
+  vault/pki/intermediate.crt
+
+# Verify in-cluster CA bundle (3 certs: Root + Int CA 1 + Int CA 2)
+kubectl get secret vault-pki-bundle -n default \
+  -o jsonpath='{.data.ca\.crt}' | base64 -d | grep -c "BEGIN CERTIFICATE"
+# Expected: 3
+
+# Verify Authority Key Identifier chain
+echo "step-ca Int CA Subject Key ID (should match Vault PKI Int CA Authority Key ID):"
+openssl x509 -in step-ca/pki/intermediate_ca.crt -noout -text \
+  | grep "Subject Key Identifier" -A1 | tail -1 | tr -d ' '
+
+echo "Vault PKI Int CA Authority Key ID (should match above):"
+awk '/BEGIN CERTIFICATE/{n++; if(n==1) found=1} found{print} /END CERTIFICATE/{if(found) found=0}' \
+  vault/pki/intermediate.crt | openssl x509 -noout -text \
+  | grep "Authority Key Identifier" -A1 | tail -1 | tr -d ' '
+```
+
+### 6b. Verify Certificate Issuance
+
+```bash
+# All certificates should be Ready
+kubectl get certificate -n demo-local-db
+
+# Verify each cert has correct SANs and ECDSA key type
+for cert in pg-local-server-tls pg-local-replication-tls pg-local-tls-term-server \
+            pg-local-pooler-client-tls pg-local-pooler-server-tls pg-local-client-app; do
+  echo "=== $cert ==="
+  kubectl get secret "$cert" -n demo-local-db \
+    -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -subject -issuer
+  kubectl get secret "$cert" -n demo-local-db \
+    -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -text \
+    | grep "Public Key Algorithm:"
+  echo
+done
+
+# Verify server cert SANs include the passthrough hostname
+kubectl get secret pg-local-server-tls -n demo-local-db \
+  -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -text \
+  | grep -A20 "Subject Alternative Name"
+
+# Verify leaf certs validate against the in-cluster CA bundle
+kubectl get secret vault-pki-bundle -n default \
+  -o jsonpath='{.data.ca\.crt}' | base64 -d > /tmp/vault-pki-bundle-ca.crt
+
+for cert in pg-local-server-tls pg-local-replication-tls pg-local-tls-term-server \
+            pg-local-pooler-client-tls pg-local-pooler-server-tls pg-local-client-app; do
+  echo -n "$cert: "
+  kubectl get secret "$cert" -n demo-local-db \
+    -o jsonpath='{.data.tls\.crt}' | base64 -d > /tmp/leaf.crt
+  openssl verify -CAfile /tmp/vault-pki-bundle-ca.crt /tmp/leaf.crt
+done
+```
+
+### 6c. Verify trust-manager Bundle Sync
+
+```bash
+# Both bundles should be Synced
+kubectl get bundle -n cert-manager
+
+# vault-pki-bundle should exist as Secret in demo-local-db namespace
+kubectl get secret vault-pki-bundle -n demo-local-db -o jsonpath='{.data.ca\.crt}' \
+  | base64 -d | grep -c "BEGIN CERTIFICATE"
+# Expected: 3
+
+# step-ca-bundle should exist as Secret in demo-local-db namespace
+kubectl get secret step-ca-bundle -n demo-local-db -o jsonpath='{.data.ca\.crt}' \
+  | base64 -d | grep -c "BEGIN CERTIFICATE"
+# Expected: 2
+
+# TLSOption should reference vault-pki-bundle
+kubectl get tlsoption mtls-verify -n traefik -o yaml | grep -A3 clientAuth
+```
+
+### 6d. Test Route 1 — TLS Termination (Traefik terminates TLS)
+
+```bash
+# Extract client cert, key, and CA from the cluster
+kubectl get secret pg-local-client-app-tls -n demo-local-db \
+  -o jsonpath='{.data.tls\.crt}' | base64 -d > /tmp/client.crt
+kubectl get secret pg-local-client-app-tls -n demo-local-db \
+  -o jsonpath='{.data.tls\.key}' | base64 -d > /tmp/client.key
+kubectl get secret vault-pki-bundle -n demo-local-db \
+  -o jsonpath='{.data.ca\.crt}' | base64 -d > /tmp/vault-pki-ca.crt
+
+# Test Route 1: TLS termination (Traefik verifies client cert, forwards plaintext to PG)
+psql "host=pg-local-demo-local-db-t.172-18-255-210.sslip.io \
+      port=5432 \
+      dbname=app \
+      user=app \
+      sslmode=verify-ca \
+      sslrootcert=/tmp/vault-pki-ca.crt \
+      sslcert=/tmp/client.crt \
+      sslkey=/tmp/client.key"
+```
+
+> Traefik verifies the client cert against Vault PKI CA chain (via TLSOption mtls-verify).
+> Then forwards plaintext to PostgreSQL. The `host all all all scram-sha-256` pg_hba
+> rule allows the plaintext connection.
+
+### 6e. Test Route 2 — TLS Passthrough (end-to-end TLS)
+
+```bash
+# Test Route 2: TLS passthrough (client connects directly to PostgreSQL over TLS)
+psql "host=pg-local-demo-local-db-p.172-18-255-210.sslip.io \
+      port=5432 \
+      dbname=app \
+      user=app \
+      sslmode=verify-full \
+      sslrootcert=/tmp/vault-pki-ca.crt \
+      sslcert=/tmp/client.crt \
+      sslkey=/tmp/client.key"
+```
+
+> PostgreSQL verifies the client cert against Vault PKI CA chain (via `hostssl all all all cert`
+> pg_hba rule). The server cert SAN includes `pg-local-demo-local-db-p.172-18-255-210.sslip.io`,
+> so `verify-full` will match the hostname.
 
 ## Client Certificate Issuance
 
@@ -593,7 +735,8 @@ Extract CA from trust-manager Bundle (contains full chain):
 
 ```bash
 # CA chain from trust-manager Bundle (Root + Int CA 1 + Int CA 2)
-kubectl -n demo-local-db extract secret/vault-pki-bundle --keys=ca.crt --to=- > vault-pki-ca.crt
+kubectl get secret vault-pki-bundle -n demo-local-db \
+  -o jsonpath='{.data.ca\.crt}' | base64 -d > vault-pki-ca.crt
 ```
 
 ### Option A: Kubernetes Certificate Resource Template
@@ -621,9 +764,12 @@ spec:
 Extract after Ready:
 
 ```bash
-kubectl -n demo-local-db extract secret/pg-local-client-app-tls --keys=tls.crt --to=- > client.crt
-kubectl -n demo-local-db extract secret/pg-local-client-app-tls --keys=tls.key --to=- > client.key
-kubectl -n demo-local-db extract secret/vault-pki-bundle --keys=ca.crt --to=- > vault-pki-ca.crt
+kubectl get secret pg-local-client-app-tls -n demo-local-db \
+  -o jsonpath='{.data.tls\.crt}' | base64 -d > client.crt
+kubectl get secret pg-local-client-app-tls -n demo-local-db \
+  -o jsonpath='{.data.tls\.key}' | base64 -d > client.key
+kubectl get secret vault-pki-bundle -n demo-local-db \
+  -o jsonpath='{.data.ca\.crt}' | base64 -d > vault-pki-ca.crt
 ```
 
 ### Option B: kubectl with cert-manager
@@ -649,9 +795,12 @@ spec:
 EOF
 
 # Extract after Ready
-kubectl -n demo-local-db extract secret/pg-local-client-app-tls --keys=tls.crt --to=- > client.crt
-kubectl -n demo-local-db extract secret/pg-local-client-app-tls --keys=tls.key --to=- > client.key
-kubectl -n demo-local-db extract secret/vault-pki-bundle --keys=ca.crt --to=- > vault-pki-ca.crt
+kubectl get secret pg-local-client-app-tls -n demo-local-db \
+  -o jsonpath='{.data.tls\.crt}' | base64 -d > client.crt
+kubectl get secret pg-local-client-app-tls -n demo-local-db \
+  -o jsonpath='{.data.tls\.key}' | base64 -d > client.key
+kubectl get secret vault-pki-bundle -n demo-local-db \
+  -o jsonpath='{.data.ca\.crt}' | base64 -d > vault-pki-ca.crt
 ```
 
 ### Option C: Vault CLI
