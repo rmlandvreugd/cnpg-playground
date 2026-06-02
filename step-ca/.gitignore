@@ -1,0 +1,5 @@
+db/
+pki/
+secrets/
+*.json
+*.json.override
