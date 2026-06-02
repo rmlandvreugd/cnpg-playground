@@ -131,6 +131,53 @@ CA_FINGERPRINT=$(${CONTAINER_PROVIDER} exec "${STEP_CA_CONTAINER_NAME}" \
 echo "${CA_FINGERPRINT}" | sudo tee "${STEP_CA_SECRETS_DIR}/.ca_fingerprint" > /dev/null
 sudo chmod 600 "${STEP_CA_SECRETS_DIR}/.ca_fingerprint"
 
+# Re-sign the intermediate CA with pathlen:1 so it can sign sub-CAs
+# (e.g., Vault PKI's intermediate CA). The default pathlen:0 prevents
+# any intermediate below this one, breaking 3-level chains:
+# Root CA (pathlen:1) → Int CA 1 (pathlen:0) → ✗ Int CA 2
+# We need: Root CA (pathlen:1) → Int CA 1 (pathlen:1) → Int CA 2 (pathlen:0)
+echo "🔧 Re-signing intermediate CA with pathlen:1 (allows sub-CAs)..."
+STEP_CA_ROOT_PASSWORD=$(sudo cat "${STEP_CA_SECRETS_DIR}/.ca_password")
+INTERMEDIATE_EXT=$(mktemp)
+cat > "${INTERMEDIATE_EXT}" <<EOF
+basicConstraints = critical, CA:TRUE, pathlen:1
+keyUsage = critical, digitalSignature, keyCertSign, cRLSign
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always, issuer
+EOF
+# Copy the intermediate key from the container (it's encrypted with the step-ca password)
+STEP_CA_INT_KEY_TMPFILE=$(mktemp)
+${CONTAINER_PROVIDER} cp "${STEP_CA_CONTAINER_NAME}:/home/step/secrets/intermediate_ca_key" "${STEP_CA_INT_KEY_TMPFILE}"
+
+# Generate a CSR from the existing intermediate key, then sign with root CA + pathlen:1
+INTERMEDIATE_CSR=$(mktemp)
+INTERMEDIATE_NEW=$(mktemp)
+openssl req -new -key "${STEP_CA_INT_KEY_TMPFILE}" \
+    -subj "/O=CloudNativePG Playground CA/CN=CloudNativePG Playground CA Intermediate CA" \
+    -passin "pass:${STEP_CA_PASSWORD}" \
+    -out "${INTERMEDIATE_CSR}" 2>/dev/null
+
+openssl x509 -req -in "${INTERMEDIATE_CSR}" \
+    -CA "${STEP_CA_PKI_DIR}/root_ca.crt" \
+    -CAkey "${STEP_CA_PKI_DIR}/root_ca_key" \
+    -CAcreateserial \
+    -days 1825 \
+    -extfile "${INTERMEDIATE_EXT}" \
+    -out "${INTERMEDIATE_NEW}" \
+    -passin "pass:${STEP_CA_ROOT_PASSWORD}" 2>/dev/null
+
+# Verify the new cert has pathlen:1
+if openssl x509 -in "${INTERMEDIATE_NEW}" -noout -text 2>/dev/null | grep -q "pathlen:1"; then
+    sudo cp "${STEP_CA_PKI_DIR}/intermediate_ca.crt" "${STEP_CA_PKI_DIR}/intermediate_ca.crt.bak"
+    sudo cp "${INTERMEDIATE_NEW}" "${STEP_CA_PKI_DIR}/intermediate_ca.crt"
+    sudo chmod 644 "${STEP_CA_PKI_DIR}/intermediate_ca.crt"
+    echo "✅ Intermediate CA re-signed with pathlen:1"
+else
+    echo "⚠️ Warning: Failed to re-sign intermediate CA with pathlen:1, using default pathlen:0"
+    echo "   This may cause TLS issues with 3-level CA chains (Vault PKI)."
+fi
+rm -f "${INTERMEDIATE_CSR}" "${INTERMEDIATE_NEW}" "${INTERMEDIATE_EXT}" "${STEP_CA_INT_KEY_TMPFILE}"
+
 # Ensure root and intermediate certs have correct host permissions
 sudo chmod 644 "${STEP_CA_PKI_DIR}/root_ca.crt" 2>/dev/null || true
 sudo chmod 644 "${STEP_CA_PKI_DIR}/intermediate_ca.crt" 2>/dev/null || true
