@@ -124,20 +124,60 @@ if [ $COUNT -eq $MAX_RETRIES ]; then
     exit 1
 fi
 
-# Extract the root CA fingerprint (needed for clients to bootstrap)
-echo "🔑 Extracting root CA fingerprint..."
-CA_FINGERPRINT=$(${CONTAINER_PROVIDER} exec "${STEP_CA_CONTAINER_NAME}" \
-    step certificate fingerprint /home/step/certs/root_ca.crt)
-echo "${CA_FINGERPRINT}" | sudo tee "${STEP_CA_SECRETS_DIR}/.ca_fingerprint" > /dev/null
-sudo chmod 600 "${STEP_CA_SECRETS_DIR}/.ca_fingerprint"
+# Re-sign the root CA to remove the pathlen constraint.
+# step-ca auto-init creates the root with pathlen:1, but our 3-level chain
+# (Root → Int CA 1 → Int CA 2 → Leaf) requires the root to allow 2 CAs below it.
+# We also re-sign the intermediate CA with pathlen:1 so it can sign sub-CAs
+# (e.g., Vault PKI's intermediate CA).
+# Default:  Root (pathlen:1) → Int CA 1 (pathlen:0) → ✗ Int CA 2
+# Required: Root (pathlen:unset) → Int CA 1 (pathlen:1) → Int CA 2 (pathlen:0)
+echo "🔧 Re-signing root CA without pathlen constraint..."
+STEP_CA_ROOT_PASSWORD=$(sudo cat "${STEP_CA_SECRETS_DIR}/.ca_password")
+
+# Copy the root key from the container (it's in /home/step/secrets/, not on the host)
+STEP_CA_ROOT_KEY_TMPFILE=$(mktemp)
+${CONTAINER_PROVIDER} cp "${STEP_CA_CONTAINER_NAME}:/home/step/secrets/root_ca_key" "${STEP_CA_ROOT_KEY_TMPFILE}"
+
+# Generate a CSR from the existing root key, then self-sign without pathlen
+ROOT_EXT=$(mktemp)
+cat > "${ROOT_EXT}" <<EOF
+basicConstraints = critical, CA:TRUE
+keyUsage = critical, digitalSignature, keyCertSign, cRLSign
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always, issuer
+EOF
+ROOT_CSR=$(mktemp)
+ROOT_NEW=$(mktemp)
+openssl req -new -key "${STEP_CA_ROOT_KEY_TMPFILE}" \
+    -subj "/O=CloudNativePG Playground CA/CN=CloudNativePG Playground CA Root CA" \
+    -passin "pass:${STEP_CA_ROOT_PASSWORD}" \
+    -out "${ROOT_CSR}" 2>/dev/null
+
+openssl x509 -req -in "${ROOT_CSR}" \
+    -CA "${STEP_CA_PKI_DIR}/root_ca.crt" \
+    -CAkey "${STEP_CA_ROOT_KEY_TMPFILE}" \
+    -CAcreateserial \
+    -days 3650 \
+    -extfile "${ROOT_EXT}" \
+    -out "${ROOT_NEW}" \
+    -passin "pass:${STEP_CA_ROOT_PASSWORD}" 2>/dev/null
+
+# Verify the new root cert has no pathlen constraint
+if openssl x509 -in "${ROOT_NEW}" -noout -text 2>/dev/null | grep -q "pathlen"; then
+    echo "⚠️ Warning: Root CA still has pathlen constraint, this may cause TLS issues."
+else
+    sudo cp "${STEP_CA_PKI_DIR}/root_ca.crt" "${STEP_CA_PKI_DIR}/root_ca.crt.bak"
+    sudo cp "${ROOT_NEW}" "${STEP_CA_PKI_DIR}/root_ca.crt"
+    sudo chmod 644 "${STEP_CA_PKI_DIR}/root_ca.crt"
+    echo "✅ Root CA re-signed without pathlen constraint"
+fi
+rm -f "${ROOT_CSR}" "${ROOT_NEW}" "${ROOT_EXT}"
 
 # Re-sign the intermediate CA with pathlen:1 so it can sign sub-CAs
-# (e.g., Vault PKI's intermediate CA). The default pathlen:0 prevents
-# any intermediate below this one, breaking 3-level chains:
-# Root CA (pathlen:1) → Int CA 1 (pathlen:0) → ✗ Int CA 2
-# We need: Root CA (pathlen:1) → Int CA 1 (pathlen:1) → Int CA 2 (pathlen:0)
 echo "🔧 Re-signing intermediate CA with pathlen:1 (allows sub-CAs)..."
-STEP_CA_ROOT_PASSWORD=$(sudo cat "${STEP_CA_SECRETS_DIR}/.ca_password")
+STEP_CA_INT_KEY_TMPFILE=$(mktemp)
+${CONTAINER_PROVIDER} cp "${STEP_CA_CONTAINER_NAME}:/home/step/secrets/intermediate_ca_key" "${STEP_CA_INT_KEY_TMPFILE}"
+
 INTERMEDIATE_EXT=$(mktemp)
 cat > "${INTERMEDIATE_EXT}" <<EOF
 basicConstraints = critical, CA:TRUE, pathlen:1
@@ -145,12 +185,6 @@ keyUsage = critical, digitalSignature, keyCertSign, cRLSign
 subjectKeyIdentifier = hash
 authorityKeyIdentifier = keyid:always, issuer
 EOF
-# Copy the intermediate and root keys from the container (they're in /home/step/secrets/, not on the host)
-STEP_CA_INT_KEY_TMPFILE=$(mktemp)
-STEP_CA_ROOT_KEY_TMPFILE=$(mktemp)
-${CONTAINER_PROVIDER} cp "${STEP_CA_CONTAINER_NAME}:/home/step/secrets/intermediate_ca_key" "${STEP_CA_INT_KEY_TMPFILE}"
-${CONTAINER_PROVIDER} cp "${STEP_CA_CONTAINER_NAME}:/home/step/secrets/root_ca_key" "${STEP_CA_ROOT_KEY_TMPFILE}"
-
 # Generate a CSR from the existing intermediate key, then sign with root CA + pathlen:1
 INTERMEDIATE_CSR=$(mktemp)
 INTERMEDIATE_NEW=$(mktemp)
@@ -183,6 +217,47 @@ rm -f "${INTERMEDIATE_CSR}" "${INTERMEDIATE_NEW}" "${INTERMEDIATE_EXT}" "${STEP_
 # Ensure root and intermediate certs have correct host permissions
 sudo chmod 644 "${STEP_CA_PKI_DIR}/root_ca.crt" 2>/dev/null || true
 sudo chmod 644 "${STEP_CA_PKI_DIR}/intermediate_ca.crt" 2>/dev/null || true
+
+# Update the root cert inside the step-ca container (bind-mounted from host)
+# and reload step-ca so it picks up the re-signed root and intermediate certs
+echo "🔄 Updating step-ca container certs and reloading..."
+${CONTAINER_PROVIDER} cp "${STEP_CA_PKI_DIR}/root_ca.crt" "${STEP_CA_CONTAINER_NAME}:/home/step/certs/root_ca.crt"
+${CONTAINER_PROVIDER} cp "${STEP_CA_PKI_DIR}/intermediate_ca.crt" "${STEP_CA_CONTAINER_NAME}:/home/step/certs/intermediate_ca.crt"
+
+# Reload step-ca to pick up the new certs before running provisioner commands
+${CONTAINER_PROVIDER} exec "${STEP_CA_CONTAINER_NAME}" \
+    kill -HUP 1
+sleep 2
+
+# Wait for step-ca to be healthy again after reload
+echo "⏳ Waiting for step-ca to be healthy after reload..."
+MAX_RELOAD_RETRIES=15
+RELOAD_COUNT=0
+while [ $RELOAD_COUNT -lt $MAX_RELOAD_RETRIES ]; do
+    if ${CONTAINER_PROVIDER} exec \
+        -e STEPPATH=/home/step \
+        "${STEP_CA_CONTAINER_NAME}" \
+        step ca health --ca-url "https://localhost:${STEP_CA_PORT}" \
+        --root /home/step/certs/root_ca.crt 2>/dev/null; then
+        echo "✅ step-ca is healthy after reload"
+        break
+    fi
+    sleep 2
+    RELOAD_COUNT=$((RELOAD_COUNT + 1))
+done
+
+if [ $RELOAD_COUNT -eq $MAX_RELOAD_RETRIES ]; then
+    echo "❌ Error: step-ca did not become healthy after reload."
+    exit 1
+fi
+
+# Extract the root CA fingerprint (needed for clients to bootstrap)
+# Must be done after re-signing since the root cert changes
+echo "🔑 Extracting root CA fingerprint..."
+CA_FINGERPRINT=$(${CONTAINER_PROVIDER} exec "${STEP_CA_CONTAINER_NAME}" \
+    step certificate fingerprint /home/step/certs/root_ca.crt)
+echo "${CA_FINGERPRINT}" | sudo tee "${STEP_CA_SECRETS_DIR}/.ca_fingerprint" > /dev/null
+sudo chmod 600 "${STEP_CA_SECRETS_DIR}/.ca_fingerprint"
 
 # Update the default JWK provisioner to allow longer certificate durations
 # Default max is 24h; we need 720h (30d) for server certs and 168h (7d) for mTLS clients
