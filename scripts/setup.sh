@@ -207,12 +207,15 @@ EOF
     echo "⏳ Waiting for cert-manager webhook to be ready..."
     kubectl --context "${CONTEXT_NAME}" wait --for=condition=Available deployment/cert-manager-webhook -n cert-manager --timeout=120s
 
-    # trust-manager (distributes step-ca root bundle to all namespaces)
+    # trust-manager (distributes CA bundles to all namespaces as ConfigMaps and Secrets)
     echo "🔧 Installing trust-manager ${TRUST_MANAGER_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
     helm_upgrade_install trust-manager \
         oci://quay.io/jetstack/charts/trust-manager \
         cert-manager "${CONTEXT_NAME}" "${TRUST_MANAGER_CHART_VERSION}" \
-        --set app.webhook.tls.helmCert.enabled=true
+        --set app.webhook.tls.helmCert.enabled=true \
+        --set secretTargets.enabled=true \
+        --set "secretTargets.authorizedSecrets[0]=vault-pki-bundle" \
+        --set "secretTargets.authorizedSecrets[1]=step-ca-bundle"
 
     # Wait for trust-manager webhook to be ready before creating Bundle resources
     echo "⏳ Waiting for trust-manager webhook to be ready..."
@@ -228,10 +231,34 @@ EOF
 ${STEP_CA_INT_CERT}" \
         --dry-run=client -o yaml | kubectl apply --context "${CONTEXT_NAME}" -f -
 
-    # Apply trust-manager Bundle resource
-    echo "📋 Applying trust-manager Bundle..."
+    # Apply trust-manager Bundle resources
+    echo "📋 Applying step-ca trust-manager Bundle..."
     envsubst < "${GIT_REPO_ROOT}/step-ca/trust-manager/bundle.yaml.tpl" \
         | kubectl --context "${CONTEXT_NAME}" -n cert-manager apply -f -
+
+    # Create vault-pki-int-ca Secret (Vault PKI Intermediate CA 2)
+    # This is the signing CA used by Vault's pki_int engine, chained to step-ca.
+    # Extract just the first certificate from the chain file (the intermediate CA).
+    echo "🔑 Creating vault-pki-int-ca Secret for trust-manager..."
+    VAULT_PKI_INT_CA_TMPFILE=$(mktemp)
+    awk '/-----BEGIN CERTIFICATE-----/{n++; if(n==1) found=1} found{print} /-----END CERTIFICATE-----/{if(found){found=0}}' \
+        < "${GIT_REPO_ROOT}/vault/pki/intermediate.crt" \
+        | sudo tee "${VAULT_PKI_INT_CA_TMPFILE}" > /dev/null
+    kubectl create secret generic vault-pki-int-ca \
+        --namespace cert-manager --context "${CONTEXT_NAME}" \
+        --from-file=ca.crt="${VAULT_PKI_INT_CA_TMPFILE}" \
+        --dry-run=client -o yaml | kubectl apply --context "${CONTEXT_NAME}" -f -
+    rm -f "${VAULT_PKI_INT_CA_TMPFILE}"
+
+    # Apply vault-pki trust-manager Bundle (full chain: step-ca root + int + vault pki int)
+    echo "📋 Applying vault-pki trust-manager Bundle..."
+    envsubst < "${GIT_REPO_ROOT}/vault/trust-manager/bundle.yaml.tpl" \
+        | kubectl --context "${CONTEXT_NAME}" -n cert-manager apply -f -
+
+    # Wait for Bundles to sync
+    echo "⏳ Waiting for trust-manager Bundles to sync..."
+    kubectl --context "${CONTEXT_NAME}" wait --for=condition=Synced bundle/step-ca-bundle --timeout=120s
+    kubectl --context "${CONTEXT_NAME}" wait --for=condition=Synced bundle/vault-pki-bundle --timeout=120s
 
     # Secrets in cert-manager namespace
     echo "🔑 Creating cert-manager secrets for Vault PKI..."
@@ -298,6 +325,17 @@ ${STEP_CA_INT_CERT}" \
         < "${GIT_REPO_ROOT}/traefik/ingressroute-dashboard.yaml.tpl" \
         | kubectl --context "${CONTEXT_NAME}" apply -f -
     echo "✅ Traefik dashboard: https://traefik.${TRAEFIK_IP_DASHED}.sslip.io"
+
+    # Traefik postgres LoadBalancer Service (separate IP from HTTP/HTTPS)
+    # The postgres entrypoint is not exposed on the main Traefik LB (expose.default: false),
+    # so we create a dedicated LB service for postgres traffic.
+    # TRAEFIK_POSTGRES_IP = TRAEFIK_IP with last octet +10
+    TRAEFIK_POSTGRES_IP=$(echo "${TRAEFIK_IP}" | awk -F. '{OFS="."; $4=$4+10; print}')
+    TRAEFIK_POSTGRES_IP_DASHED=$(ip_to_dashed "${TRAEFIK_POSTGRES_IP}")
+    echo "🔧 Creating Traefik postgres LoadBalancer Service (${TRAEFIK_POSTGRES_IP})..."
+    TRAEFIK_POSTGRES_IP="${TRAEFIK_POSTGRES_IP}" envsubst '${TRAEFIK_POSTGRES_IP}' \
+        < "${GIT_REPO_ROOT}/traefik/service-postgres.yaml.tpl" \
+        | kubectl --context "${CONTEXT_NAME}" apply -f -
 
     echo "✅ Resource provisioning for '${region}' complete."
 
