@@ -93,6 +93,9 @@ spec:
   type: rw
   pgbouncer:
     poolMode: session
+    authQuery: "SELECT usename, passwd FROM public.user_search($$1)"
+    authQuerySecret:
+      name: pg-local-pooler-auth
     clientTLSSecret:
       name: pg-local-pooler-client-tls
     clientCASecret:

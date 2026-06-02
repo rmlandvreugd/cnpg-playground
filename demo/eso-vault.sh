@@ -150,6 +150,16 @@ setup)
             -n "${CNPG_DEMO_NAMESPACE}" --timeout=120s --context "${LOCAL_CONTEXT}"
     done
 
+    # PgBouncer auth secret (required when using custom TLS secrets)
+    echo "🔑 Creating PgBouncer auth secret..."
+    POOLER_PASSWORD=$(openssl rand -base64 32 | tr -d '/+=' | head -c 32)
+    kubectl create secret generic pg-local-pooler-auth \
+        --namespace="${CNPG_DEMO_NAMESPACE}" \
+        --context="${LOCAL_CONTEXT}" \
+        --from-literal=username=cnpg_pooler_pgbouncer \
+        --from-literal=password="${POOLER_PASSWORD}" \
+        --dry-run=client -o yaml | kubectl apply --context "${LOCAL_CONTEXT}" -f -
+
     # Phase 3: Traefik configuration
     echo "🔒 Applying TLSOption (mtls-verify)..."
     kubectl apply --context "${LOCAL_CONTEXT}" \
