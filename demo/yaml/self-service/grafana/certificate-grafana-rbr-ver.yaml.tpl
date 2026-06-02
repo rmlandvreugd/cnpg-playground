@@ -8,6 +8,9 @@ spec:
   issuerRef:
     name: vault-pki
     kind: ClusterIssuer
+  privateKey:
+    algorithm: ECDSA
+    size: 256
   commonName: grafana-rbr-ver.${TRAEFIK_IP_DASHED}.sslip.io
   dnsNames:
   - grafana-rbr-ver.${TRAEFIK_IP_DASHED}.sslip.io

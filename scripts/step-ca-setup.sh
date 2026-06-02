@@ -145,9 +145,11 @@ keyUsage = critical, digitalSignature, keyCertSign, cRLSign
 subjectKeyIdentifier = hash
 authorityKeyIdentifier = keyid:always, issuer
 EOF
-# Copy the intermediate key from the container (it's encrypted with the step-ca password)
+# Copy the intermediate and root keys from the container (they're in /home/step/secrets/, not on the host)
 STEP_CA_INT_KEY_TMPFILE=$(mktemp)
+STEP_CA_ROOT_KEY_TMPFILE=$(mktemp)
 ${CONTAINER_PROVIDER} cp "${STEP_CA_CONTAINER_NAME}:/home/step/secrets/intermediate_ca_key" "${STEP_CA_INT_KEY_TMPFILE}"
+${CONTAINER_PROVIDER} cp "${STEP_CA_CONTAINER_NAME}:/home/step/secrets/root_ca_key" "${STEP_CA_ROOT_KEY_TMPFILE}"
 
 # Generate a CSR from the existing intermediate key, then sign with root CA + pathlen:1
 INTERMEDIATE_CSR=$(mktemp)
@@ -159,7 +161,7 @@ openssl req -new -key "${STEP_CA_INT_KEY_TMPFILE}" \
 
 openssl x509 -req -in "${INTERMEDIATE_CSR}" \
     -CA "${STEP_CA_PKI_DIR}/root_ca.crt" \
-    -CAkey "${STEP_CA_PKI_DIR}/root_ca_key" \
+    -CAkey "${STEP_CA_ROOT_KEY_TMPFILE}" \
     -CAcreateserial \
     -days 1825 \
     -extfile "${INTERMEDIATE_EXT}" \
@@ -176,7 +178,7 @@ else
     echo "⚠️ Warning: Failed to re-sign intermediate CA with pathlen:1, using default pathlen:0"
     echo "   This may cause TLS issues with 3-level CA chains (Vault PKI)."
 fi
-rm -f "${INTERMEDIATE_CSR}" "${INTERMEDIATE_NEW}" "${INTERMEDIATE_EXT}" "${STEP_CA_INT_KEY_TMPFILE}"
+rm -f "${INTERMEDIATE_CSR}" "${INTERMEDIATE_NEW}" "${INTERMEDIATE_EXT}" "${STEP_CA_INT_KEY_TMPFILE}" "${STEP_CA_ROOT_KEY_TMPFILE}"
 
 # Ensure root and intermediate certs have correct host permissions
 sudo chmod 644 "${STEP_CA_PKI_DIR}/root_ca.crt" 2>/dev/null || true

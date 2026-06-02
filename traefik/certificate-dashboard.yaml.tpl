@@ -8,6 +8,9 @@ spec:
   issuerRef:
     name: vault-pki
     kind: ClusterIssuer
+  privateKey:
+    algorithm: ECDSA
+    size: 256
   commonName: traefik.${TRAEFIK_IP_DASHED}.sslip.io
   dnsNames:
   - traefik.${TRAEFIK_IP_DASHED}.sslip.io
