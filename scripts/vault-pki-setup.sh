@@ -127,18 +127,66 @@ _vcmd write pki_int/roles/dex-server \
 _vcmd write pki_int/roles/cluster-certs \
     allowed_domains="sslip.io,cluster.local" \
     allow_subdomains=true allow_bare_domains=true \
+    allow_any_name=true \
     allow_ip_sans=true max_ttl=720h \
     not_before_duration=0s \
-    require_cn=false
+    require_cn=false \
+    key_type=ec key_bits=256 \
+    enforce_hostnames=false
+# Vault CLI cannot set cn_validations to empty array; use API to clear it
+curl -s -X PUT \
+    -H "X-Vault-Token: ${ROOT_TOKEN}" \
+    -H "Content-Type: application/json" \
+    --cacert "${VAULT_DIR}/certs/vault-ca.pem" \
+    "https://127.0.0.1:${VAULT_PORT}/v1/pki_int/roles/cluster-certs" \
+    -d '{
+        "allowed_domains": "sslip.io,cluster.local",
+        "allow_subdomains": true,
+        "allow_bare_domains": true,
+        "allow_any_name": true,
+        "allow_ip_sans": true,
+        "max_ttl": "720h",
+        "not_before_duration": "0s",
+        "require_cn": false,
+        "key_type": "ec",
+        "key_bits": 256,
+        "cn_validations": [],
+        "enforce_hostnames": false
+    }' > /dev/null
 
 # mTLS client role for in-cluster mutual TLS
 _vcmd write pki_int/roles/mtls-client \
     allowed_domains="sslip.io,cluster.local" \
     allow_subdomains=true allow_bare_domains=true \
+    allow_any_name=true \
     allow_ip_sans=true max_ttl=168h \
     not_before_duration=0s \
     client_flag=true server_flag=false \
-    require_cn=false
+    require_cn=false \
+    key_type=ec key_bits=256 \
+    enforce_hostnames=false
+# Vault CLI cannot set cn_validations to empty array; use API to clear it
+curl -s -X PUT \
+    -H "X-Vault-Token: ${ROOT_TOKEN}" \
+    -H "Content-Type: application/json" \
+    --cacert "${VAULT_DIR}/certs/vault-ca.pem" \
+    "https://127.0.0.1:${VAULT_PORT}/v1/pki_int/roles/mtls-client" \
+    -d '{
+        "allowed_domains": "sslip.io,cluster.local",
+        "allow_subdomains": true,
+        "allow_bare_domains": true,
+        "allow_any_name": true,
+        "allow_ip_sans": true,
+        "max_ttl": "168h",
+        "not_before_duration": "0s",
+        "client_flag": true,
+        "server_flag": false,
+        "require_cn": false,
+        "key_type": "ec",
+        "key_bits": 256,
+        "cn_validations": [],
+        "enforce_hostnames": false
+    }' > /dev/null
 
 # --- cert-manager policy ---
 echo "📋 Creating cert-manager policy..."
