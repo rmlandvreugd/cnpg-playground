@@ -5,6 +5,8 @@ metadata:
   namespace: traefik
 spec:
   minVersion: VersionTLS13
+  alpnProtocols:
+    - postgresql
   clientAuth:
     secretNames:
       - vault-pki-bundle
