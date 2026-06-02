@@ -35,11 +35,13 @@ else
     echo "🔷 step-ca container '${STEP_CA_CONTAINER_NAME}' not found, skipping."
 fi
 
-# Clean up directories
+# Clean up directories (preserve .gitkeep files for git tracking)
 echo "🧹 Cleaning up step-ca directories (pki, secrets, db)..."
 sudo rm -rf "${STEP_CA_DIR}/pki"
 sudo rm -rf "${STEP_CA_DIR}/secrets"
 sudo rm -rf "${STEP_CA_DIR}/db"
+mkdir -p "${STEP_CA_DIR}/pki" "${STEP_CA_DIR}/secrets"
+touch "${STEP_CA_DIR}/pki/.gitkeep" "${STEP_CA_DIR}/secrets/.gitkeep"
 
 # Clean up generated config files (keep templates)
 sudo rm -f "${STEP_CA_DIR}/config/ca.json"
