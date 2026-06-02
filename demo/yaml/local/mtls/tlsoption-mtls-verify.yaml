@@ -1,0 +1,11 @@
+apiVersion: traefik.io/v1alpha1
+kind: TLSOption
+metadata:
+  name: mtls-verify
+  namespace: traefik
+spec:
+  minVersion: VersionTLS13
+  clientAuth:
+    secretNames:
+      - vault-pki-bundle
+    clientAuthType: RequireAndVerifyClientCert

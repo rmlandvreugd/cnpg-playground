@@ -58,6 +58,12 @@ spec:
       passwordSecret:
         name: pg-local-readonly
 
+  certificates:
+    serverTLSSecret: pg-local-server-tls
+    serverCASecret: vault-pki-bundle
+    clientCASecret: vault-pki-bundle
+    replicationTLSSecret: pg-local-replication-tls
+
   postgresql:
     parameters:
       max_connections: '100'
@@ -68,6 +74,12 @@ spec:
       hot_standby_feedback: 'on'
       shared_memory_type: 'sysv'
       dynamic_shared_memory_type: 'sysv'
+      ssl_min_protocol_version: TLSv1.3
+    pg_hba:
+      - hostssl replication streaming_replica all cert
+      - hostssl all cnpg_pooler_pgbouncer all cert
+      - hostssl all all all cert
+      - host all all all scram-sha-256
 ---
 apiVersion: postgresql.cnpg.io/v1
 kind: Pooler
@@ -81,6 +93,16 @@ spec:
   type: rw
   pgbouncer:
     poolMode: session
+    clientTLSSecret:
+      name: pg-local-pooler-client-tls
+    clientCASecret:
+      name: vault-pki-bundle
+    serverTLSSecret:
+      name: pg-local-pooler-server-tls
+    serverCASecret:
+      name: vault-pki-bundle
     parameters:
       max_client_conn: "1000"
       default_pool_size: "10"
+      client_tls_sslmode: verify-full
+      server_tls_sslmode: verify-full

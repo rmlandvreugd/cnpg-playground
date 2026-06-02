@@ -126,6 +126,52 @@ setup)
         wait_for_external_secret "pg-local-${es}" "${CNPG_DEMO_NAMESPACE}"
     done
 
+    # --- mTLS / IngressRouteTCP setup ---
+    echo "🔐 Setting up mTLS certificates and Traefik routes..."
+
+    # Compute Traefik postgres IP (main LB IP + 10 on last octet)
+    TRAEFIK_IP=$(get_traefik_lb_ip "${LOCAL_CONTEXT}")
+    TRAEFIK_POSTGRES_IP=$(echo "${TRAEFIK_IP}" | awk -F. '{OFS="."; $4=$4+10; print}')
+    TRAEFIK_POSTGRES_IP_DASHED=$(ip_to_dashed "${TRAEFIK_POSTGRES_IP}")
+
+    # Phase 2: Certificate infrastructure
+    echo "📜 Issuing mTLS certificates (cert-manager)..."
+    for cert in server replication tls-term-server pooler-client pooler-server; do
+        CNPG_DEMO_NAMESPACE="${CNPG_DEMO_NAMESPACE}" \
+        TRAEFIK_POSTGRES_IP_DASHED="${TRAEFIK_POSTGRES_IP_DASHED}" \
+        envsubst '${CNPG_DEMO_NAMESPACE} ${TRAEFIK_POSTGRES_IP_DASHED}' \
+            < "${DEMO_YAML}/local/mtls/certificate-${cert}.yaml.tpl" \
+            | kubectl apply --context "${LOCAL_CONTEXT}" -f -
+    done
+
+    echo "⏳ Waiting for certificates to be Ready..."
+    for cert in pg-local-server-tls pg-local-replication-tls pg-local-tls-term-server pg-local-pooler-client-tls pg-local-pooler-server-tls; do
+        kubectl wait --for=condition=Ready certificate/"${cert}" \
+            -n "${CNPG_DEMO_NAMESPACE}" --timeout=120s --context "${LOCAL_CONTEXT}"
+    done
+
+    # Phase 3: Traefik configuration
+    echo "🔒 Applying TLSOption (mtls-verify)..."
+    kubectl apply --context "${LOCAL_CONTEXT}" \
+        -f "${DEMO_YAML}/local/mtls/tlsoption-mtls-verify.yaml"
+
+    echo "🌐 Applying IngressRouteTCP routes..."
+    CNPG_DEMO_NAMESPACE="${CNPG_DEMO_NAMESPACE}" \
+    TRAEFIK_POSTGRES_IP_DASHED="${TRAEFIK_POSTGRES_IP_DASHED}" \
+    envsubst '${CNPG_DEMO_NAMESPACE} ${TRAEFIK_POSTGRES_IP_DASHED}' \
+        < "${DEMO_YAML}/local/mtls/ingressroute-tcp-tls-term.yaml.tpl" \
+        | kubectl apply --context "${LOCAL_CONTEXT}" -f -
+
+    CNPG_DEMO_NAMESPACE="${CNPG_DEMO_NAMESPACE}" \
+    TRAEFIK_POSTGRES_IP_DASHED="${TRAEFIK_POSTGRES_IP_DASHED}" \
+    envsubst '${CNPG_DEMO_NAMESPACE} ${TRAEFIK_POSTGRES_IP_DASHED}' \
+        < "${DEMO_YAML}/local/mtls/ingressroute-tcp-tls-passthrough.yaml.tpl" \
+        | kubectl apply --context "${LOCAL_CONTEXT}" -f -
+
+    echo "✅ mTLS infrastructure ready"
+    echo "   TLS-termination endpoint: pg-local-${CNPG_DEMO_NAMESPACE}-t.${TRAEFIK_POSTGRES_IP_DASHED}.sslip.io"
+    echo "   TLS-passthrough endpoint:  pg-local-${CNPG_DEMO_NAMESPACE}-p.${TRAEFIK_POSTGRES_IP_DASHED}.sslip.io"
+
     echo "🐘 Applying CNPG Cluster (pg-local-eso)..."
     CNPG_DEMO_NAMESPACE="${CNPG_DEMO_NAMESPACE}" \
     envsubst '${CNPG_DEMO_NAMESPACE}' \
@@ -198,7 +244,23 @@ teardown)
     echo "🔥 ESO demo teardown (local) — narrow scope"
     echo "=================================================="
 
-    echo "🗑️ Deleting namespace ${CNPG_DEMO_NAMESPACE} (includes all CNPG + ESO resources)..."
+    echo "🗑️ Deleting IngressRouteTCP routes..."
+    kubectl delete --context "${LOCAL_CONTEXT}" \
+        -n "${CNPG_DEMO_NAMESPACE}" \
+        ingressroutetcp/pg-local-tls-term \
+        --ignore-not-found
+    kubectl delete --context "${LOCAL_CONTEXT}" \
+        -n "${CNPG_DEMO_NAMESPACE}" \
+        ingressroutetcp/pg-local-tls-passthrough \
+        --ignore-not-found
+
+    echo "🗑️ Deleting TLSOption (mtls-verify) from traefik namespace..."
+    kubectl delete --context "${LOCAL_CONTEXT}" \
+        -n traefik \
+        tlsoption/mtls-verify \
+        --ignore-not-found
+
+    echo "🗑️ Deleting namespace ${CNPG_DEMO_NAMESPACE} (includes all CNPG + ESO + cert resources)..."
     kubectl delete namespace "${CNPG_DEMO_NAMESPACE}" \
         --context "${LOCAL_CONTEXT}" \
         --ignore-not-found
