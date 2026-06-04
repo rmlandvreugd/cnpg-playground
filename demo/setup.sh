@@ -99,11 +99,27 @@ for region in "${REGIONS[@]}"; do
      kubectl rollout --context "${CONTEXT_NAME}" status deployment \
        -n cnpg-system barman-cloud
    else
-     echo "${info_icon} Deploying Barman Cloud Plugin (chart ${BARMAN_CLOUD_PLUGIN_CHART_VERSION})"
-     helm_upgrade_install barman-cloud plugin-barman-cloud cnpg-system "${CONTEXT_NAME}" \
-       "${BARMAN_CLOUD_PLUGIN_CHART_VERSION}" \
-       --repo-url https://cloudnative-pg.github.io/charts
-   fi
+echo "${info_icon} Deploying Barman Cloud Plugin (chart ${BARMAN_CLOUD_PLUGIN_CHART_VERSION})"
+
+      # Issue TLS certificates BEFORE helm install so secrets exist when the
+      # deployment starts.  helm --wait blocks until pods are ready, and the
+      # barman-cloud pod cannot start without the server/client TLS secrets.
+      echo "📜 Issuing barman-cloud TLS certificates via vault-pki..."
+      kubectl apply --context "${CONTEXT_NAME}" -f \
+        ${demo_yaml_path}/barman-cloud/certificate-server.yaml
+      kubectl apply --context "${CONTEXT_NAME}" -f \
+        ${demo_yaml_path}/barman-cloud/certificate-client.yaml
+      kubectl wait --context "${CONTEXT_NAME}" --timeout=60s \
+        --for=condition=Ready certificate/barman-cloud-server -n cnpg-system
+      kubectl wait --context "${CONTEXT_NAME}" --timeout=60s \
+        --for=condition=Ready certificate/barman-cloud-client -n cnpg-system
+
+      helm_upgrade_install barman-cloud plugin-barman-cloud cnpg-system "${CONTEXT_NAME}" \
+        "${BARMAN_CLOUD_PLUGIN_CHART_VERSION}" \
+        --repo-url https://cloudnative-pg.github.io/charts \
+        --set certificate.createClientCertificate=false \
+        --set certificate.createServerCertificate=false
+    fi
 
    # Create Barman object stores
    echo "${info_icon} Creating Barman Cloud object store for region ${region}..."

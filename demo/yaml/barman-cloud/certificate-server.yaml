@@ -1,0 +1,23 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: barman-cloud-server
+  namespace: cnpg-system
+spec:
+  commonName: barman-cloud
+  dnsNames:
+    - barman-cloud
+    - barman-cloud.cnpg-system
+    - barman-cloud.cnpg-system.svc
+    - barman-cloud.cnpg-system.svc.cluster.local
+  issuerRef:
+    kind: ClusterIssuer
+    name: vault-pki
+  secretName: barman-cloud-server-tls
+  duration: 720h
+  renewBefore: 168h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  usages:
+    - server auth

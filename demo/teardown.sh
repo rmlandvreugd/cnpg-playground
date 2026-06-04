@@ -56,15 +56,19 @@ for region in "${REGIONS[@]}"; do
    kubectl delete --context ${CONTEXT_NAME} --ignore-not-found=true -f \
      ${demo_yaml_path}/object-stores
 
-   if [ $trunk -eq 1 ]; then
-     kubectl delete --context "${CONTEXT_NAME}" --ignore-not-found=true -f \
-       https://raw.githubusercontent.com/cloudnative-pg/plugin-barman-cloud/refs/heads/main/manifest.yaml
-     kubectl delete --context "${CONTEXT_NAME}" --ignore-not-found=true -f \
-       https://raw.githubusercontent.com/cloudnative-pg/artifacts/main/manifests/operator-manifest.yaml
-   else
-     helm_uninstall_if_present barman-cloud cnpg-system "${CONTEXT_NAME}"
-     helm_uninstall_if_present cnpg-operator cnpg-system "${CONTEXT_NAME}"
-   fi
+    # Delete vault-pki certificates before helm uninstall
+    kubectl delete certificate barman-cloud-server barman-cloud-client \
+      -n cnpg-system --context "${CONTEXT_NAME}" --ignore-not-found
+
+    if [ $trunk -eq 1 ]; then
+      kubectl delete --context "${CONTEXT_NAME}" --ignore-not-found=true -f \
+        https://raw.githubusercontent.com/cloudnative-pg/plugin-barman-cloud/refs/heads/main/manifest.yaml
+      kubectl delete --context "${CONTEXT_NAME}" --ignore-not-found=true -f \
+        https://raw.githubusercontent.com/cloudnative-pg/artifacts/main/manifests/operator-manifest.yaml
+    else
+      helm_uninstall_if_present barman-cloud cnpg-system "${CONTEXT_NAME}"
+      helm_uninstall_if_present cnpg-operator cnpg-system "${CONTEXT_NAME}"
+    fi
 
    # Remove backup data
    ${CONTAINER_PROVIDER} exec objectstore-${region} rm -rf /data/backups/pg-${region}
