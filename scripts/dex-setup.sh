@@ -66,8 +66,13 @@ ${CONTAINER_PROVIDER} exec \
     --not-after 720h --force
 
 # Copy cert and key from step-ca container to host
-${CONTAINER_PROVIDER} cp "${STEP_CA_CONTAINER_NAME}:/tmp/dex-cert.pem" "${DEX_TLS_DIR}/dex.crt"
-${CONTAINER_PROVIDER} cp "${STEP_CA_CONTAINER_NAME}:/tmp/dex-key.pem" "${DEX_TLS_DIR}/dex.key"
+# Use a temp dir since dex/tls/ may not be writable by the current user yet
+DEX_CERT_TMPDIR=$(mktemp -d)
+${CONTAINER_PROVIDER} cp "${STEP_CA_CONTAINER_NAME}:/tmp/dex-cert.pem" "${DEX_CERT_TMPDIR}/dex-cert.pem"
+${CONTAINER_PROVIDER} cp "${STEP_CA_CONTAINER_NAME}:/tmp/dex-key.pem" "${DEX_CERT_TMPDIR}/dex-key.pem"
+sudo cp "${DEX_CERT_TMPDIR}/dex-cert.pem" "${DEX_TLS_DIR}/dex.crt"
+sudo cp "${DEX_CERT_TMPDIR}/dex-key.pem" "${DEX_TLS_DIR}/dex.key"
+rm -rf "${DEX_CERT_TMPDIR}"
 
 # Build the CA chain: step-ca intermediate + step-ca root
 # (Dex's leaf cert is signed by step-ca intermediate, so clients need the
