@@ -8,7 +8,7 @@ This document records the decisions reached during a requirements interview cove
 (4 outside the Kubernetes cluster, 7 inside). Each item is **single-source**: the decision, rationale,
 and implementation notes below are authoritative — earlier round-2/round-3 correction sections have been
 folded inline. Cross-cutting concerns, sequencing, and non-goals follow at the end. The plan is
-considered **implementation-ready**; the next step is decomposition into `bd` issues.
+considered **implementation-ready**; execution follows the **phased path in §E** (foundation-late strategy).
 
 ---
 
@@ -262,3 +262,64 @@ verbatim** — no new idempotency machinery:
 - RBAC bindings for `oidc:` subjects / a wired kubelogin client (apiserver OIDC stays inert this pass).
 - gRPC mTLS mesh for seaweedfs (single process).
 - EU + US regions.
+
+---
+
+## E. Phased implementation path
+
+> **Strategy: foundation-late (chosen).** Three items are baked into `kind-cluster.yaml.tpl` and force a
+> full `teardown → setup` (the **slow loop**, since `setup.sh:43` hard-fails on an existing cluster):
+> item 1 (Calico `disableDefaultCNI`), item 2 (encryption kubeadm patch), item 6's apiserver
+> `oidc-issuer-url`. Everything else is `kubectl apply` onto a running cluster or a host-container restart
+> (the **fast loop**). Foundation-late front-loads all fast-loop work on the current kindnet/Dex baseline,
+> then a **single recreate** (Phase 9) brings Calico + encryption + the Authelia issuer up together, and the
+> ingress default-deny flip is the final in-cluster gate — honoring §A/§D's "flip default-deny **last**".
+
+**Rejected alternative — foundation-early** (Calico + encryption as Phase 1): builds every service on the
+real VXLAN datapath from day one and surfaces WSL2 Calico issues immediately, but debugs the CNI before
+anything else exists and re-runs the slow loop ~9 times. Foundation-late costs **one** recreate vs ~nine,
+at the price of validating phases 1–8 on kindnet and re-validating them on Calico in Phase 9 (which doubles
+as the full-stack integration test). Iteration speed + CNI-risk isolation won.
+
+| #  | Ships | Items | Loop | Recreate |
+|----|-------|-------|------|----------|
+| 1  | Platform refactor + demo PodMonitor dedupe | 9, 10c | rebuild-to-verify | no template change |
+| 2  | Backup observability — alerts + panel | 10a/10b | fast | no |
+| 3  | step-ca CDP + Vault-PKI revocation config | 8a (split) | host/config | no |
+| 4  | RustFS native TLS (TLS-pattern canary) | 3 | host | no |
+| 5  | seaweedfs + Loki repoint | 4, 5 | host + in-cluster | no |
+| 6  | ESO → Vault HTTPS | 5b | fast | no |
+| 7  | Revocation exporter + monitoring | 8b | host + in-cluster | no |
+| 8  | Authelia swap (host-side) + monitoring-Grafana HTTPS/OIDC | 6, 7 | host + in-cluster | no* |
+| 9  | **Foundation recreate** — encryption + Calico (allow-all) + apiserver-OIDC→Authelia | 2, 1a, 6-rem | **slow** | **yes — the one** |
+| 10 | NetworkPolicy allow-list + **default-deny flip** | 1b | fast (apply) | no |
+
+\* Phase 8's apiserver-OIDC template edit is **deferred** to Phase 9. Apiserver OIDC is inert (no kubelogin
+client, no `oidc:` RBAC), so the live consumers (Vault, both Grafanas, step-ca) repoint to Authelia with
+zero recreate; the stale Dex issuer string in the template is harmless until the Phase 9 rebuild clears it.
+
+**Per-phase test gates (each phase is "done" only when its gate passes):**
+- **1.** teardown→setup yields an **identical** green cluster (backups run, CNPG `:9187` scrape intact). Also
+  drills the rebuild loop and establishes baseline-green before any behavior change.
+- **2.** Backup panel populates; a forced failed backup fires the `_last_failed` alert.
+- **3.** A freshly-issued leaf carries the CDP extension; `curl …:8443/1.0/crl` returns a CRL. **Sequenced
+  before Phases 4–5 so new external certs are born with the CDP** (avoids a double reissue). Forces reissue
+  of *existing* external certs — accept that blast radius here.
+- **4.** In-cluster CNPG-Barman + Mimir/Tempo verify the RustFS cert on full CA; backups stay green. Proves
+  the X5C → host-container TLS → trust-bundle loop on one store before adding a second.
+- **5.** Logs land in the seaweedfs `loki` bucket; Grafana Loki queries work; old objectstore no longer
+  takes Loki writes (storage isolation confirmed).
+- **6.** An ExternalSecret re-syncs over HTTPS via the trust-manager bundle. Small, isolated — good filler.
+- **7.** `step ca revoke` on a throwaway cert flips `cert_revoked`; expiry metric present.
+- **8.** Vault, **both** Grafanas, and the step-ca `authelia` provisioner all auth via Authelia; Dex
+  container/scripts gone; local `admin` break-glass still works.
+- **9.** Cluster healthy on Calico/VXLAN, all pods Ready, **MetalLB L2 still serves**, `etcdctl` shows
+  secretbox ciphertext, apiserver issuer points at Authelia (inert), and **phases 1–8 re-validate on the
+  target datapath**. This is the riskiest unknown (Calico on WSL2), isolated to one phase.
+- **10.** Author the allow-list incl. the two ★ rules (kubelet→pod from node host-CIDR; MetalLB-L2→Traefik
+  as a CIDR/`nets` rule), observe green, **then** flip the `GlobalNetworkPolicy` ingress default-deny.
+  Fully reversible (delete the deny policy). Everything green under deny; one non-allowed flow confirmed blocked.
+
+**Steer points between phases:** §3 (CDP reissue blast radius — ready?), §5 (did storage isolation actually
+hold?), §8 (the doc's "no two-IdP period" can be relaxed here to de-risk the swap, since apiserver OIDC is
+inert), §9 (Calico-on-WSL2 go/no-go), §10 (don't flip until the allow-list is observed working).
