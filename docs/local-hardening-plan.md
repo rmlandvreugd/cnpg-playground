@@ -1,19 +1,23 @@
 # Local-Region Hardening Plan — CNPG Playground
 
 > **Scope:** the **`local`** region only. EU + US are explicitly **out of scope** for this pass and will be handled later.
-> **Status:** design contract (grill-me interview output). No implementation yet.
+> **Status:** design contract (grill-me interview output, rounds 1–3 folded to single-source). No implementation yet.
 > **Date:** 2026-06-05
 
 This document records the decisions reached during a requirements interview covering 11 changes
-(4 outside the Kubernetes cluster, 7 inside). Each item lists the **decision**, the **rationale**,
-and **implementation notes**. Cross-cutting concerns and an **Open Questions** backlog for further
-grilling follow at the end.
+(4 outside the Kubernetes cluster, 7 inside). Each item is **single-source**: the decision, rationale,
+and implementation notes below are authoritative — earlier round-2/round-3 correction sections have been
+folded inline. Cross-cutting concerns, sequencing, and non-goals follow at the end. The plan is
+considered **implementation-ready**; the next step is decomposition into `bd` issues.
 
 ---
 
 ## A. Foundation — kind cluster-creation time
 
-These two are baked into `k8s/kind-cluster.yaml` (+ `setup.sh`) **before** `kind create cluster`.
+These are baked into `k8s/kind-cluster.yaml` (rendered from `k8s/kind-cluster.yaml.tpl`) **before**
+`kind create cluster`. **Three items mutate the control-plane node spec in this one template** —
+item 1 (Calico `disableDefaultCNI`), item 2 (encryption kubeadm patch), and item 6 (apiserver OIDC
+issuer). Plan their edits together to avoid clobbering.
 
 ### 1. Calico CNI — swap + baseline NetworkPolicies
 - **Decision:** Replace kindnet with Calico via the **tigera-operator Helm chart** (version-pinned in
@@ -22,12 +26,17 @@ These two are baked into `k8s/kind-cluster.yaml` (+ `setup.sh`) **before** `kind
 - **Policy baseline:** one Calico **`GlobalNetworkPolicy`** = cluster-wide **ingress default-deny** +
   always-allow DNS/kube-system; per-namespace **native `NetworkPolicy`** for explicit allows.
   **Egress stays open** so in-cluster workloads keep reaching host-side Vault/step-ca/rustfs/seaweedfs
-  with zero egress rules.
+  with zero egress rules. (Egress-open is a **pedagogical** choice — it teaches the global tier without
+  lockout risk; it is **not** a containment boundary, since a compromised pod can still reach the host
+  services and exfiltrate freely.)
 - **Rationale:** Operator matches the repo's `helm_upgrade_install` convention; VXLAN is the safe
-  datapath on kind + WSL2 (IPIP needs proto-4, eBPF is flaky here). Ingress-only deny teaches Calico's
-  global tier without the lockout risk of egress default-deny. MetalLB L2 is unaffected (no BGP).
-- **Notes:** see the Calico allow-list in §D. Do **not** let the `Installation` CR manage the MetalLB
-  address pool; `strictARP` is already enabled for kube-proxy.
+  datapath on kind + WSL2 (IPIP needs proto-4, eBPF is flaky here). Ingress-only deny is the teaching
+  goal without the lockout risk of egress default-deny. MetalLB L2 is unaffected (no BGP).
+- **MetalLB coexistence (was open Q 10b — resolved by precedent):** do **not** let the `Installation`
+  CR manage the MetalLB address pool. VXLAN/no-BGP means nothing in the Calico `Installation` touches
+  `LoadBalancer` IPAM; **MetalLB keeps L2 pool ownership**. `strictARP` is already enabled for kube-proxy.
+- **Notes:** the explicit allow-list is in §D. **Flip ingress default-deny last**, after the allow-list
+  is observed working, to avoid a silent lockout.
 
 ### 2. Secret encryption-at-rest — secretbox local key
 - **Decision:** `EncryptionConfiguration` with a **secretbox** key (preferred over aescbc per current
@@ -37,7 +46,14 @@ These two are baked into `k8s/kind-cluster.yaml` (+ `setup.sh`) **before** `kind
 - **Rationale:** Encrypted from first write → no migration pass. Robust: no runtime KMS dependency, so a
   **sealed Vault does not brick the apiserver** (the reason we rejected Vault-Transit KMS, which would
   couple apiserver boot to an unsealed, reachable host Vault — fatal on every restart given manual unseal).
-  `(AppRole)` in the request = the motivating secret (ESO `SecretID`); encryption is global to all Secrets.
+  The motivating secret is the ESO `SecretID` (AppRole); encryption is global to all Secrets.
+- **Key lifecycle:** fresh key per `setup.sh` into gitignored **`k8s/encryption/secretbox.key`** (0600),
+  written **unconditionally** right after the pre-flight guard passes. This is safe **because** `setup.sh`
+  hard-fails its pre-flight check (`setup.sh:43`, `exit 1`) if any playground cluster already exists — so
+  keygen is only ever reached from a clean slate (no cluster ⇒ no encrypted data ⇒ overwrite is harmless).
+  There is therefore **no re-key-against-live-cluster hazard**. `teardown.sh` deletes the key file.
+  Rotation (secretbox multi-key) + backup are explicit **non-goals** (ephemeral playground; `kind delete`
+  wipes etcd, so the key has no post-teardown decrypt value).
 
 ---
 
@@ -56,44 +72,88 @@ These two are baked into `k8s/kind-cluster.yaml` (+ `setup.sh`) **before** `kind
 - **Decision:** One `chrislusf/seaweedfs server -s3` **host container** (mini all-in-one), S3 gateway on
   `:8333` over **TLS via `security.toml [https.s3]`** (step-ca cert), bridged into the `grafana` namespace.
   No gRPC mTLS mesh (single process). **Loki only** — Mimir/Tempo/CNPG-Barman stay on RustFS.
+- **S3 identity:** seaweedfs S3 runs **anonymous-open** unless given an `-s3.config` identities JSON, so we
+  write one regardless. Use a **dedicated, bucket-scoped `loki` identity** (Read/Write/List/Tagging on the
+  `loki` bucket only); new `SEAWEEDFS_*` / `LOKI_S3_*` vars in `common.sh`; the `mc` bucket-init (`--insecure`)
+  and the Loki Helm `--set` consume them. This delivers the storage isolation that justifies a second store
+  (today all stores share `RUSTFS_ROOT_*`).
 - **Rationale:** Matches the "outside kubernetes / mini single-container" grouping; isolates log storage
   from metrics/traces; teaches a second object store.
 
 ### 5. Loki → seaweedfs
 - **Decision:** Repoint `monitoring/loki/loki-values.yaml` S3 endpoint from
   `http://objectstore-local…:9000` → `https://seaweedfs.grafana.svc…:8333`, `insecure: false`, with
-  **real CA verification** (`AWS_CA_BUNDLE`/`ca_file` via the trust bundle). The `mc` bucket-init for the
-  `loki` bucket uses `--insecure`.
+  **real CA verification** (`AWS_CA_BUNDLE`/`ca_file` via the trust bundle), authenticating with the
+  dedicated `loki` seaweedfs identity (item 4). The `mc` bucket-init for the `loki` bucket uses `--insecure`.
 
 ### 6. Dex → Authelia — full swap
 - **Decision:** Replace Dex with **Authelia** (single host container). YAML config via `envsubst` (like
   `dex-config.yaml.tpl`), **file `users_database.yml`** carrying the same users + groups (`rbr-db-admin`,
-  `rbr-ver-db-admin`), **SQLite** storage, native TLS (step-ca cert). Client secrets **PBKDF2-hashed**;
-  provision a **JWKS issuer key**; `filesystem` notifier. **`access_control.default_policy: one_factor`**
-  (password-only parity with Dex).
-- **Client scope — FULL SWAP:** _(⚠ CORRECTED in §F1 — there are **5** OIDC consumers incl. kube-apiserver +
-  step-ca, and 5 per-service clients; this list below is the original under-count.)_ Authelia serves **Vault** (re-point `vault-oidc-setup.sh`), the
-  **self-service Grafana** (`grafana-rbr-ver`), **and** the new **monitoring Grafana** (item 7). Dex
-  container + `dex-setup.sh` / `dex-teardown.sh` removed entirely. No two-IdP period.
-- **Rationale:** Closest drop-in to current Dex wiring; keeps the external tier lightweight (authentik
-  would drag in Postgres + Redis + worker, breaking the "mini" pattern). Caveat accepted: Authelia's OIDC
-  provider role is labeled "open beta".
+  `rbr-ver-db-admin`), **SQLite** storage, native TLS (step-ca cert), `filesystem` notifier,
+  **`access_control.default_policy: one_factor`** (password-only parity with Dex). Dex container +
+  `dex-setup.sh` / `dex-teardown.sh` removed entirely. **No two-IdP period.**
+- **Five OIDC consumers — repoint ALL.** Codebase exploration found Dex is consumed by **five** things, not
+  three; a naive "remove Dex" breaks the last two silently:
+  1. **Vault** — `vault-oidc-setup.sh` (re-point issuer + client).
+  2. **Self-service Grafana** (`grafana-rbr-ver`).
+  3. **Monitoring Grafana** (`grafana-monitoring`, new — item 7).
+  4. **kube-apiserver** — `k8s/kind-cluster.yaml.tpl:21` sets `oidc-issuer-url`, `oidc-client-id: kubernetes`,
+     `oidc-username-claim: email`, `oidc-groups-claim: groups`, `oidc-ca-file=/etc/kubernetes/oidc/dex-ca.pem`.
+     Rewrite the issuer URL in the template; rename the mounted CA file to a generic `oidc-ca.pem` (CA stays
+     step-ca, same chain). **Apiserver integration is currently inert** — no kubelogin client is wired and no
+     RBAC binding references `oidc:` subjects, so repointing keeps it correct-but-inert; inventing RBAC
+     bindings is a later pass. Note: kube-apiserver performs OIDC **discovery lazily** (on first token
+     validation, not at boot), so there is **no boot-time ordering dependency** on Authelia being reachable.
+  5. **step-ca** — `scripts/setup.sh:382` adds a `dex` OIDC provisioner. Rename it `authelia` and repoint its
+     `--configuration-endpoint` to Authelia's discovery URL.
+- **Client topology — 5 per-service clients** (retires the accidental Vault↔step-ca client sharing):
+  `vault`, `step-ca`, `grafana-rbr-ver`, `grafana-monitoring` — **confidential**, each with its own
+  **PBKDF2-hashed** secret in `common.sh` — plus `kubernetes` (**public/PKCE loopback**, kubelogin shape,
+  **no secret**). _(The `kubernetes` client is parity-only today since apiserver OIDC is inert; create it now
+  for symmetry, or defer until a kubelogin flow exists — implementation choice, no behavioral impact.)_
+- **Password hashes reuse as-is** — Dex stores **bcrypt** (`common.sh:97`, `$2a$10$…`); Authelia's `file`
+  provider accepts bcrypt directly in `users_database.yml`. No regeneration; 4 users + groups port verbatim.
+- **Vault `user_claim`: `sub` → `email`** (matches apiserver; one canonical human identity across
+  apiserver + Vault + Grafana). Add `oidc_scopes` so Authelia returns `profile email groups`.
+- **Authelia's own crypto — generate locally (Dex pattern):** JWKS RSA keypair into gitignored
+  `authelia/secrets/`; session / storage-encryption / OIDC-HMAC secrets are `common.sh` defaults via
+  `envsubst`. **No Vault dependency on Authelia's boot path.** Mirror `dex/.gitignore` (`tls/` + rendered
+  config ignored; only `.tpl` + codemap tracked).
+- **Session cookie domain = `<HOST_IP_DASHED>.sslip.io`** (the portal's own parent). The OIDC auth-code flow
+  never uses Authelia's cookie at the client, so SSO works even though the Grafanas live on the *Traefik* IP
+  domain. Bare `sslip.io` would be wrong (too broad).
+- **Claims policy (forced):** one Authelia claims policy attaches `email` + `groups`; every client requests
+  `openid profile email groups`.
+- **Rationale:** Closest drop-in to current Dex wiring; keeps the external tier lightweight (authentik would
+  drag in Postgres + Redis + worker, breaking the "mini" pattern). Caveat accepted: Authelia's OIDC provider
+  role is labeled "open beta" — **pin a known-good version**.
 
 ### 8. CRL/OCSP revocation monitoring + remediation
-- **Surface — native per CA:** **step-ca → CRL** (`/1.0/crl`; `crl.enabled` + `idpURL` in `ca.json`,
-  `crlDistributionPoints` in leaf templates). **Vault PKI → OCSP _and_ CRL** (belt-and-suspenders for
-  Vault). step-ca OSS has **no OCSP responder** — not faked.
-- **Monitoring:** a **host-side exporter** probes each external endpoint's served cert + parses the
-  step-ca CRL and Vault OCSP/CRL, exposing **cert-expiry / revoked / CRL-freshness** as Prometheus
-  metrics. Bridged into the monitoring ns and scraped via a **ServiceMonitor** (dovetails with item 10),
-  surfaced in a **Grafana panel + alert rules**.
+- **Surface — native per CA:** **step-ca → CRL.** This is **already enabled** in the committed config
+  (`step-ca/config/ca.json.tpl`: `crl.enabled: true`, `generateOnRevoke: true`, `cacheDuration: 24h`,
+  `renewPeriod: 16h`) and served at **`/1.0/crl` on the existing HTTPS port 8443** — `insecureAddress` stays
+  empty, **no second/HTTP port** is added (the exporter trusts step-ca's chain via the trust bundle and
+  fetches over HTTPS). **Vault PKI → OCSP _and_ CRL** (belt-and-suspenders). step-ca OSS has **no OCSP
+  responder** — not faked.
+- **CDP wiring (the actual work for step-ca):** CRL *generation* is on, but issued leaf certs do **not** yet
+  carry a distribution point. Add **`crlDistributionPoints = URI:https://${STEP_CA_HOST}:${STEP_CA_PORT}/1.0/crl`**
+  to the leaf cert template(s) on the issuing provisioner(s), where `${STEP_CA_HOST}` =
+  `step-ca.${HOST_IP_DASHED}.sslip.io` (published `-p 8443:8443`, resolvable by the host-side exporter and by
+  in-cluster clients). Optionally set `idpURL` to the same URI for a matching Issuing-Distribution-Point
+  extension. **Enabling the CDP forces reissue of all existing external certs.**
+- **Monitoring — one fully-custom Python host container** (`cryptography` for cert parsing + `requests` for
+  CRL/OCSP) that probes each external endpoint's served cert for expiry and checks revocation vs the step-ca
+  CRL + Vault OCSP/CRL. Single coherent schema (`cert_not_after_seconds`, `cert_revoked`,
+  `crl_next_update_seconds`). Bridged into the monitoring ns via the selectorless **`Service` +
+  hand-written `Endpoints` → `${HOST_IP}:port`** pattern (cf. `step-ca/traefik/service.yaml.tpl`), scraped by
+  a **ServiceMonitor** (dovetails with item 10), surfaced in a **Grafana panel + alert rules**. Set the
+  CRL-freshness alert threshold relative to step-ca's `renewPeriod` (16h) / `cacheDuration` (24h) so a healthy
+  CA doesn't false-alarm.
 - **Remediation — split by cause:**
-  - **Expiry → auto-renew** (cert-manager already does in-cluster; add a host-side renew timer for
-    external certs).
+  - **Expiry → auto-renew** (cert-manager already does in-cluster; add a host-side renew timer for external certs).
   - **Revocation → human-triggered** `reissue-<svc>.sh` runbook (`step ca revoke` → request new → reload
     container; in-cluster = delete the TLS Secret so cert-manager re-issues). Avoids the trap of blindly
     re-minting a revoked (i.e. compromised/decommissioned) identity.
-- **Impact:** enabling CRL means **existing external certs must be reissued** to carry the CDP extension.
 
 ---
 
@@ -124,17 +184,24 @@ These two are baked into `k8s/kind-cluster.yaml` (+ `setup.sh`) **before** `kind
   `demo/setup.sh` shrinks to **PG clusters + workload**.
 - **Rationale:** Clean platform-vs-workload separation, single source of truth for the operator install.
 
-### 10. `monitoring/setup.sh` — Barman monitor + ServiceMonitors + dedupe
-> ⚠ **CORRECTED in §F2:** the Barman plugin exposes **no** metrics — item 10 becomes backup-observability
-> (alert rules + panel on existing `cnpg_collector_*` series) **+ dedupe**, not a new monitor.
-- **Already present:** `monitoring/setup.sh` applies operator + cluster-wildcard + pooler-wildcard
-  **PodMonitors**; the cluster wildcard (`namespaceSelector: any`, `cnpg.io/cluster Exists`) covers all
-  clusters automatically; clusters set `enablePodMonitor: false` to defer to it.
-- **To add/change:** add a **Barman** metrics monitor (Pod vs Service per how the chart exposes it —
-  verify); add **ServiceMonitors** for components with metrics Services (operator, barman); keep
-  PodMonitors for cluster/pooler **instances** (CNPG-idiomatic pod metrics); **remove the redundant
-  per-region `demo/` PodMonitors** + the `demo/setup.sh:141-146` apply block. `monitoring/setup.sh`
-  becomes the single owner of CNPG telemetry.
+### 10. `monitoring/setup.sh` — backup observability + ServiceMonitors + dedupe
+- **No Barman metrics exist.** Verified against the plugin manifest (trunk) **and** the
+  `plugin-barman-cloud` chart (main): deployment args are only `--server-address=:9090 --leader-elect`
+  (gRPC mTLS port) — **no `--metrics-bind-address`, no metrics port, no metrics Service**, and the chart has
+  **zero** metrics/serviceMonitor keys. The `barman-plugin-metrics-reader` ClusterRole is inert kubebuilder
+  scaffolding. **"Add a Barman monitor" is therefore impossible/moot.**
+- **Backup health is already scraped** via the cluster-wildcard PodMonitor on CNPG instance `:9187`
+  (`namespaceSelector: any`, `cnpg.io/cluster Exists`), exposing `cnpg_collector_last_available_backup_timestamp`,
+  `cnpg_collector_first_recoverability_point`, `cnpg_collector_last_failed_backup_timestamp`. Clusters set
+  `enablePodMonitor: false` to defer to the wildcard.
+- **Decision — item 10 delivers backup observability + dedupe:**
+  - **(a) Backup observability** on the existing `cnpg_collector_*` series: **alert rules**
+    (last-available-backup age, last-failed-backup fired, recoverability-point gap) + a Grafana **backup panel**.
+    **No new scrape target for Barman.**
+  - **(b) ServiceMonitors** for in-cluster components that *do* expose metrics Services (operator); keep
+    PodMonitors for cluster/pooler **instances** (CNPG-idiomatic pod metrics).
+  - **(c) Dedupe:** remove the redundant per-region `demo/` PodMonitors + the `demo/setup.sh:141-146` apply
+    block. `monitoring/setup.sh` becomes the **single owner** of CNPG telemetry.
 
 ---
 
@@ -143,110 +210,55 @@ These two are baked into `k8s/kind-cluster.yaml` (+ `setup.sh`) **before** `kind
 ### Sequencing (`scripts/setup.sh`)
 External bootstrap: step-ca → Vault → vault-pki → vault-eso → **Authelia** (was Dex) → **RustFS (TLS)**
 → **seaweedfs (TLS)** → **revocation-exporter**.
-Per region (local): **gen encryption key** → `kind create` (Calico `disableDefaultCNI` + EncryptionConfig)
-→ **Calico** → MetalLB → **CNPG operator + Barman** → **ESO (HTTPS)** → **NetworkPolicies**.
+Per region (local): **gen encryption key** → `kind create` (Calico `disableDefaultCNI` + EncryptionConfig
++ apiserver OIDC issuer, all in `kind-cluster.yaml.tpl`) → **Calico** → MetalLB → **CNPG operator + Barman**
+→ **ESO (HTTPS)** → **NetworkPolicies (ingress default-deny flipped LAST)**.
+Note: **Authelia's issuer must exist before `kind create`** (its URL is baked into the kind template, exactly
+like Dex today), so it belongs in external bootstrap ahead of the per-region loop — which the order above
+already satisfies. Apiserver lazy OIDC discovery means no *runtime* readiness gate on Authelia is needed.
 
 ### Calico ingress allow-list (under cluster-wide ingress default-deny)
-Every flow below needs an explicit `NetworkPolicy` allow or it breaks **silently**:
-- Traefik → Grafana `:3000`; browser→Traefik (websecure) for Grafana/Authelia callback routes.
-- Prometheus → CNPG instance pods `:9187`, CNPG operator, Barman, kube-state-metrics, node-exporter.
+Every flow below needs an explicit `NetworkPolicy` allow or it breaks **silently**. Most are mechanical
+enumeration of §D scrape targets; the **two starred rules are not derivable from scrape targets** and are the
+most likely to brick the default-deny flip — promote them to first-class entries:
+- **★ kubelet → pod health probes.** Ingress from the **node host-CIDR** (kind node IPs) to all workload pods
+  on their probe ports (Grafana 3000, CNPG 9187, Loki 3100, …). Calico subjects host→pod traffic to workload
+  ingress policy (no HostEndpoints configured) and these ports are **not** in Calico's failsafe-inbound set, so
+  without this rule pods flap `NotReady` after the flip — a failure that looks nothing like a policy problem.
+- **★ MetalLB L2 → Traefik.** External client → Traefik pod (websecure) for Grafana / Authelia callback routes.
+  After L2 the source is the **real external client IP, not a pod**, so this must be a **CIDR / `nets`-based**
+  ingress rule on the Traefik endpoint — a pod-selector allow would silently fail.
+- Traefik → Grafana `:3000`.
+- Prometheus → CNPG instance pods `:9187`, CNPG operator, kube-state-metrics, node-exporter.
 - Alloy → Loki `:3100`.
 - Grafana → Mimir / Tempo / Loki (in-cluster datasources).
 - cert-manager / ESO webhooks ↔ apiserver; metrics-server.
 - Always-allow: DNS (kube-dns), kube-system, tigera/calico-system, metallb-system.
-Note: pod→host-container traffic (Vault/step-ca/rustfs/seaweedfs bridges, scraping the host
-revocation-exporter) is **egress to an external IP → already open**.
+- pod → host-container traffic (Vault/step-ca/rustfs/seaweedfs bridges, scraping the host revocation-exporter)
+  is **egress to an external IP → already open**, no rule needed.
+
+### Teardown / idempotency convention
+The repo's contract is **teardown-first, setup-not-self-healing**, enforced only at the cluster layer
+(`setup.sh:43` hard-fails if a playground cluster exists). Host containers are created with bare
+`docker run --name` (cf. RustFS, `setup.sh:91-92`); `teardown.sh` is the idempotent half (guarded
+`$CONTAINER_PROVIDER rm -f` per container + volume + per-service `*-teardown.sh`). **New pieces follow this
+verbatim** — no new idempotency machinery:
+- **Authelia / seaweedfs / revocation-exporter:** bare `docker run --name` in setup; add guarded `rm -f` +
+  volume cleanup to `teardown.sh`; **replace the `dex-teardown.sh` call with `authelia-teardown.sh`** (+ new
+  teardown blocks/scripts for seaweedfs and the exporter).
+- **Encryption key:** written unconditionally post-pre-flight (safe — see item 2); `teardown.sh` deletes
+  `k8s/encryption/secretbox.key`.
 
 ### Key risks
-- A missing Calico allow = silent scrape/login failure → build the allow-list before flipping default-deny.
-- step-ca CRL enablement forces **reissue of all external certs** (CDP extension).
-- Encryption key loss = unrecoverable Secrets; define where it lives + whether teardown deletes it.
+- A missing Calico allow = silent scrape/login/probe failure → build the allow-list (incl. the two ★ rules)
+  and observe it working **before** flipping ingress default-deny.
+- step-ca CDP enablement forces **reissue of all external certs** (CDP extension on leaves).
+- Encryption key loss = unrecoverable Secrets — but `kind delete` wipes etcd, so the key is intentionally
+  ephemeral and teardown deletes it; rotation/backup are non-goals.
 - Authelia OIDC provider is "open beta" — pin a known-good version.
 
----
-
-## F. Round-2 grilling — resolutions & corrections (2026-06-05)
-
-This round resolved most of §E and surfaced **two material corrections** to the original items.
-Where this section conflicts with §A–§D above, **§F wins**.
-
-### F1. Item 6 (Dex → Authelia) — CORRECTED & EXPANDED: five OIDC consumers, not three
-Codebase exploration found Dex is consumed by **five** things; the original plan listed three.
-- **Consumers #4 + #5 were missed** and a "remove Dex" swap breaks them unless repointed:
-  - **#4 kube-apiserver** — `k8s/kind-cluster.yaml.tpl:21` sets `oidc-issuer-url`, `oidc-client-id: kubernetes`,
-    `oidc-username-claim: email`, `oidc-groups-claim: groups`, `oidc-ca-file=/etc/kubernetes/oidc/dex-ca.pem`.
-  - **#5 step-ca** — `scripts/setup.sh:382` adds a `dex` OIDC provisioner (`--configuration-endpoint …/dex/.well-known/…`).
-- **Decision: repoint BOTH to Authelia** (keep the demoed features). Apiserver issuer URL is rewritten in the
-  kind template; step-ca's `dex` provisioner is renamed `authelia` and its configuration-endpoint repointed.
-  CA stays step-ca, so `dex-ca.pem` mount → rename to an `authelia-ca.pem`/generic name, same chain.
-- **Apiserver integration is currently inert** — no kubectl/kubelogin client is wired and **no RBAC binding
-  references `oidc:` subjects**. Repointing keeps it correct-but-inert; inventing RBAC bindings is a later pass.
-- **Client topology — 5 per-service clients** (retires the accidental Vault↔step-ca client sharing):
-  `vault`, `step-ca`, `grafana-rbr-ver`, `grafana-monitoring` (confidential, each its own secret in `common.sh`)
-  + `kubernetes` (**public/PKCE loopback**, kubelogin shape — no secret).
-- **Password hashes reuse as-is** — Dex stores **bcrypt** (`common.sh:97` `$2a$10$…`); Authelia's `file`
-  provider accepts bcrypt directly in `users_database.yml`. No regeneration; 4 users + groups port verbatim.
-- **Vault `user_claim`: `sub` → `email`** (matches apiserver; one canonical human identity across
-  apiserver+Vault+Grafana). Add `oidc_scopes` so Authelia returns `profile email groups`.
-- **Authelia's own crypto — generate locally (Dex pattern):** JWKS RSA keypair into gitignored
-  `authelia/secrets/`; session/storage-encryption/OIDC-HMAC secrets are `common.sh` defaults via `envsubst`.
-  **No Vault dependency on Authelia's boot path.** Mirror `dex/.gitignore` (`tls/`, rendered config ignored;
-  only `.tpl` + codemap tracked).
-- **Session cookie domain = `<HOST_IP_DASHED>.sslip.io`** (the portal's own parent). OIDC auth-code flow never
-  uses Authelia's cookie at the client, so SSO works even though the Grafanas live on the *Traefik* IP domain.
-  Bare `sslip.io` would be wrong (too broad).
-- **Claims policy (forced):** one Authelia claims policy attaches `email`+`groups`; every client requests
-  `openid profile email groups`.
-
-### F2. Item 10 — CORRECTED: the Barman plugin exposes NO metrics
-Verified against the plugin manifest (trunk) **and** the `plugin-barman-cloud` chart (main): deployment args are
-only `--server-address=:9090 --leader-elect` (gRPC mTLS port), **no `--metrics-bind-address`, no metrics port,
-no metrics Service**, and the chart has **zero** metrics/serviceMonitor keys. The `barman-plugin-metrics-reader`
-ClusterRole is inert kubebuilder scaffolding. → **"Add a Barman monitor" is impossible/moot.**
-- **Backup health is already scraped** via the cluster-wildcard PodMonitor on CNPG instance `:9187`
-  (`cnpg_collector_last_available_backup_timestamp`, `cnpg_collector_first_recoverability_point`,
-  `cnpg_collector_last_failed_backup_timestamp`).
-- **Decision — item 10 delivers backup observability + dedupe:** (a) backup **alert rules** (last-available-backup
-  age, last-failed-backup fired, recoverability-point gap) + a Grafana **backup panel** on the existing
-  `cnpg_collector_*` series; (b) remove the redundant per-region `demo/` PodMonitors + the `demo/setup.sh:141-146`
-  apply block; `monitoring/setup.sh` becomes single owner. **No new scrape target for Barman.**
-
-### F3. seaweedfs S3 identity (was §E-1) — RESOLVED
-seaweedfs S3 runs anonymous-open unless given an `-s3.config` identities JSON, so we write one regardless.
-**Dedicated, bucket-scoped `loki` identity** (Read/Write/List/Tagging on the `loki` bucket only); new
-`SEAWEEDFS_*`/`LOKI_S3_*` vars in `common.sh`; `mc` bucket-init (`--insecure`) + Loki Helm `--set` use them.
-Delivers the storage isolation that justifies the second store. (Today all stores share `RUSTFS_ROOT_*`.)
-
-### F4. Encryption-key lifecycle (was §E-4) — RESOLVED
-`kind delete` wipes etcd, so the secretbox key has no decrypt value post-teardown. **Fresh key per `setup.sh`**
-into gitignored `k8s/encryption/secretbox.key` (0600) before `kind create`; **`teardown.sh` deletes it.**
-Rotation (secretbox multi-key) + backup are explicit **non-goals** (ephemeral playground).
-
-### F5. Revocation exporter (was §E-6) — RESOLVED
-**One fully-custom Python host container** (`cryptography` for cert parsing + `requests` for CRL/OCSP) probing
-each external endpoint's served cert for expiry and checking revocation vs step-ca CRL + Vault OCSP/CRL.
-Single coherent schema (`cert_not_after_seconds`, `cert_revoked`, `crl_next_update_seconds`). Bridged via the
-selectorless **`Service` + hand-written `Endpoints` → `${HOST_IP}:port`** pattern (cf. `step-ca/traefik/service.yaml.tpl`),
-scraped by a **ServiceMonitor**.
-
-### F6. Cross-cutting correction — `k8s/kind-cluster.yaml.tpl` is edited by THREE items now
-Items **1 (Calico `disableDefaultCNI`)**, **2 (encryption kubeadm patch)**, and **6 (apiserver OIDC issuer)** all
-mutate the control-plane node spec. The §D sequencing line was wrong to file Authelia as "external bootstrap only":
-**Authelia's issuer must exist before `kind create`** (its URL is baked into the template), exactly like Dex today.
-
----
-
-## E. Open Questions — REMAINING after round 2
-
-Resolved in §F: **1, 2, 4, 6, 7, 9** (and item-10 reframed). Still open:
-
-3. **Exact Calico allow-list.** Enumerate every rule with port + pod/namespace selector; confirm no
-   accidental block of calico-system / metallb-system / apiserver health. (Derivable from scrape targets in §D —
-   implementation enumeration, not a decision.)
-5. **step-ca CRL serving + reachability.** CRL needs `insecureAddress` (HTTP) — port allocation vs the
-   existing 8443; CDP URL must be a name clients **and** the exporter can resolve (host sslip.io). HTTP
-   CRL delivery is acceptable (CRLs are signed).
-8. **Teardown / idempotency.** `teardown.sh` must remove seaweedfs + Authelia (replacing dex-teardown) +
-   revocation-exporter + the encryption key; re-running `setup.sh` must be idempotent for every new piece.
-10b. **MetalLB + Calico coexistence detail.** Confirm L2 pool ownership stays with MetalLB, not the Calico
-    `Installation`.
+### Non-goals (explicit)
+- Secretbox key rotation (multi-key) and key backup.
+- RBAC bindings for `oidc:` subjects / a wired kubelogin client (apiserver OIDC stays inert this pass).
+- gRPC mTLS mesh for seaweedfs (single process).
+- EU + US regions.
