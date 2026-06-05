@@ -61,7 +61,7 @@ ${CONTAINER_PROVIDER} exec \
     --password-file /home/step/secrets/password \
     --ca-url "https://${STEP_CA_HOST}:${STEP_CA_PORT}" \
     --root /home/step/certs/root_ca.crt \
-    --san "dex" --san "localhost" \
+    --san "${DEX_HOST}" --san "dex" --san "localhost" \
     --san "${HOST_IP}" --san "127.0.0.1" \
     --not-after 720h --force
 
