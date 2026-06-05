@@ -4,7 +4,7 @@
   "crt": "/home/step/certs/intermediate_ca.crt",
   "key": "/home/step/secrets/intermediate_ca_key",
   "address": ":${STEP_CA_PORT}",
-  "dnsNames": ["${STEP_CA_DNS_NAME}", "localhost", "step-ca"],
+  "dnsNames": ["${STEP_CA_DNS_NAME}", "localhost", "step-ca", "${STEP_CA_HOST}"],
   "logger": {"format": "text"},
   "db": {
     "type": "badgerv2",

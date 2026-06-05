@@ -67,4 +67,14 @@ if [ -f "${VAULT_DIR}/.approle_secret_id" ]; then
     sudo rm -f "${VAULT_DIR}/.approle_secret_id"
 fi
 
+if [ -f "${VAULT_DIR}/.eso_local_role_id" ]; then
+    echo "🧹 Removing .eso_local_role_id file..."
+    sudo rm -f "${VAULT_DIR}/.eso_local_role_id"
+fi
+
+if [ -f "${VAULT_DIR}/.eso_local_secret_id" ]; then
+    echo "🧹 Removing .eso_local_secret_id file..."
+    sudo rm -f "${VAULT_DIR}/.eso_local_secret_id"
+fi
+
 echo "✅ Vault teardown complete!"

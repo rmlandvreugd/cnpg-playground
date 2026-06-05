@@ -4,11 +4,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
-VAULT_DIR="${GIT_REPO_ROOT}/vault"
 DEX_DIR="${GIT_REPO_ROOT}/dex"
 DEX_CONFIG_DIR="${DEX_DIR}/config"
 DEX_TLS_DIR="${DEX_DIR}/tls"
-STEP_CA_PKI_DIR="${GIT_REPO_ROOT}/step-ca/pki"
+STEP_CA_DIR="${GIT_REPO_ROOT}/step-ca"
+STEP_CA_PKI_DIR="${STEP_CA_DIR}/pki"
+STEP_CA_SECRETS_DIR="${STEP_CA_DIR}/secrets"
 
 echo "🚀 Setting up Dex OIDC container..."
 
@@ -16,17 +17,7 @@ HOST_IP=$(hostname -I | awk '{print $1}')
 HOST_IP_DASHED=$(echo "$HOST_IP" | tr '.' '-')
 DEX_HOST="dex.${HOST_IP_DASHED}.sslip.io"
 VAULT_HOST="vault.${HOST_IP_DASHED}.sslip.io"
-
-ROOT_TOKEN=$(sudo cat "${VAULT_DIR}/.root_token")
-
-_vcmd() {
-    ${CONTAINER_PROVIDER} exec \
-        -e VAULT_ADDR="https://127.0.0.1:${VAULT_PORT}" \
-        -e VAULT_CACERT=/vault/certs/vault-ca.pem \
-        -e VAULT_TOKEN="${ROOT_TOKEN}" \
-        "${VAULT_CONTAINER_NAME}" \
-        vault "$@"
-}
+STEP_CA_HOST="step-ca.${HOST_IP_DASHED}.sslip.io"
 
 # Remove existing container and stale certs
 if ${CONTAINER_PROVIDER} ps -a --format '{{.Names}}' | grep -q "^${DEX_CONTAINER_NAME}$"; then
@@ -50,25 +41,46 @@ else
     sudo setfacl -R -d -m u:1001:rwx "${DEX_DIR}"
 fi
 
-# Issue TLS cert for Dex from Vault PKI (dex-server role)
-echo "📜 Issuing Dex TLS certificate from Vault PKI..."
-CERT_JSON=$(_vcmd write -format=json pki_int/issue/dex-server \
-    common_name="${DEX_HOST}" \
-    alt_names="dex,localhost" \
-    ip_sans="${HOST_IP},127.0.0.1")
+# Issue TLS cert for Dex from step-ca intermediate via X5C provisioner.
+# Dex is an external service (host container), so its cert is signed by the
+# step-ca intermediate CA rather than Vault PKI (which is for in-cluster workloads).
+echo "📜 Issuing Dex TLS certificate from step-ca (X5C provisioner)..."
 
-jq -r '.data.certificate'            <<< "${CERT_JSON}" | sudo tee "${DEX_TLS_DIR}/dex.crt"      > /dev/null
-jq -r '.data.private_key'            <<< "${CERT_JSON}" | sudo tee "${DEX_TLS_DIR}/dex.key"      > /dev/null
-jq -r '.data.issuing_ca'             <<< "${CERT_JSON}" | sudo tee "${DEX_TLS_DIR}/ca.crt"       > /dev/null
-# Build the full CA chain: Vault intermediate + step-ca intermediate + step-ca root
-# (Vault's ca_chain only includes the Vault intermediate; clients need the full chain)
-jq -r '.data.ca_chain | join("\n")'  <<< "${CERT_JSON}" | sudo tee "${DEX_TLS_DIR}/ca-chain.pem" > /dev/null
-sudo bash -c "cat '${STEP_CA_PKI_DIR}/intermediate_ca.crt' '${STEP_CA_PKI_DIR}/root_ca.crt' >> '${DEX_TLS_DIR}/ca-chain.pem'"
-# Also append the step-ca chain to ca.crt for completeness
-sudo bash -c "cat '${STEP_CA_PKI_DIR}/intermediate_ca.crt' '${STEP_CA_PKI_DIR}/root_ca.crt' >> '${DEX_TLS_DIR}/ca.crt'"
-# Dex serves tlsCert as the server certificate; include the full chain so clients
-# can verify the complete path: leaf → Vault intermediate → step-ca intermediate → step-ca root
+# Copy intermediate CA cert+key into step-ca container for X5C signing
+${CONTAINER_PROVIDER} cp "${STEP_CA_PKI_DIR}/intermediate_ca.crt" "${STEP_CA_CONTAINER_NAME}:/tmp/intermediate_ca.crt"
+${CONTAINER_PROVIDER} cp "${STEP_CA_SECRETS_DIR}/intermediate_ca_key" "${STEP_CA_CONTAINER_NAME}:/tmp/intermediate_ca_key"
+
+${CONTAINER_PROVIDER} exec \
+    -e STEPPATH=/home/step \
+    "${STEP_CA_CONTAINER_NAME}" \
+    step ca certificate "${DEX_HOST}" /tmp/dex-cert.pem /tmp/dex-key.pem \
+    --provisioner x5c-provisioner \
+    --x5c-cert /tmp/intermediate_ca.crt \
+    --x5c-key /tmp/intermediate_ca_key \
+    --x5c-chain /tmp/intermediate_ca.crt \
+    --password-file /home/step/secrets/password \
+    --ca-url "https://${STEP_CA_HOST}:${STEP_CA_PORT}" \
+    --root /home/step/certs/root_ca.crt \
+    --san "dex" --san "localhost" \
+    --san "${HOST_IP}" --san "127.0.0.1" \
+    --not-after 720h --force
+
+# Copy cert and key from step-ca container to host
+${CONTAINER_PROVIDER} cp "${STEP_CA_CONTAINER_NAME}:/tmp/dex-cert.pem" "${DEX_TLS_DIR}/dex.crt"
+${CONTAINER_PROVIDER} cp "${STEP_CA_CONTAINER_NAME}:/tmp/dex-key.pem" "${DEX_TLS_DIR}/dex.key"
+
+# Build the CA chain: step-ca intermediate + step-ca root
+# (Dex's leaf cert is signed by step-ca intermediate, so clients need the
+# intermediate + root to verify the full chain)
+sudo cat "${STEP_CA_PKI_DIR}/intermediate_ca.crt" "${STEP_CA_PKI_DIR}/root_ca.crt" \
+    | sudo tee "${DEX_TLS_DIR}/ca-chain.pem" > /dev/null
+sudo cat "${STEP_CA_PKI_DIR}/intermediate_ca.crt" "${STEP_CA_PKI_DIR}/root_ca.crt" \
+    | sudo tee "${DEX_TLS_DIR}/ca.crt" > /dev/null
+# Append CA chain to the leaf cert for full chain verification
 sudo bash -c "cat '${STEP_CA_PKI_DIR}/intermediate_ca.crt' '${STEP_CA_PKI_DIR}/root_ca.crt' >> '${DEX_TLS_DIR}/dex.crt'"
+
+# Clean up intermediate CA key and cert files from step-ca container
+${CONTAINER_PROVIDER} exec "${STEP_CA_CONTAINER_NAME}" rm -f /tmp/intermediate_ca.crt /tmp/intermediate_ca_key /tmp/dex-cert.pem /tmp/dex-key.pem
 
 sudo chmod 644 "${DEX_TLS_DIR}/dex.crt" "${DEX_TLS_DIR}/ca.crt" "${DEX_TLS_DIR}/ca-chain.pem"
 sudo chmod 640 "${DEX_TLS_DIR}/dex.key"

@@ -36,3 +36,10 @@ memory
 # Codemap files (generated per-directory)
 **/codemap.md
 !/codemap.md
+.serena/.gitignore
+.serena/project.yml
+tmp/
+hipocampus.config.json
+SCRATCHPAD.md
+TASK-QUEUE.md
+WORKING.md

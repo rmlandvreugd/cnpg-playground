@@ -117,13 +117,6 @@ _vcmd write pki_int/config/urls \
 
 # --- Issuance roles ---
 echo "📋 Creating PKI roles..."
-_vcmd write pki_int/roles/dex-server \
-    allowed_domains="sslip.io,dex,localhost" \
-    allow_subdomains=true allow_bare_domains=true \
-    allow_ip_sans=true max_ttl=720h \
-    not_before_duration=0s \
-    require_cn=false
-
 _vcmd write pki_int/roles/cluster-certs \
     allowed_domains="sslip.io,cluster.local" \
     allow_subdomains=true allow_bare_domains=true \

@@ -54,22 +54,31 @@ fi
 # Ensure directories exist
 sudo mkdir -p "${VAULT_DATA_DIR}" "${VAULT_LOG_DIR}" "${VAULT_CERT_DIR}"
 
-# --- Request Vault TLS certificate from step-ca ---
-echo "📜 Requesting Vault TLS certificate from step-ca..."
+# --- Request Vault TLS certificate from step-ca via X5C provisioner ---
+echo "📜 Requesting Vault TLS certificate from step-ca (X5C provisioner)..."
 
 HOST_IP=$(hostname -I | awk '{print $1}')
 HOST_IP_DASHED=$(echo "$HOST_IP" | tr '.' '-')
 VAULT_HOST="vault.${HOST_IP_DASHED}.sslip.io"
+STEP_CA_HOST="step-ca.${HOST_IP_DASHED}.sslip.io"
 
-# Request a server TLS cert from step-ca for Vault
-# The cert includes SANs for: Vault's sslip.io hostname, localhost, and the host IP
+# Copy intermediate CA cert+key into step-ca container for X5C signing
+${CONTAINER_PROVIDER} cp "${STEP_CA_PKI_DIR}/intermediate_ca.crt" "${STEP_CA_CONTAINER_NAME}:/tmp/intermediate_ca.crt"
+${CONTAINER_PROVIDER} cp "${STEP_CA_SECRETS_DIR}/intermediate_ca_key" "${STEP_CA_CONTAINER_NAME}:/tmp/intermediate_ca_key"
+
+# Request a server TLS cert from step-ca for Vault using the X5C provisioner.
+# This signs with the step-ca intermediate CA (not the root), producing a shorter
+# chain: leaf → step-ca Int CA 1 → step-ca Root CA.
 ${CONTAINER_PROVIDER} exec \
     -e STEPPATH=/home/step \
     "${STEP_CA_CONTAINER_NAME}" \
     step ca certificate "${VAULT_HOST}" /tmp/vault-cert.pem /tmp/vault-key.pem \
-    --provisioner "${STEP_CA_PROVISIONER_NAME}" \
+    --provisioner x5c-provisioner \
+    --x5c-cert /tmp/intermediate_ca.crt \
+    --x5c-key /tmp/intermediate_ca_key \
+    --x5c-chain /tmp/intermediate_ca.crt \
     --password-file /home/step/secrets/password \
-    --ca-url "https://localhost:${STEP_CA_PORT}" \
+    --ca-url "https://${STEP_CA_HOST}:${STEP_CA_PORT}" \
     --root /home/step/certs/root_ca.crt \
     --san "${VAULT_HOST}" \
     --san "vault" \
@@ -89,8 +98,8 @@ sudo cp "${VAULT_CERT_TMPDIR}/vault-cert.pem" "${VAULT_CERT_DIR}/vault-cert.pem"
 sudo cp "${VAULT_CERT_TMPDIR}/vault-key.pem" "${VAULT_CERT_DIR}/vault-key.pem"
 rm -rf "${VAULT_CERT_TMPDIR}"
 
-# Clean up sensitive key material from step-ca container
-${CONTAINER_PROVIDER} exec "${STEP_CA_CONTAINER_NAME}" rm -f /tmp/vault-cert.pem /tmp/vault-key.pem
+# Clean up intermediate CA key and cert files from step-ca container
+${CONTAINER_PROVIDER} exec "${STEP_CA_CONTAINER_NAME}" rm -f /tmp/intermediate_ca.crt /tmp/intermediate_ca_key /tmp/vault-cert.pem /tmp/vault-key.pem
 
 # Build the CA chain: step-ca root + intermediate
 sudo cat "${STEP_CA_PKI_DIR}/root_ca.crt" "${STEP_CA_PKI_DIR}/intermediate_ca.crt" \

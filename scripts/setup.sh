@@ -215,7 +215,8 @@ EOF
         --set app.webhook.tls.helmCert.enabled=true \
         --set secretTargets.enabled=true \
         --set "secretTargets.authorizedSecrets[0]=vault-pki-bundle" \
-        --set "secretTargets.authorizedSecrets[1]=step-ca-bundle"
+        --set "secretTargets.authorizedSecrets[1]=step-ca-bundle" \
+        --set "secretTargets.authorizedSecrets[2]=step-ca-external-bundle"
 
     # Wait for trust-manager webhook to be ready before creating Bundle resources
     echo "⏳ Waiting for trust-manager webhook to be ready..."
@@ -259,6 +260,13 @@ ${STEP_CA_INT_CERT}" \
     echo "⏳ Waiting for trust-manager Bundles to sync..."
     kubectl --context "${CONTEXT_NAME}" wait --for=condition=Synced bundle/step-ca-bundle --timeout=120s
     kubectl --context "${CONTEXT_NAME}" wait --for=condition=Synced bundle/vault-pki-bundle --timeout=120s
+
+    # Apply step-ca-external-bundle for verifying external service certs
+    # (signed by step-ca intermediate, not Vault PKI)
+    echo "📋 Applying step-ca-external trust-manager Bundle..."
+    kubectl apply --context "${CONTEXT_NAME}" -f \
+        "${GIT_REPO_ROOT}/step-ca/trust-manager/bundle-external.yaml"
+    kubectl --context "${CONTEXT_NAME}" wait --for=condition=Synced bundle/step-ca-external-bundle --timeout=60s
 
     # Secrets in cert-manager namespace
     echo "🔑 Creating cert-manager secrets for Vault PKI..."
@@ -358,13 +366,12 @@ HOST_IP=$(hostname -I | awk '{print $1}')
 HOST_IP_DASHED=$(echo "$HOST_IP" | tr '.' '-')
 DEX_HOST="dex.${HOST_IP_DASHED}.sslip.io"
 
-# Add Vault's intermediate CA to step-ca's trust store so step-ca can verify
-# Dex's TLS cert (which is signed by Vault's intermediate → step-ca intermediate → step-ca root)
-# The container runs as UID 1000, so we copy out, append, and copy back as root
-echo "🔐 Adding Vault intermediate CA to step-ca trust store..."
+# Add step-ca's own intermediate CA to its trust store so step-ca can verify
+# Dex's TLS cert (which is now signed by step-ca's intermediate CA via X5C provisioner)
+echo "🔐 Adding step-ca intermediate CA to step-ca trust store (for Dex OIDC)..."
 CA_CERTS_TMPFILE=$(mktemp)
 ${CONTAINER_PROVIDER} cp "${STEP_CA_CONTAINER_NAME}:/etc/ssl/certs/ca-certificates.crt" "${CA_CERTS_TMPFILE}"
-sudo cat "${GIT_REPO_ROOT}/vault/pki/intermediate.crt" >> "${CA_CERTS_TMPFILE}"
+sudo cat "${GIT_REPO_ROOT}/step-ca/pki/intermediate_ca.crt" >> "${CA_CERTS_TMPFILE}"
 ${CONTAINER_PROVIDER} cp "${CA_CERTS_TMPFILE}" "${STEP_CA_CONTAINER_NAME}:/tmp/ca-certificates.crt"
 ${CONTAINER_PROVIDER} exec -u 0 "${STEP_CA_CONTAINER_NAME}" sh -c 'cp /tmp/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt && rm /tmp/ca-certificates.crt'
 rm -f "${CA_CERTS_TMPFILE}"

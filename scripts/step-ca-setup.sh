@@ -184,6 +184,7 @@ basicConstraints = critical, CA:TRUE, pathlen:1
 keyUsage = critical, digitalSignature, keyCertSign, cRLSign
 subjectKeyIdentifier = hash
 authorityKeyIdentifier = keyid:always, issuer
+subjectAltName = DNS:localhost, DNS:step-ca, DNS:${STEP_CA_HOST}
 EOF
 # Generate a CSR from the existing intermediate key, then sign with root CA + pathlen:1
 INTERMEDIATE_CSR=$(mktemp)
@@ -279,14 +280,16 @@ ${CONTAINER_PROVIDER} exec \
     "${STEP_CA_CONTAINER_NAME}" \
     step ca provisioner add x5c-provisioner --type X5C \
     --x5c-roots /home/step/certs/root_ca.crt \
+    --x509-max-dur=2160h \
+    --x509-default-dur=720h \
     --password-file /home/step/secrets/password \
     --ca-config /home/step/config/ca.json \
     || { echo "❌ Error: Failed to add X5C provisioner."; exit 1; }
 
 # Apply ca.json overrides (CRL, TLS settings) from template
 echo "🔧 Applying ca.json overrides..."
-STEP_CA_PORT="${STEP_CA_PORT}" STEP_CA_DNS_NAME="${STEP_CA_DNS_NAME}" \
-    envsubst '${STEP_CA_PORT} ${STEP_CA_DNS_NAME}' \
+STEP_CA_PORT="${STEP_CA_PORT}" STEP_CA_DNS_NAME="${STEP_CA_DNS_NAME}" STEP_CA_HOST="${STEP_CA_HOST}" \
+    envsubst '${STEP_CA_PORT} ${STEP_CA_DNS_NAME} ${STEP_CA_HOST}' \
     < "${STEP_CA_DIR}/config/ca.json.tpl" \
     | ${CONTAINER_PROVIDER} exec -i "${STEP_CA_CONTAINER_NAME}" \
         sh -c 'cat > /home/step/config/ca.json.override'

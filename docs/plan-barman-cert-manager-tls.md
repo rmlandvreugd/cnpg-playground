@@ -140,6 +140,8 @@ Document the new directory.
 | **Service annotations** | Unchanged — `cnpg.io/pluginClientSecret: barman-cloud-client-tls` and `cnpg.io/pluginServerSecret: barman-cloud-server-tls` |
 | **Self-signed Issuer** | Still created by helm chart but unused — harmless |
 
+> **Note:** Barman Cloud Plugin certs use the `vault-pki` ClusterIssuer, which is correct per the PKI split: Vault PKI is for in-cluster workloads only. External services (Vault, Dex) use step-ca intermediate CA directly via the X5C provisioner.
+
 ## Future Enhancement: ObjectStore `endpointCA`
 
 Currently all ObjectStore CRs use `http://` endpoints (no TLS). A follow-up could add:

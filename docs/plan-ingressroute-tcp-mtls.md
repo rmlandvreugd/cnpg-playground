@@ -905,10 +905,11 @@ Use PgBouncer with TLS on a separate port for internal traffic, removing the pla
 
 | Decision                                           | Rationale                                                                                                                |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| All certs from Vault PKI                           | Single trust chain; step-ca reserved for external services                                                               |
+| All certs from Vault PKI                           | Single trust chain; step-ca reserved for external services (Vault, Dex)                                                  |
 | trust-manager distributes CA chains                | Single source of truth; automatic sync to all namespaces; both ConfigMap and Secret targets                              |
 | `vault-pki-bundle` includes step-ca roots          | Vault PKI Int CA 2 chains to step-ca Int CA 1 → Root; clients need the full chain to verify                              |
 | `step-ca-bundle` also gets Secret target           | Consistency; available as Secret for any component that needs step-ca trust anchor                                       |
+| `step-ca-external-bundle` for external services    | Same CA content as `step-ca-bundle` (Root + Int CA 1) but semantically distinct; used to verify certs signed by step-ca intermediate for external services (Vault, Dex) |
 | `vault-pki-int-ca` Secret in cert-manager ns       | trust-manager can only read Secrets in its trust namespace (`cert-manager`); this stores the Vault PKI Intermediate CA 2 |
 | CNPG/PgBouncer reference `vault-pki-bundle` Secret | Contains full chain (Root + Int CA 1 + Int CA 2); works for both server and client verification                          |
 | Traefik TLSOption references `vault-pki-bundle`    | Same full chain; trust-manager creates this Secret in the `traefik` namespace automatically                              |

@@ -41,7 +41,6 @@ sudo rm -rf "${STEP_CA_DIR}/pki"
 sudo rm -rf "${STEP_CA_DIR}/secrets"
 sudo rm -rf "${STEP_CA_DIR}/db"
 mkdir -p "${STEP_CA_DIR}/pki" "${STEP_CA_DIR}/secrets"
-touch "${STEP_CA_DIR}/pki/.gitkeep" "${STEP_CA_DIR}/secrets/.gitkeep"
 
 # Clean up generated config files (keep templates)
 sudo rm -f "${STEP_CA_DIR}/config/ca.json"

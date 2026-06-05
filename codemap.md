@@ -63,6 +63,11 @@ PKI Trust Chain:
                                                   ↳ Traefik dashboard cert
                                                   ↳ cluster-certs (via cert-manager)
                                                   ↳ mTLS client certs (via cert-manager)
+                                                  ↳ mTLS server certs (via cert-manager)
+
+mTLS Access Patterns:
+  TLS Passthrough: Client → Traefik (SNI routing) → PostgreSQL (client verifies server, server verifies client)
+  TLS Termination:  Client → Traefik (terminates TLS, verifies client cert via vault-pki-bundle) → PostgreSQL
 ```
 
 ## Setup Lifecycle
@@ -78,9 +83,11 @@ PKI Trust Chain:
 | `scripts/` | Lifecycle manager and bootstrap orchestrator for the multi-region CNPG playground | [View Map](scripts/codemap.md) |
 | `demo/` | Demo scenarios for distributed PostgreSQL topology across regions | [View Map](demo/codemap.md) |
 | `demo/yaml/` | Central YAML repository for region-keyed CNPG manifests | [View Map](demo/yaml/codemap.md) |
+| `demo/yaml/barman-cloud/` | Barman Cloud Plugin mTLS certificates (vault-pki instead of self-signed) | [View Map](demo/yaml/barman-cloud/codemap.md) |
 | `demo/yaml/eu/` | Primary pg-eu cluster with Barman Cloud Plugin | [View Map](demo/yaml/eu/codemap.md) |
 | `demo/yaml/us/` | DR pg-us cluster bootstrapping from EU primary | [View Map](demo/yaml/us/codemap.md) |
 | `demo/yaml/local/` | **Primary learning environment** — single-region standalone demo with ESO, custom metrics, and PgBouncer | [View Map](demo/yaml/local/codemap.md) |
+| `demo/yaml/local/mtls/` | mTLS certificates and Traefik IngressRoutes for PostgreSQL (passthrough + termination modes) | [View Map](demo/yaml/local/mtls/codemap.md) |
 | `demo/yaml/object-stores/` | ObjectStore CRs for S3-compatible backup storage | [View Map](demo/yaml/object-stores/codemap.md) |
 | `demo/yaml/self-service/` | Full self-service stack: Vault+ESO+CNPG+Traefik+pgAdmin+Grafana | [View Map](demo/yaml/self-service/codemap.md) |
 | `demo/yaml/self-service/rbr-ver/` | Application namespace for self-service demo | [View Map](demo/yaml/self-service/rbr-ver/codemap.md) |
@@ -92,12 +99,16 @@ PKI Trust Chain:
 | `traefik/` | Traefik v3 ingress controller Helm values and IngressRoutes | [View Map](traefik/codemap.md) |
 | `step-ca/` | SmallStep step-ca Root CA — 3-tier PKI hierarchy root, trust anchor for all playground TLS | [View Map](step-ca/codemap.md) |
 | `step-ca/config/` | step-ca configuration template (ca.json.tpl) with CRL, TLS, and provisioner overrides | [View Map](step-ca/config/codemap.md) |
+| `step-ca/db/` | BadgerDB v2 storage for step-ca certificate database (runtime, ephemeral) | [View Map](step-ca/db/codemap.md) |
+| `step-ca/pki/` | Root and intermediate CA certificates (runtime, ephemeral) | [View Map](step-ca/pki/codemap.md) |
+| `step-ca/secrets/` | CA private keys and passwords (runtime, ephemeral) | [View Map](step-ca/secrets/codemap.md) |
 | `step-ca/traefik/` | K8s Service/Endpoints wiring step-ca into the cluster | [View Map](step-ca/traefik/codemap.md) |
 | `step-ca/trust-manager/` | trust-manager Bundle resource template distributing step-ca root+intermediate to all namespaces | [View Map](step-ca/trust-manager/codemap.md) |
 | `vault/` | HashiCorp Vault (non-dev mode) — secrets, 3-tier PKI, and auth, signed by step-ca | [View Map](vault/codemap.md) |
 | `vault/config/` | Vault server HCL configuration | [View Map](vault/config/codemap.md) |
 | `vault/eso/` | External Secrets Operator ClusterSecretStore templates | [View Map](vault/eso/codemap.md) |
 | `vault/cert-manager/` | cert-manager ClusterIssuer templates for Vault PKI | [View Map](vault/cert-manager/codemap.md) |
+| `vault/trust-manager/` | trust-manager Bundle combining step-ca roots + Vault PKI intermediate for mTLS verification | [View Map](vault/trust-manager/codemap.md) |
 | `vault/traefik/` | K8s Service/Endpoints wiring Vault into the cluster | [View Map](vault/traefik/codemap.md) |
 | `dex/` | Dex OIDC identity provider configuration | [View Map](dex/codemap.md) |
 | `dex/config/` | Dex server configuration YAML and templates | [View Map](dex/config/codemap.md) |
@@ -198,6 +209,7 @@ PKI Trust Chain:
 |----------|-----------|---------|
 | ClusterIssuer vault-pki | cert-manager | Issues in-cluster TLS certs via Vault PKI |
 | Bundle step-ca-bundle | trust-manager | Distributes step-ca root+intermediate CA to all namespaces |
+| Bundle vault-pki-bundle | trust-manager | Distributes step-ca root+intermediate + Vault PKI intermediate CA to all namespaces (used for mTLS client verification) |
 | ClusterSecretStore vault-approle | external-secrets | Vault AppRole auth for ESO secret sync |
 | ExternalSecret pg-local-superuser | demo-local-db | Syncs superuser creds from Vault |
 | ExternalSecret pg-local-app | demo-local-db | Syncs app user creds from Vault |
@@ -241,7 +253,7 @@ PKI Trust Chain:
 ## Key Configuration Patterns
 
 - **3-Tier PKI Hierarchy**: step-ca Root CA → step-ca Intermediate CA → Vault Intermediate CA → leaf certs. step-ca is the trust anchor; Vault's intermediate is signed by step-ca's intermediate via openssl on the host (step CLI needs TTY). trust-manager distributes the step-ca root+intermediate bundle to all namespaces.
-- **Split mTLS**: Vault issues in-cluster mTLS client certs (role `mtls-client`, 168h TTL) while step-ca issues external-facing certs directly (e.g., Vault's own TLS cert).
+- **Split mTLS**: Vault issues in-cluster mTLS client certs (role `mtls-client`, 168h TTL) while step-ca issues external-facing certs directly (e.g., Vault's own TLS cert). Two PostgreSQL access patterns: TLS passthrough (client holds cert, Traefik forwards encrypted stream) and TLS termination (Traefik terminates TLS, verifies client cert against `vault-pki-bundle`, proxies to PostgreSQL).
 - **Three First-Class Regions**: `local` (primary learning environment, single-region standalone), `eu` (primary in multi-region setup), `us` (DR replica bootstrapping from EU). `local` is not in the default `REGIONS=("eu" "us")` but is fully supported — pass `local` as an argument to `scripts/setup.sh`
 - **Distributed Topology**: In multi-region mode, pg-eu is primary, pg-us bootstraps from pg-eu via recovery, continuous backup via Barman Cloud to RustFS
 - **Self-Service Demo**: Only runs in the `local` region. Vault ESO injects credentials, Vault Database engine provides dynamic creds, Dex provides OAuth, Traefik TCP IngressRoute exposes PostgreSQL
