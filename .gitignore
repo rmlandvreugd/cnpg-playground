@@ -43,3 +43,8 @@ hipocampus.config.json
 SCRATCHPAD.md
 TASK-QUEUE.md
 WORKING.md
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key

@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "cnpg_playground",
+  "project_id": "29f2de67-291f-4c97-ad34-d9ad779d1a8e"
+}
