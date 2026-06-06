@@ -5,9 +5,14 @@ metadata:
 spec:
   provider:
     vault:
-      server: "http://vault.vault.svc.cluster.local:${VAULT_HTTP_PORT}"
+      server: "https://vault.vault.svc.cluster.local:8200"
       path: "cnpg"
       version: "v2"
+      caProvider:
+        type: ConfigMap
+        name: vault-pki-bundle
+        namespace: ${ESO_NAMESPACE}
+        key: ca-certificates.crt
       auth:
         appRole:
           path: "approle"
