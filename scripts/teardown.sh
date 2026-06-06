@@ -95,5 +95,13 @@ else
     echo "🔷 SeaweedFS data volume '${SEAWEEDFS_CONTAINER_NAME}' not found, skipping."
 fi
 
+# Tear down revocation exporter (host container, no volume)
+if $CONTAINER_PROVIDER ps -a --format '{{.Names}}' | grep -q "^${REVOCATION_EXPORTER_CONTAINER_NAME}$"; then
+    echo "🗑️  Removing revocation exporter container '${REVOCATION_EXPORTER_CONTAINER_NAME}'..."
+    $CONTAINER_PROVIDER rm -f "${REVOCATION_EXPORTER_CONTAINER_NAME}" > /dev/null
+else
+    echo "🔷 Revocation exporter container '${REVOCATION_EXPORTER_CONTAINER_NAME}' not found, skipping."
+fi
+
 echo ""
 echo "✅ Cleanup complete!"

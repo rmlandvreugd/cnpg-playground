@@ -19,3 +19,4 @@ resources:
   - grafana_dashboard_cnpg_custom.yaml
   - grafana_dashboard_cnpg_backup.yaml
   - grafana_dashboard_traefik_traces.yaml
+  - grafana_dashboard_pki.yaml

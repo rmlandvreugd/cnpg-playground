@@ -1,0 +1,14 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: revocation-exporter
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: revocation-exporter
+  endpoints:
+    - port: metrics
+      path: /metrics
+      scheme: http
+      interval: 60s

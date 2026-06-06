@@ -1,0 +1,173 @@
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: pki-dashboard
+  namespace: grafana
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: "grafana"
+  json: |
+    {
+      "title": "PKI Certificate Health",
+      "uid": "pki-health",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "1m",
+      "time": {"from": "now-6h", "to": "now"},
+      "panels": [
+        {
+          "id": 1,
+          "title": "Certificate Expiry (days remaining)",
+          "type": "table",
+          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "red", "value": null},
+                  {"color": "orange", "value": 2},
+                  {"color": "yellow", "value": 7},
+                  {"color": "green", "value": 30}
+                ]
+              },
+              "custom": {"displayMode": "color-background"}
+            },
+            "overrides": [
+              {
+                "matcher": {"id": "byName", "options": "Days Remaining"},
+                "properties": [
+                  {"id": "unit", "value": "d"},
+                  {"id": "decimals", "value": 1},
+                  {"id": "custom.displayMode", "value": "color-background"}
+                ]
+              }
+            ]
+          },
+          "options": {
+            "sortBy": [{"displayName": "Days Remaining", "desc": false}]
+          },
+          "targets": [
+            {
+              "expr": "(cert_not_after_seconds - time()) / 86400",
+              "legendFormat": "{{endpoint}} / {{common_name}}",
+              "instant": true,
+              "refId": "A"
+            }
+          ],
+          "transformations": [
+            {"id": "labelsToFields", "options": {"mode": "columns"}},
+            {
+              "id": "organize",
+              "options": {
+                "renameByName": {"Value": "Days Remaining", "endpoint": "Endpoint", "common_name": "Common Name"}
+              }
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "Revocation Status",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 12, "x": 0, "y": 8},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "red", "value": 1}
+                ]
+              },
+              "mappings": [
+                {"type": "value", "options": {"0": {"text": "OK"}, "1": {"text": "REVOKED"}}}
+              ]
+            }
+          },
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background"},
+          "targets": [
+            {
+              "expr": "cert_revoked",
+              "legendFormat": "{{endpoint}}",
+              "instant": true,
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "CRL Freshness (hours until NextUpdate)",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 12, "x": 12, "y": 8},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "h",
+              "decimals": 1,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "red", "value": null},
+                  {"color": "orange", "value": 0},
+                  {"color": "yellow", "value": 4},
+                  {"color": "green", "value": 8}
+                ]
+              }
+            }
+          },
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background"},
+          "targets": [
+            {
+              "expr": "(crl_next_update_seconds - time()) / 3600",
+              "legendFormat": "{{crl_url}}",
+              "instant": true,
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "title": "Probe Success",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 24, "x": 0, "y": 12},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "red", "value": null},
+                  {"color": "green", "value": 1}
+                ]
+              },
+              "mappings": [
+                {"type": "value", "options": {"0": {"text": "DOWN"}, "1": {"text": "UP"}}}
+              ]
+            }
+          },
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background"},
+          "targets": [
+            {
+              "expr": "cert_probe_success",
+              "legendFormat": "{{endpoint}}",
+              "instant": true,
+              "refId": "A"
+            }
+          ]
+        }
+      ],
+      "templating": {
+        "list": [
+          {
+            "name": "datasource",
+            "type": "datasource",
+            "pluginId": "prometheus",
+            "label": "Datasource",
+            "hide": 0
+          }
+        ]
+      }
+    }

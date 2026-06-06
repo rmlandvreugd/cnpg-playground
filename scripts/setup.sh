@@ -587,6 +587,39 @@ for target_region in "${REGIONS[@]}"; do
     done
 done
 
+# --- Revocation Exporter (host container, --network host) ---
+echo
+echo "=================================================="
+echo "🔍 Building + starting revocation exporter..."
+echo "=================================================="
+${CONTAINER_PROVIDER} build \
+    -t "${REVOCATION_EXPORTER_IMAGE}" \
+    "${GIT_REPO_ROOT}/revocation-exporter/"
+
+# Build comma-separated ENDPOINTS: step-ca, vault, seaweedfs, one rustfs per region
+REVOC_ENDPOINTS="step-ca:localhost:${STEP_CA_PORT},vault:localhost:${VAULT_PORT},seaweedfs:localhost:${SEAWEEDFS_S3_PORT}"
+for region in "${REGIONS[@]}"; do
+    port="${objectstore_ports[${region}]}"
+    REVOC_ENDPOINTS="${REVOC_ENDPOINTS},rustfs-${region}:localhost:${port}"
+done
+
+# Stop any previous instance before starting a fresh one
+${CONTAINER_PROVIDER} rm -f "${REVOCATION_EXPORTER_CONTAINER_NAME}" > /dev/null 2>&1 || true
+
+${CONTAINER_PROVIDER} run \
+    --name "${REVOCATION_EXPORTER_CONTAINER_NAME}" -d \
+    --network host \
+    --restart unless-stopped \
+    -v "${GIT_REPO_ROOT}/step-ca/pki/root_ca.crt:/etc/revocation-exporter/ca-bundle.crt:ro" \
+    -e "ENDPOINTS=${REVOC_ENDPOINTS}" \
+    -e "CA_BUNDLE=/etc/revocation-exporter/ca-bundle.crt" \
+    -e "PORT=${REVOCATION_EXPORTER_PORT}" \
+    -e "SCRAPE_INTERVAL=60" \
+    "${REVOCATION_EXPORTER_IMAGE}"
+
+echo "✅ Revocation exporter running on host:${REVOCATION_EXPORTER_PORT}"
+echo "   Endpoints: ${REVOC_ENDPOINTS}"
+
 # --- Final Instructions ---
 echo
 # Display information using the info script

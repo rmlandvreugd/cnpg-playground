@@ -285,6 +285,19 @@ fi
             -f "${GIT_REPO_ROOT}/monitoring/cnpg/cnpg-backup-alerts.yaml"
     fi
 
+    # Wire revocation-exporter (host container) into monitoring namespace — hub only
+    if [[ "${region}" == "${HUB_REGION}" ]]; then
+        echo "🔍 Wiring revocation exporter into monitoring namespace..."
+        HOST_IP=$(hostname -I | awk '{print $1}')
+        HOST_IP="${HOST_IP}" envsubst '${HOST_IP}' \
+            < "${GIT_REPO_ROOT}/revocation-exporter/k8s/service.yaml.tpl" \
+            | kubectl --context "${CONTEXT_NAME}" apply -f -
+        kubectl --context "${CONTEXT_NAME}" apply \
+            -f "${GIT_REPO_ROOT}/revocation-exporter/k8s/servicemonitor.yaml" \
+            -f "${GIT_REPO_ROOT}/revocation-exporter/k8s/prometheusrule.yaml"
+        echo "✅ Revocation exporter monitoring wired"
+    fi
+
     if TRAEFIK_LB_IP=$(get_traefik_lb_ip "${CONTEXT_NAME}" 30); then
         TRAEFIK_IP_DASHED=$(ip_to_dashed "${TRAEFIK_LB_IP}")
         TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
