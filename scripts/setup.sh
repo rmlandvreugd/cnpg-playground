@@ -172,6 +172,80 @@ EOF
 
     echo "🌐 Connecting containers to the Kind network..."
     $CONTAINER_PROVIDER network connect kind "${RUSTFS_CONTAINER_NAME}"
+
+    # Provision TLS cert for RustFS and restart with TLS enabled
+    echo "🔒 Provisioning TLS cert for '${RUSTFS_CONTAINER_NAME}'..."
+    OBJECTSTORE_IP=$(${CONTAINER_PROVIDER} inspect "${RUSTFS_CONTAINER_NAME}" \
+        --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
+
+    RUSTFS_TLS_DIR="${GIT_REPO_ROOT}/rustfs/${region}/tls"
+    sudo mkdir -p "${RUSTFS_TLS_DIR}"
+    # UID 10001 is the unprivileged user RustFS runs as inside the container
+    sudo setfacl -R -b "${RUSTFS_TLS_DIR}"
+    sudo setfacl -R -m "u:10001:rwx" "${RUSTFS_TLS_DIR}"
+    sudo setfacl -R -d -m "u:10001:rwx" "${RUSTFS_TLS_DIR}"
+
+    STEP_CA_INT_CERT_TMP=$(mktemp)
+    STEP_CA_INT_KEY_TMP=$(mktemp)
+    ${CONTAINER_PROVIDER} exec "${STEP_CA_CONTAINER_NAME}" \
+        cat /home/step/certs/intermediate_ca.crt > "${STEP_CA_INT_CERT_TMP}"
+    ${CONTAINER_PROVIDER} cp \
+        "${STEP_CA_CONTAINER_NAME}:/home/step/secrets/intermediate_ca_key" \
+        "${STEP_CA_INT_KEY_TMP}"
+    STEP_CA_PASSWORD=$(${CONTAINER_PROVIDER} exec "${STEP_CA_CONTAINER_NAME}" \
+        cat /home/step/secrets/password)
+
+    RUSTFS_EXT_TMP=$(mktemp)
+    cat > "${RUSTFS_EXT_TMP}" <<EOF
+basicConstraints=CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth,clientAuth
+subjectAltName=DNS:${RUSTFS_CONTAINER_NAME},DNS:${RUSTFS_CONTAINER_NAME}.cnpg-system.svc.cluster.local,DNS:${RUSTFS_CONTAINER_NAME}.mimir.svc.cluster.local,DNS:${RUSTFS_CONTAINER_NAME}.tempo.svc.cluster.local,IP:${OBJECTSTORE_IP}
+EOF
+
+    RUSTFS_CSR_TMP=$(mktemp)
+    RUSTFS_KEY_TMP=$(mktemp)
+    RUSTFS_CERT_TMP=$(mktemp)
+    openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+        -keyout "${RUSTFS_KEY_TMP}" \
+        -out "${RUSTFS_CSR_TMP}" \
+        -subj "/CN=${RUSTFS_CONTAINER_NAME}" 2>&1
+    openssl x509 -req \
+        -in "${RUSTFS_CSR_TMP}" \
+        -CA "${STEP_CA_INT_CERT_TMP}" \
+        -CAkey "${STEP_CA_INT_KEY_TMP}" \
+        -CAcreateserial \
+        -days 365 \
+        -passin "pass:${STEP_CA_PASSWORD}" \
+        -extfile "${RUSTFS_EXT_TMP}" \
+        -out "${RUSTFS_CERT_TMP}" 2>&1
+
+    sudo cp "${RUSTFS_CERT_TMP}" "${RUSTFS_TLS_DIR}/rustfs_cert.pem"
+    sudo cp "${RUSTFS_KEY_TMP}"  "${RUSTFS_TLS_DIR}/rustfs_key.pem"
+    sudo chmod 644 "${RUSTFS_TLS_DIR}/rustfs_cert.pem"
+    sudo chmod 600 "${RUSTFS_TLS_DIR}/rustfs_key.pem"
+    sudo setfacl -m "u:10001:r" "${RUSTFS_TLS_DIR}/rustfs_cert.pem"
+    sudo setfacl -m "u:10001:r" "${RUSTFS_TLS_DIR}/rustfs_key.pem"
+    rm -f "${STEP_CA_INT_CERT_TMP}" "${STEP_CA_INT_KEY_TMP}" "${RUSTFS_EXT_TMP}" \
+          "${RUSTFS_CSR_TMP}" "${RUSTFS_KEY_TMP}" "${RUSTFS_CERT_TMP}"
+
+    echo "🔒 Restarting '${RUSTFS_CONTAINER_NAME}' with TLS enabled..."
+    ${CONTAINER_PROVIDER} stop "${RUSTFS_CONTAINER_NAME}"
+    ${CONTAINER_PROVIDER} rm   "${RUSTFS_CONTAINER_NAME}"
+    ${CONTAINER_PROVIDER} run \
+        --name "${RUSTFS_CONTAINER_NAME}" -d \
+        --network bridge \
+        -p "${current_objectstore_port}:9001" \
+        -v "${RUSTFS_CONTAINER_NAME}:/data" \
+        -v "${RUSTFS_TLS_DIR}:/opt/tls:ro" \
+        -e "RUSTFS_ACCESS_KEY=${RUSTFS_ROOT_USER}" \
+        -e "RUSTFS_SECRET_KEY=${RUSTFS_ROOT_PASSWORD}" \
+        -e "RUSTFS_TLS_PATH=/opt/tls" \
+        -e RUSTFS_CONSOLE_ENABLE=true \
+        --restart unless-stopped \
+        "${RUSTFS_IMAGE}" --console-enable /data
+    ${CONTAINER_PROVIDER} network connect kind --ip "${OBJECTSTORE_IP}" "${RUSTFS_CONTAINER_NAME}"
+
     $CONTAINER_PROVIDER network connect kind "${STEP_CA_CONTAINER_NAME}" 2>/dev/null || true
     $CONTAINER_PROVIDER network connect kind "${VAULT_CONTAINER_NAME}" 2>/dev/null || true
     $CONTAINER_PROVIDER network connect kind "${DEX_CONTAINER_NAME}"   2>/dev/null || true

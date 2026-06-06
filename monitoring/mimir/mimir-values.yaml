@@ -17,7 +17,10 @@ mimir:
         s3:
           endpoint: objectstore-local.mimir.svc.cluster.local:9000
           region: us-east-1
-          insecure: true
+          insecure: false
+          http:
+            tls_config:
+              ca_cert_path: /etc/ssl/step-ca/ca-certificates.crt
     blocks_storage:
       s3:
         bucket_name: mimir-blocks
@@ -57,3 +60,13 @@ tolerations:
   - key: node-role.kubernetes.io/infra
     operator: Exists
     effect: NoSchedule
+
+global:
+  extraVolumes:
+    - name: step-ca-bundle
+      configMap:
+        name: step-ca-external-bundle
+  extraVolumeMounts:
+    - name: step-ca-bundle
+      mountPath: /etc/ssl/step-ca
+      readOnly: true
