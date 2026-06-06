@@ -11,11 +11,13 @@ loki:
       ruler: loki
       admin: loki
     s3:
-      endpoint: http://objectstore-local.grafana.svc.cluster.local:9000
+      endpoint: https://seaweedfs.grafana.svc.cluster.local:8333
       region: us-east-1
-      # accessKeyId and secretAccessKey injected via --set from RUSTFS_ROOT_USER/PASSWORD
+      # accessKeyId and secretAccessKey injected via --set from SEAWEEDFS_ACCESS_KEY/SECRET_KEY
       s3ForcePathStyle: true
-      insecure: true
+      insecure: false
+      http_config:
+        ca_file: /etc/ssl/step-ca/ca-certificates.crt
   schemaConfig:
     configs:
       - from: "2024-01-01"
@@ -42,6 +44,14 @@ singleBinary:
   persistence:
     enabled: true
     size: 20Gi
+  extraVolumes:
+    - name: step-ca-bundle
+      configMap:
+        name: step-ca-external-bundle
+  extraVolumeMounts:
+    - name: step-ca-bundle
+      mountPath: /etc/ssl/step-ca
+      readOnly: true
 
 # Disable distributed-mode components
 backend:

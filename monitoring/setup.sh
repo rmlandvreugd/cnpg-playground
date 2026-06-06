@@ -209,57 +209,56 @@ for region in "${REGIONS[@]}"; do
       kubectl --context ${CONTEXT_NAME} apply -f -
 
     # --- Loki + Alloy (pgaudit log aggregation) ---
-    echo "📊 Wiring objectstore into grafana namespace for Loki..."
-    RUSTFS_CONTAINER_NAME="${RUSTFS_BASE_NAME}-${region}"
-    OBJECTSTORE_IP=$(${CONTAINER_PROVIDER} inspect "${RUSTFS_CONTAINER_NAME}" \
+    echo "📊 Wiring SeaweedFS into grafana namespace for Loki..."
+    SEAWEEDFS_IP=$(${CONTAINER_PROVIDER} inspect "${SEAWEEDFS_CONTAINER_NAME}" \
         --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
     kubectl --context "${CONTEXT_NAME}" apply -f - <<EOF
 apiVersion: v1
 kind: Service
 metadata:
-  name: objectstore-local
+  name: seaweedfs
   namespace: grafana
 spec:
   ports:
     - name: s3
-      port: 9000
-      targetPort: 9000
+      port: 8333
+      targetPort: 8333
 ---
 apiVersion: v1
 kind: Endpoints
 metadata:
-  name: objectstore-local
+  name: seaweedfs
   namespace: grafana
 subsets:
   - addresses:
-      - ip: ${OBJECTSTORE_IP}
+      - ip: ${SEAWEEDFS_IP}
     ports:
       - name: s3
-        port: 9000
+        port: 8333
 EOF
 
-    echo "🪣 Creating Loki S3 bucket..."
+    echo "🪣 Creating Loki S3 bucket in SeaweedFS..."
     kubectl --context "${CONTEXT_NAME}" -n grafana delete pod loki-bucket-init --ignore-not-found
     kubectl run loki-bucket-init --restart=Never \
         --context "${CONTEXT_NAME}" \
         -n grafana \
         --image=minio/mc:latest \
         --pod-running-timeout=60s \
-        --command -- sh -c "mc alias set store http://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1 \
-            && mc mb --ignore-existing store/loki \
+        --command -- sh -c "mc --insecure alias set store https://seaweedfs:8333 '${SEAWEEDFS_ACCESS_KEY}' '${SEAWEEDFS_SECRET_KEY}' >/dev/null 2>&1 \
+            && mc --insecure mb --ignore-existing store/loki \
             && echo '✅ Bucket loki ready'"
     kubectl --context "${CONTEXT_NAME}" -n grafana wait pod/loki-bucket-init \
         --for=jsonpath='{.status.phase}'=Succeeded --timeout=60s \
         && kubectl --context "${CONTEXT_NAME}" -n grafana logs pod/loki-bucket-init \
-        || echo "  ⚠️  Bucket init may have failed — verify: kubectl run mc ... mc mb store/loki"
+        || echo "  ⚠️  Bucket init may have failed — verify: kubectl run mc ... mc --insecure mb store/loki"
     kubectl --context "${CONTEXT_NAME}" -n grafana delete pod loki-bucket-init --ignore-not-found
 
     echo "📊 Installing Loki ${LOKI_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
     helm_upgrade_install loki oci://ghcr.io/grafana-community/helm-charts/loki \
         grafana "${CONTEXT_NAME}" "${LOKI_CHART_VERSION}" \
         --values "${GIT_REPO_ROOT}/monitoring/loki/loki-values.yaml" \
-        --set "loki.storage.s3.accessKeyId=${RUSTFS_ROOT_USER}" \
-        --set "loki.storage.s3.secretAccessKey=${RUSTFS_ROOT_PASSWORD}"
+        --set "loki.storage.s3.accessKeyId=${SEAWEEDFS_ACCESS_KEY}" \
+        --set "loki.storage.s3.secretAccessKey=${SEAWEEDFS_SECRET_KEY}"
 
     echo "📊 Installing Alloy ${ALLOY_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
     helm_upgrade_install alloy alloy \

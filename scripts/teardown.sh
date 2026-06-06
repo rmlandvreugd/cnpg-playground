@@ -81,5 +81,19 @@ echo "--------------------------------------------------"
 "${SCRIPT_DIR}/vault-teardown.sh"
 "${SCRIPT_DIR}/dex-teardown.sh"
 
+# Tear down SeaweedFS (shared Loki object store)
+if $CONTAINER_PROVIDER ps -a --format '{{.Names}}' | grep -q "^${SEAWEEDFS_CONTAINER_NAME}$"; then
+    echo "🗑️  Removing SeaweedFS container '${SEAWEEDFS_CONTAINER_NAME}'..."
+    $CONTAINER_PROVIDER rm -f "${SEAWEEDFS_CONTAINER_NAME}" > /dev/null
+else
+    echo "🔷 SeaweedFS container '${SEAWEEDFS_CONTAINER_NAME}' not found, skipping."
+fi
+if $CONTAINER_PROVIDER volume inspect "${SEAWEEDFS_CONTAINER_NAME}" > /dev/null 2>&1; then
+    echo "🗑️  Removing SeaweedFS data volume '${SEAWEEDFS_CONTAINER_NAME}'..."
+    $CONTAINER_PROVIDER volume rm "${SEAWEEDFS_CONTAINER_NAME}" > /dev/null
+else
+    echo "🔷 SeaweedFS data volume '${SEAWEEDFS_CONTAINER_NAME}' not found, skipping."
+fi
+
 echo ""
 echo "✅ Cleanup complete!"

@@ -100,6 +100,20 @@ for region in "${REGIONS[@]}"; do
         --restart unless-stopped \
         "${RUSTFS_IMAGE}" --console-enable /data
 
+    # SeaweedFS: create container on bridge (hub region only); TLS added after kind IP is known
+    if [[ "${region}" == "${HUB_REGION}" ]]; then
+        echo "📦 Creating SeaweedFS container '${SEAWEEDFS_CONTAINER_NAME}'..."
+        $CONTAINER_PROVIDER volume create "${SEAWEEDFS_CONTAINER_NAME}" > /dev/null
+        $CONTAINER_PROVIDER run \
+            --name "${SEAWEEDFS_CONTAINER_NAME}" -d \
+            --network bridge \
+            -p "${SEAWEEDFS_S3_PORT}:8333" \
+            -v "${SEAWEEDFS_CONTAINER_NAME}:/data" \
+            --restart unless-stopped \
+            "${SEAWEEDFS_IMAGE}" \
+            server -s3 -dir=/data
+    fi
+
     echo "🏗️  Creating Kind cluster '${K8S_CLUSTER_NAME}'..."
     if [ "$CONTAINER_PROVIDER" == "podman" ]; then
         export KIND_EXPERIMENTAL_PROVIDER=podman
@@ -172,6 +186,9 @@ EOF
 
     echo "🌐 Connecting containers to the Kind network..."
     $CONTAINER_PROVIDER network connect kind "${RUSTFS_CONTAINER_NAME}"
+    if [[ "${region}" == "${HUB_REGION}" ]]; then
+        $CONTAINER_PROVIDER network connect kind "${SEAWEEDFS_CONTAINER_NAME}"
+    fi
 
     # Provision TLS cert for RustFS and restart with TLS enabled
     echo "🔒 Provisioning TLS cert for '${RUSTFS_CONTAINER_NAME}'..."
@@ -245,6 +262,89 @@ EOF
         --restart unless-stopped \
         "${RUSTFS_IMAGE}" --console-enable /data
     ${CONTAINER_PROVIDER} network connect kind --ip "${OBJECTSTORE_IP}" "${RUSTFS_CONTAINER_NAME}"
+
+    # Provision TLS cert for SeaweedFS and restart with TLS enabled (hub region only)
+    if [[ "${region}" == "${HUB_REGION}" ]]; then
+        echo "🔒 Provisioning TLS cert for '${SEAWEEDFS_CONTAINER_NAME}'..."
+        SEAWEEDFS_IP=$(${CONTAINER_PROVIDER} inspect "${SEAWEEDFS_CONTAINER_NAME}" \
+            --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
+
+        SEAWEEDFS_TLS_DIR="${GIT_REPO_ROOT}/seaweedfs/tls"
+        SEAWEEDFS_CFG_DIR="${GIT_REPO_ROOT}/seaweedfs/config"
+        sudo mkdir -p "${SEAWEEDFS_TLS_DIR}" "${SEAWEEDFS_CFG_DIR}"
+
+        SW_INT_CERT_TMP=$(mktemp)
+        SW_INT_KEY_TMP=$(mktemp)
+        ${CONTAINER_PROVIDER} exec "${STEP_CA_CONTAINER_NAME}" \
+            cat /home/step/certs/intermediate_ca.crt > "${SW_INT_CERT_TMP}"
+        ${CONTAINER_PROVIDER} cp \
+            "${STEP_CA_CONTAINER_NAME}:/home/step/secrets/intermediate_ca_key" \
+            "${SW_INT_KEY_TMP}"
+        SW_CA_PASSWORD=$(${CONTAINER_PROVIDER} exec "${STEP_CA_CONTAINER_NAME}" \
+            cat /home/step/secrets/password)
+
+        SW_EXT_TMP=$(mktemp)
+        cat > "${SW_EXT_TMP}" <<EOF
+basicConstraints=CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth,clientAuth
+subjectAltName=DNS:${SEAWEEDFS_CONTAINER_NAME},DNS:seaweedfs.grafana.svc.cluster.local,IP:${SEAWEEDFS_IP}
+EOF
+        SW_CSR_TMP=$(mktemp)
+        SW_KEY_TMP=$(mktemp)
+        SW_CERT_TMP=$(mktemp)
+        openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+            -keyout "${SW_KEY_TMP}" \
+            -out "${SW_CSR_TMP}" \
+            -subj "/CN=${SEAWEEDFS_CONTAINER_NAME}" 2>&1
+        openssl x509 -req \
+            -in "${SW_CSR_TMP}" \
+            -CA "${SW_INT_CERT_TMP}" \
+            -CAkey "${SW_INT_KEY_TMP}" \
+            -CAcreateserial \
+            -days 365 \
+            -passin "pass:${SW_CA_PASSWORD}" \
+            -extfile "${SW_EXT_TMP}" \
+            -out "${SW_CERT_TMP}" 2>&1
+
+        sudo cp "${SW_CERT_TMP}" "${SEAWEEDFS_TLS_DIR}/seaweedfs_cert.pem"
+        sudo cp "${SW_KEY_TMP}"  "${SEAWEEDFS_TLS_DIR}/seaweedfs_key.pem"
+        sudo chmod 644 "${SEAWEEDFS_TLS_DIR}/seaweedfs_cert.pem"
+        sudo chmod 640 "${SEAWEEDFS_TLS_DIR}/seaweedfs_key.pem"
+        rm -f "${SW_INT_CERT_TMP}" "${SW_INT_KEY_TMP}" "${SW_EXT_TMP}" \
+              "${SW_CSR_TMP}" "${SW_KEY_TMP}" "${SW_CERT_TMP}"
+
+        sudo tee "${SEAWEEDFS_CFG_DIR}/identities.json" > /dev/null <<JSON
+{
+  "identities": [
+    {
+      "name": "loki",
+      "credentials": [{"accessKey": "${SEAWEEDFS_ACCESS_KEY}", "secretKey": "${SEAWEEDFS_SECRET_KEY}"}],
+      "actions": ["Read:loki", "Write:loki", "List:loki", "Tagging:loki"]
+    }
+  ]
+}
+JSON
+
+        echo "🔒 Restarting '${SEAWEEDFS_CONTAINER_NAME}' with TLS enabled..."
+        ${CONTAINER_PROVIDER} stop "${SEAWEEDFS_CONTAINER_NAME}"
+        ${CONTAINER_PROVIDER} rm   "${SEAWEEDFS_CONTAINER_NAME}"
+        ${CONTAINER_PROVIDER} run \
+            --name "${SEAWEEDFS_CONTAINER_NAME}" -d \
+            --network bridge \
+            -p "${SEAWEEDFS_S3_PORT}:8333" \
+            -v "${SEAWEEDFS_CONTAINER_NAME}:/data" \
+            -v "${SEAWEEDFS_TLS_DIR}:/etc/seaweedfs/tls:ro" \
+            -v "${SEAWEEDFS_CFG_DIR}/identities.json:/etc/seaweedfs/identities.json:ro" \
+            --restart unless-stopped \
+            "${SEAWEEDFS_IMAGE}" \
+            server -s3 -dir=/data \
+                -s3.cert.file=/etc/seaweedfs/tls/seaweedfs_cert.pem \
+                -s3.key.file=/etc/seaweedfs/tls/seaweedfs_key.pem \
+                -s3.port.https=8333 \
+                -s3.config=/etc/seaweedfs/identities.json
+        ${CONTAINER_PROVIDER} network connect kind "${SEAWEEDFS_CONTAINER_NAME}"
+    fi
 
     $CONTAINER_PROVIDER network connect kind "${STEP_CA_CONTAINER_NAME}" 2>/dev/null || true
     $CONTAINER_PROVIDER network connect kind "${VAULT_CONTAINER_NAME}" 2>/dev/null || true
