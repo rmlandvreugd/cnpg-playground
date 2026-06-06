@@ -278,11 +278,12 @@ if kubectl get ns cnpg-system &> /dev/null; then
 fi
 
     if kubectl --context "${CONTEXT_NAME}" get namespace cnpg-system &>/dev/null; then
-        echo "📊 Applying CNPG PodMonitors (operator + cluster/pooler wildcards)..."
+        echo "📊 Applying CNPG monitors and alerting rules..."
         kubectl --context "${CONTEXT_NAME}" apply \
-            -f "${GIT_REPO_ROOT}/monitoring/cnpg/cnpg-operator-podmonitor.yaml" \
+            -f "${GIT_REPO_ROOT}/monitoring/cnpg/cnpg-operator-servicemonitor.yaml" \
             -f "${GIT_REPO_ROOT}/monitoring/cnpg/cnpg-cluster-wildcard-podmonitor.yaml" \
-            -f "${GIT_REPO_ROOT}/monitoring/cnpg/cnpg-pooler-wildcard-podmonitor.yaml"
+            -f "${GIT_REPO_ROOT}/monitoring/cnpg/cnpg-pooler-wildcard-podmonitor.yaml" \
+            -f "${GIT_REPO_ROOT}/monitoring/cnpg/cnpg-backup-alerts.yaml"
     fi
 
     if TRAEFIK_LB_IP=$(get_traefik_lb_ip "${CONTEXT_NAME}" 30); then
