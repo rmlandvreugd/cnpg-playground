@@ -260,18 +260,29 @@ CA_FINGERPRINT=$(${CONTAINER_PROVIDER} exec "${STEP_CA_CONTAINER_NAME}" \
 echo "${CA_FINGERPRINT}" | sudo tee "${STEP_CA_SECRETS_DIR}/.ca_fingerprint" > /dev/null
 sudo chmod 600 "${STEP_CA_SECRETS_DIR}/.ca_fingerprint"
 
+# Render the leaf x509 template (injects the CDP pointing to step-ca's HTTPS CRL endpoint)
+# ${STEP_CA_HOST} and ${STEP_CA_PORT} are expanded now; {{ }} Go template expressions are
+# evaluated later by step-ca at cert issuance time.
+echo "📜 Rendering leaf x509 template with CRL distribution point..."
+STEP_CA_HOST="${STEP_CA_HOST}" STEP_CA_PORT="${STEP_CA_PORT}" \
+    envsubst '${STEP_CA_HOST} ${STEP_CA_PORT}' \
+    < "${STEP_CA_DIR}/config/leaf-x509-template.json.tpl" \
+    | ${CONTAINER_PROVIDER} exec -i "${STEP_CA_CONTAINER_NAME}" \
+        sh -c 'cat > /home/step/config/leaf-x509-template.json'
+
 # Update the default JWK provisioner to allow longer certificate durations
 # Default max is 24h; we need 720h (30d) for server certs and 168h (7d) for mTLS clients
-echo "🔧 Updating JWK provisioner max TTL..."
+echo "🔧 Updating JWK provisioner max TTL and CDP template..."
 ${CONTAINER_PROVIDER} exec \
     -e STEPPATH=/home/step \
     "${STEP_CA_CONTAINER_NAME}" \
     step ca provisioner update "${STEP_CA_PROVISIONER_NAME}" \
     --x509-max-dur=2160h \
     --x509-default-dur=720h \
+    --x509-template-file /home/step/config/leaf-x509-template.json \
     --password-file /home/step/secrets/password \
     --ca-config /home/step/config/ca.json \
-    || { echo "❌ Error: Failed to update JWK provisioner TTL."; exit 1; }
+    || { echo "❌ Error: Failed to update JWK provisioner."; exit 1; }
 
 # Add X5C provisioner (for cert-based authentication, e.g. Vault intermediate signing)
 echo "🔐 Adding X5C provisioner..."
@@ -282,6 +293,7 @@ ${CONTAINER_PROVIDER} exec \
     --x5c-roots /home/step/certs/root_ca.crt \
     --x509-max-dur=2160h \
     --x509-default-dur=720h \
+    --x509-template-file /home/step/config/leaf-x509-template.json \
     --password-file /home/step/secrets/password \
     --ca-config /home/step/config/ca.json \
     || { echo "❌ Error: Failed to add X5C provisioner."; exit 1; }

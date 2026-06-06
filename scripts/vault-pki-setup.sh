@@ -57,7 +57,14 @@ sudo chmod 644 "${VAULT_PKI_DIR}/root.crt"
 
 _vcmd write pki/config/urls \
     issuing_certificates="https://${VAULT_HOST}:${VAULT_PORT}/v1/pki/ca" \
-    crl_distribution_points="https://${VAULT_HOST}:${VAULT_PORT}/v1/pki/crl"
+    crl_distribution_points="https://${VAULT_HOST}:${VAULT_PORT}/v1/pki/crl" \
+    ocsp_servers="https://${VAULT_HOST}:${VAULT_PORT}/v1/pki/ocsp"
+
+# Enable CRL auto-rebuild so the CRL stays fresh without manual rotation
+_vcmd write pki/config/crl \
+    auto_rebuild=true \
+    auto_rebuild_grace_period=12h \
+    ocsp_disable=false
 
 # --- Intermediate PKI engine (signed by step-ca) ---
 echo "📜 Enabling intermediate PKI engine..."
@@ -113,7 +120,13 @@ _vcmd write pki_int/intermediate/set-signed certificate="${SIGNED_WITH_CHAIN}"
 
 _vcmd write pki_int/config/urls \
     issuing_certificates="https://${VAULT_HOST}:${VAULT_PORT}/v1/pki_int/ca" \
-    crl_distribution_points="https://${VAULT_HOST}:${VAULT_PORT}/v1/pki_int/crl"
+    crl_distribution_points="https://${VAULT_HOST}:${VAULT_PORT}/v1/pki_int/crl" \
+    ocsp_servers="https://${VAULT_HOST}:${VAULT_PORT}/v1/pki_int/ocsp"
+
+_vcmd write pki_int/config/crl \
+    auto_rebuild=true \
+    auto_rebuild_grace_period=12h \
+    ocsp_disable=false
 
 # --- Issuance roles ---
 echo "📋 Creating PKI roles..."
