@@ -247,3 +247,49 @@ helm_uninstall_if_present() {
         helm uninstall "${release}" --namespace "${namespace}" --kube-context "${context}"
     fi
 }
+
+install_cnpg_operator() {
+    local context_name="$1"
+    if [ "${TRUNK:-}" = "true" ]; then
+        echo "🔧 Deploying CloudNativePG operator (trunk version)"
+        curl -sSfL \
+          https://raw.githubusercontent.com/cloudnative-pg/artifacts/main/manifests/operator-manifest.yaml | \
+          kubectl --context "${context_name}" apply -f - --server-side
+        echo "⏳ Waiting for CloudNativePG operator to be ready..."
+        kubectl --context "${context_name}" rollout status deployment \
+          -n cnpg-system cnpg-controller-manager
+    else
+        echo "🔧 Deploying CloudNativePG operator (chart ${CNPG_CHART_VERSION})"
+        helm_upgrade_install cnpg-operator cloudnative-pg cnpg-system "${context_name}" \
+          "${CNPG_CHART_VERSION}" \
+          --repo-url https://cloudnative-pg.github.io/charts
+    fi
+}
+
+install_barman_plugin() {
+    local context_name="$1"
+    if [ "${TRUNK:-}" = "true" ]; then
+        echo "🔧 Deploying Barman Cloud Plugin (trunk version)"
+        kubectl apply --context "${context_name}" -f \
+          https://raw.githubusercontent.com/cloudnative-pg/plugin-barman-cloud/refs/heads/main/manifest.yaml
+        echo "⏳ Waiting for Barman Cloud Plugin to be ready..."
+        kubectl rollout --context "${context_name}" status deployment \
+          -n cnpg-system barman-cloud
+    else
+        echo "🔧 Deploying Barman Cloud Plugin (chart ${BARMAN_CLOUD_PLUGIN_CHART_VERSION})"
+        echo "📜 Issuing barman-cloud TLS certificates via vault-pki..."
+        kubectl apply --context "${context_name}" -f \
+          "${GIT_REPO_ROOT}/demo/yaml/barman-cloud/certificate-server.yaml"
+        kubectl apply --context "${context_name}" -f \
+          "${GIT_REPO_ROOT}/demo/yaml/barman-cloud/certificate-client.yaml"
+        kubectl wait --context "${context_name}" --timeout=60s \
+          --for=condition=Ready certificate/barman-cloud-server -n cnpg-system
+        kubectl wait --context "${context_name}" --timeout=60s \
+          --for=condition=Ready certificate/barman-cloud-client -n cnpg-system
+        helm_upgrade_install barman-cloud plugin-barman-cloud cnpg-system "${context_name}" \
+          "${BARMAN_CLOUD_PLUGIN_CHART_VERSION}" \
+          --repo-url https://cloudnative-pg.github.io/charts \
+          --set certificate.createClientCertificate=false \
+          --set certificate.createServerCertificate=false
+    fi
+}

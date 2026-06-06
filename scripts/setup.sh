@@ -345,6 +345,10 @@ ${STEP_CA_INT_CERT}" \
         < "${GIT_REPO_ROOT}/traefik/service-postgres.yaml.tpl" \
         | kubectl --context "${CONTEXT_NAME}" apply -f -
 
+    echo "🔧 Installing CNPG operator and Barman Cloud Plugin in '${K8S_CLUSTER_NAME}'..."
+    install_cnpg_operator "${CONTEXT_NAME}"
+    install_barman_plugin "${CONTEXT_NAME}"
+
     echo "✅ Resource provisioning for '${region}' complete."
 
     # Store details for the next phase
