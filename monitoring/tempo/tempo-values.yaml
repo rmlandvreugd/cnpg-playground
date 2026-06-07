@@ -14,7 +14,9 @@ storage:
       tls_ca_path: /etc/ssl/step-ca/ca-certificates.crt
       # access_key / secret_key injected via --set in setup.sh
 
-# Pin all roles to single replica
+# Pin all roles to single replica.
+# global.extraVolumeMounts does NOT propagate to container volumeMounts in tempo-distributed
+# (unlike mimir-distributed), so each component needs its own extraVolumeMounts entry.
 ingester:
   replicas: 1
   persistence:
@@ -22,14 +24,46 @@ ingester:
     size: 5Gi
   config:
     replication_factor: 1  # single-node: avoids "at least 2 live replicas required" error
-distributor:   { replicas: 1 }
-compactor:     { replicas: 1 }
-querier:       { replicas: 1 }
-queryFrontend: { replicas: 1 }
+  extraVolumeMounts:
+    - name: step-ca-bundle
+      mountPath: /etc/ssl/step-ca
+      readOnly: true
+
+distributor:
+  replicas: 1
+  extraVolumeMounts:
+    - name: step-ca-bundle
+      mountPath: /etc/ssl/step-ca
+      readOnly: true
+
+compactor:
+  replicas: 1
+  extraVolumeMounts:
+    - name: step-ca-bundle
+      mountPath: /etc/ssl/step-ca
+      readOnly: true
+
+querier:
+  replicas: 1
+  extraVolumeMounts:
+    - name: step-ca-bundle
+      mountPath: /etc/ssl/step-ca
+      readOnly: true
+
+queryFrontend:
+  replicas: 1
+  extraVolumeMounts:
+    - name: step-ca-bundle
+      mountPath: /etc/ssl/step-ca
+      readOnly: true
 
 metricsGenerator:
   enabled: true
   replicas: 1
+  extraVolumeMounts:
+    - name: step-ca-bundle
+      mountPath: /etc/ssl/step-ca
+      readOnly: true
   config:
     registry:
       external_labels:
@@ -74,7 +108,3 @@ global:
     - name: step-ca-bundle
       configMap:
         name: step-ca-external-bundle
-  extraVolumeMounts:
-    - name: step-ca-bundle
-      mountPath: /etc/ssl/step-ca
-      readOnly: true
