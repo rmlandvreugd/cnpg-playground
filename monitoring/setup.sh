@@ -72,10 +72,10 @@ for region in "${REGIONS[@]}"; do
             -n mimir \
             --image=minio/mc:latest \
             --pod-running-timeout=60s \
-            --command -- sh -c "mc alias set store http://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1 \
-                && mc mb --ignore-existing store/mimir-blocks \
-                && mc mb --ignore-existing store/mimir-alertmanager \
-                && mc mb --ignore-existing store/mimir-ruler \
+            --command -- sh -c "mc --insecure alias set store https://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1 \
+                && mc --insecure mb --ignore-existing store/mimir-blocks \
+                && mc --insecure mb --ignore-existing store/mimir-alertmanager \
+                && mc --insecure mb --ignore-existing store/mimir-ruler \
                 && echo '✅ Mimir buckets ready'"
         kubectl --context "${CONTEXT_NAME}" -n mimir wait pod/mimir-bucket-init \
             --for=jsonpath='{.status.phase}'=Succeeded --timeout=60s \
@@ -134,8 +134,8 @@ for region in "${REGIONS[@]}"; do
             -n tempo \
             --image=minio/mc:latest \
             --pod-running-timeout=60s \
-            --command -- sh -c "mc alias set store http://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1 \
-                && mc mb --ignore-existing store/tempo \
+            --command -- sh -c "mc --insecure alias set store https://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1 \
+                && mc --insecure mb --ignore-existing store/tempo \
                 && echo '✅ Bucket tempo ready'"
         kubectl --context "${CONTEXT_NAME}" -n tempo wait pod/tempo-bucket-init \
             --for=jsonpath='{.status.phase}'=Succeeded --timeout=60s \
