@@ -1,4 +1,8 @@
 # Single-replica tempo-distributed; RustFS S3 backend; OTLP gRPC + HTTP receivers.
+#
+# NOTE: global.extraVolumes/extraVolumeMounts are unreliable in tempo-distributed — they
+# propagate to standard Deployments but NOT to StatefulSets (ingester) or metricsGenerator.
+# All CA bundle volumes and mounts are declared per-component for consistent behaviour.
 
 minio:
   enabled: false  # bundled MinIO unused — RustFS provides S3
@@ -14,9 +18,8 @@ storage:
       tls_ca_path: /etc/ssl/step-ca/ca-certificates.crt
       # access_key / secret_key injected via --set in setup.sh
 
-# Pin all roles to single replica.
-# global.extraVolumeMounts does NOT propagate to container volumeMounts in tempo-distributed
-# (unlike mimir-distributed), so each component needs its own extraVolumeMounts entry.
+# Per-component CA bundle injection. Each component declares extraVolumes + extraVolumeMounts
+# so the step-ca-bundle ConfigMap is both registered in the pod spec and mounted to the container.
 ingester:
   replicas: 1
   persistence:
@@ -24,6 +27,10 @@ ingester:
     size: 5Gi
   config:
     replication_factor: 1  # single-node: avoids "at least 2 live replicas required" error
+  extraVolumes:
+    - name: step-ca-bundle
+      configMap:
+        name: step-ca-external-bundle
   extraVolumeMounts:
     - name: step-ca-bundle
       mountPath: /etc/ssl/step-ca
@@ -31,6 +38,10 @@ ingester:
 
 distributor:
   replicas: 1
+  extraVolumes:
+    - name: step-ca-bundle
+      configMap:
+        name: step-ca-external-bundle
   extraVolumeMounts:
     - name: step-ca-bundle
       mountPath: /etc/ssl/step-ca
@@ -38,6 +49,10 @@ distributor:
 
 compactor:
   replicas: 1
+  extraVolumes:
+    - name: step-ca-bundle
+      configMap:
+        name: step-ca-external-bundle
   extraVolumeMounts:
     - name: step-ca-bundle
       mountPath: /etc/ssl/step-ca
@@ -45,6 +60,10 @@ compactor:
 
 querier:
   replicas: 1
+  extraVolumes:
+    - name: step-ca-bundle
+      configMap:
+        name: step-ca-external-bundle
   extraVolumeMounts:
     - name: step-ca-bundle
       mountPath: /etc/ssl/step-ca
@@ -52,6 +71,10 @@ querier:
 
 queryFrontend:
   replicas: 1
+  extraVolumes:
+    - name: step-ca-bundle
+      configMap:
+        name: step-ca-external-bundle
   extraVolumeMounts:
     - name: step-ca-bundle
       mountPath: /etc/ssl/step-ca
@@ -60,6 +83,10 @@ queryFrontend:
 metricsGenerator:
   enabled: true
   replicas: 1
+  extraVolumes:
+    - name: step-ca-bundle
+      configMap:
+        name: step-ca-external-bundle
   extraVolumeMounts:
     - name: step-ca-bundle
       mountPath: /etc/ssl/step-ca
@@ -102,9 +129,3 @@ tempo:
     - key: node-role.kubernetes.io/infra
       operator: Exists
       effect: NoSchedule
-
-global:
-  extraVolumes:
-    - name: step-ca-bundle
-      configMap:
-        name: step-ca-external-bundle
