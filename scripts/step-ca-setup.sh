@@ -279,7 +279,7 @@ ${CONTAINER_PROVIDER} exec \
     step ca provisioner update "${STEP_CA_PROVISIONER_NAME}" \
     --x509-max-dur=2160h \
     --x509-default-dur=720h \
-    --x509-template-file /home/step/config/leaf-x509-template.json \
+    --x509-template /home/step/config/leaf-x509-template.json \
     --password-file /home/step/secrets/password \
     --ca-config /home/step/config/ca.json \
     || { echo "❌ Error: Failed to update JWK provisioner."; exit 1; }
@@ -293,7 +293,7 @@ ${CONTAINER_PROVIDER} exec \
     --x5c-roots /home/step/certs/root_ca.crt \
     --x509-max-dur=2160h \
     --x509-default-dur=720h \
-    --x509-template-file /home/step/config/leaf-x509-template.json \
+    --x509-template /home/step/config/leaf-x509-template.json \
     --password-file /home/step/secrets/password \
     --ca-config /home/step/config/ca.json \
     || { echo "❌ Error: Failed to add X5C provisioner."; exit 1; }
