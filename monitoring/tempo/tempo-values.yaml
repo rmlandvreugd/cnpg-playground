@@ -11,9 +11,7 @@ storage:
       endpoint: objectstore-local.tempo.svc.cluster.local:9000
       region: us-east-1
       insecure: false
-      http:
-        tls_config:
-          ca_cert_path: /etc/ssl/step-ca/ca-certificates.crt
+      tls_ca_path: /etc/ssl/step-ca/ca-certificates.crt
       # access_key / secret_key injected via --set in setup.sh
 
 # Pin all roles to single replica
