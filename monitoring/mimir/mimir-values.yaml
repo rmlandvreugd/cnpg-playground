@@ -19,8 +19,7 @@ mimir:
           region: us-east-1
           insecure: false
           http:
-            tls_config:
-              ca_cert_path: /etc/ssl/step-ca/ca-certificates.crt
+            tls_ca_path: /etc/ssl/step-ca/ca-certificates.crt
     blocks_storage:
       s3:
         bucket_name: mimir-blocks
