@@ -81,6 +81,16 @@ echo "--------------------------------------------------"
 "${SCRIPT_DIR}/vault-teardown.sh"
 "${SCRIPT_DIR}/dex-teardown.sh"
 
+# Tear down SeaweedFS sidecar containers (worker → webdav → admin) before main container
+for sidecar in "${SEAWEEDFS_WORKER_CONTAINER_NAME}" "${SEAWEEDFS_WEBDAV_CONTAINER_NAME}" "${SEAWEEDFS_ADMIN_CONTAINER_NAME}"; do
+    if $CONTAINER_PROVIDER ps -a --format '{{.Names}}' | grep -q "^${sidecar}$"; then
+        echo "🗑️  Removing SeaweedFS sidecar container '${sidecar}'..."
+        $CONTAINER_PROVIDER rm -f "${sidecar}" > /dev/null
+    else
+        echo "🔷 SeaweedFS sidecar container '${sidecar}' not found, skipping."
+    fi
+done
+
 # Tear down SeaweedFS (shared Loki object store)
 if $CONTAINER_PROVIDER ps -a --format '{{.Names}}' | grep -q "^${SEAWEEDFS_CONTAINER_NAME}$"; then
     echo "🗑️  Removing SeaweedFS container '${SEAWEEDFS_CONTAINER_NAME}'..."

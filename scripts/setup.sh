@@ -385,6 +385,39 @@ TOML
             admin \
                 -master="${SEAWEEDFS_BRIDGE_IP}:9333" \
                 -port=23646
+
+        echo "🔒 Starting SeaweedFS WebDAV with TLS..."
+        ${CONTAINER_PROVIDER} stop  "${SEAWEEDFS_WEBDAV_CONTAINER_NAME}" 2>/dev/null || true
+        ${CONTAINER_PROVIDER} rm    "${SEAWEEDFS_WEBDAV_CONTAINER_NAME}" 2>/dev/null || true
+        ${CONTAINER_PROVIDER} run \
+            --name "${SEAWEEDFS_WEBDAV_CONTAINER_NAME}" -d \
+            --network bridge \
+            -p "${SEAWEEDFS_WEBDAV_PORT}:7333" \
+            -v "${SEAWEEDFS_TLS_DIR}:/etc/seaweedfs/tls:ro" \
+            --restart unless-stopped \
+            "${SEAWEEDFS_IMAGE}" \
+            webdav \
+                -port=7333 \
+                -filer="${SEAWEEDFS_BRIDGE_IP}:8889" \
+                -cert.file=/etc/seaweedfs/tls/seaweedfs_cert.pem \
+                -key.file=/etc/seaweedfs/tls/seaweedfs_key.pem
+
+        echo "🔧 Starting SeaweedFS maintenance worker..."
+        SEAWEEDFS_ADMIN_BRIDGE_IP=$(${CONTAINER_PROVIDER} inspect "${SEAWEEDFS_ADMIN_CONTAINER_NAME}" \
+            --format '{{.NetworkSettings.Networks.bridge.IPAddress}}')
+        ${CONTAINER_PROVIDER} stop  "${SEAWEEDFS_WORKER_CONTAINER_NAME}" 2>/dev/null || true
+        ${CONTAINER_PROVIDER} rm    "${SEAWEEDFS_WORKER_CONTAINER_NAME}" 2>/dev/null || true
+        ${CONTAINER_PROVIDER} run \
+            --name "${SEAWEEDFS_WORKER_CONTAINER_NAME}" -d \
+            --network bridge \
+            -p "${SEAWEEDFS_WORKER_METRICS_PORT}:9327" \
+            --restart unless-stopped \
+            "${SEAWEEDFS_IMAGE}" \
+            worker \
+                -admin="${SEAWEEDFS_ADMIN_BRIDGE_IP}:23646" \
+                -jobType=all \
+                -metricsPort=9327 \
+                -workingDir=/tmp/seaweedfs-worker
     fi
 
     $CONTAINER_PROVIDER network connect kind "${STEP_CA_CONTAINER_NAME}" 2>/dev/null || true
