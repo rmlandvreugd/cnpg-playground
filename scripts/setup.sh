@@ -297,7 +297,7 @@ EOF
 basicConstraints=CA:FALSE
 keyUsage=critical,digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth,clientAuth
-subjectAltName=DNS:${SEAWEEDFS_CONTAINER_NAME},DNS:seaweedfs.grafana.svc.cluster.local,IP:${SEAWEEDFS_IP}
+subjectAltName=DNS:${SEAWEEDFS_CONTAINER_NAME},DNS:seaweedfs.grafana.svc.cluster.local,DNS:localhost,IP:${SEAWEEDFS_IP},IP:127.0.0.1
 EOF
         SW_CSR_TMP=$(mktemp)
         SW_KEY_TMP=$(mktemp)
@@ -319,7 +319,12 @@ EOF
         sudo cp "${SW_CERT_TMP}" "${SEAWEEDFS_TLS_DIR}/seaweedfs_cert.pem"
         sudo cp "${SW_KEY_TMP}"  "${SEAWEEDFS_TLS_DIR}/seaweedfs_key.pem"
         sudo chmod 644 "${SEAWEEDFS_TLS_DIR}/seaweedfs_cert.pem"
-        sudo chmod 640 "${SEAWEEDFS_TLS_DIR}/seaweedfs_key.pem"
+        sudo chmod 600 "${SEAWEEDFS_TLS_DIR}/seaweedfs_key.pem"
+        # UID 1000 is the seaweed user inside chrislusf/seaweedfs container
+        sudo setfacl -m "u:1000:rx" "${SEAWEEDFS_TLS_DIR}"
+        sudo setfacl -d -m "u:1000:rx" "${SEAWEEDFS_TLS_DIR}"
+        sudo setfacl -m "u:1000:r" "${SEAWEEDFS_TLS_DIR}/seaweedfs_cert.pem"
+        sudo setfacl -m "u:1000:r" "${SEAWEEDFS_TLS_DIR}/seaweedfs_key.pem"
         rm -f "${SW_INT_CERT_TMP}" "${SW_INT_KEY_TMP}" "${SW_EXT_TMP}" \
               "${SW_CSR_TMP}" "${SW_KEY_TMP}" "${SW_CERT_TMP}"
 
@@ -329,7 +334,7 @@ EOF
     {
       "name": "loki",
       "credentials": [{"accessKey": "${SEAWEEDFS_ACCESS_KEY}", "secretKey": "${SEAWEEDFS_SECRET_KEY}"}],
-      "actions": ["Read:loki", "Write:loki", "List:loki", "Tagging:loki"]
+      "actions": ["Admin", "Read:loki", "Write:loki", "List:loki", "Tagging:loki"]
     }
   ]
 }
@@ -352,6 +357,7 @@ JSON
             --restart unless-stopped \
             "${SEAWEEDFS_IMAGE}" \
             server -dir=/data \
+                -ip.bind=0.0.0.0 \
                 -filer \
                 -s3 \
                 -filer.port=8889 \
