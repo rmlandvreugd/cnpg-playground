@@ -235,15 +235,24 @@ helm_upgrade_install() {
         shift 2
     fi
 
-    helm upgrade --install "${release}" "${chart_ref}" \
-        "${repo_args[@]}" \
-        --namespace "${namespace}" \
-        --create-namespace \
-        --kube-context "${context}" \
-        --version "${version}" \
-        --wait \
-        --timeout 300s \
-        "$@"
+    local attempt retries=3 delay=15
+    for attempt in $(seq 1 $retries); do
+        helm upgrade --install "${release}" "${chart_ref}" \
+            "${repo_args[@]}" \
+            --namespace "${namespace}" \
+            --create-namespace \
+            --kube-context "${context}" \
+            --version "${version}" \
+            --wait \
+            --timeout 300s \
+            "$@" && return 0
+        if [[ $attempt -lt $retries ]]; then
+            echo "⚠️  helm install attempt $attempt/$retries failed, retrying in ${delay}s..." >&2
+            sleep $delay
+        fi
+    done
+    echo "❌ helm install failed after $retries attempts: ${release}" >&2
+    return 1
 }
 
 wait_deployment() {
