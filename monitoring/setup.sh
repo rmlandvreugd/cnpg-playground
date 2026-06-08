@@ -204,6 +204,26 @@ for region in "${REGIONS[@]}"; do
         --set "tolerations[0].operator=Exists" \
         --set "tolerations[0].effect=NoSchedule"
 
+    echo "🔑 Wiring Authelia CA + OAuth secret into grafana namespace..."
+    HOST_IP=$(hostname -I | awk '{print $1}')
+    HOST_IP_DASHED=$(echo "${HOST_IP}" | tr '.' '-')
+    AUTHELIA_HOST="authelia.${HOST_IP_DASHED}.sslip.io"
+    AUTHELIA_TLS_DIR="${GIT_REPO_ROOT}/authelia/tls"
+
+    kubectl create configmap authelia-ca-cert \
+        --namespace grafana \
+        --context "${CONTEXT_NAME}" \
+        --from-file=ca-chain.pem="${AUTHELIA_TLS_DIR}/ca-chain.pem" \
+        --dry-run=client -o yaml \
+        | kubectl apply --context "${CONTEXT_NAME}" -f -
+
+    kubectl create secret generic grafana-monitoring-oauth \
+        --namespace grafana \
+        --context "${CONTEXT_NAME}" \
+        --from-literal=client-secret="${AUTHELIA_GRAFANA_MONITORING_CLIENT_SECRET}" \
+        --dry-run=client -o yaml \
+        | kubectl apply --context "${CONTEXT_NAME}" -f -
+
 # Creating Grafana instance and dashboards
     kubectl kustomize ${GIT_REPO_ROOT}/monitoring/grafana/ | \
       kubectl --context ${CONTEXT_NAME} apply -f -
@@ -303,13 +323,29 @@ fi
 
     if TRAEFIK_LB_IP=$(get_traefik_lb_ip "${CONTEXT_NAME}" 30); then
         TRAEFIK_IP_DASHED=$(ip_to_dashed "${TRAEFIK_LB_IP}")
+
+        echo "📜 Issuing TLS certificate for monitoring Grafana..."
+        TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
+        envsubst '${TRAEFIK_IP_DASHED}' \
+            < "${GIT_REPO_ROOT}/monitoring/grafana/certificate-grafana-monitoring.yaml.tpl" \
+            | kubectl --context "${CONTEXT_NAME}" apply -f -
+        kubectl wait --context "${CONTEXT_NAME}" --timeout=60s \
+            --for=condition=Ready certificate/grafana-monitoring-cert -n grafana
+
+        echo "📈 Applying monitoring Grafana instance (OIDC + HTTPS)..."
+        TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
+        AUTHELIA_HOST="${AUTHELIA_HOST}" AUTHELIA_PORT="${AUTHELIA_PORT}" \
+        envsubst '${TRAEFIK_IP_DASHED} ${AUTHELIA_HOST} ${AUTHELIA_PORT}' \
+            < "${GIT_REPO_ROOT}/monitoring/grafana/grafana_instance.yaml.tpl" \
+            | kubectl --context "${CONTEXT_NAME}" apply -f -
+
         TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
             < "${GIT_REPO_ROOT}/monitoring/grafana/ingressroute.yaml.tpl" \
             | kubectl --context "${CONTEXT_NAME}" apply -f -
         echo "-----------------------------------------------------------------------------------------------------------------"
         echo " 📈 Grafana is available at:"
-        echo " http://grafana.${TRAEFIK_IP_DASHED}.sslip.io"
-        echo " The default password for the user admin is 'admin'."
+        echo " https://grafana.${TRAEFIK_IP_DASHED}.sslip.io"
+        echo " Login via Authelia OIDC (rbr-admin@example.com / rbr-ver-admin@example.com)."
         echo "-----------------------------------------------------------------------------------------------------------------"
     else
         echo "⚠️  Traefik not found in ${CONTEXT_NAME} — falling back to port-forward"

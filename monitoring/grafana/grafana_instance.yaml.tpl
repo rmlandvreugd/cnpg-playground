@@ -1,14 +1,13 @@
 apiVersion: grafana.integreatly.org/v1beta1
 kind: Grafana
 metadata:
-  name: grafana-rbr-ver
-  namespace: grafana
+  name: grafana
   labels:
-    dashboards: "grafana-rbr-ver"
+    dashboards: "grafana"
 spec:
   config:
     server:
-      root_url: "https://grafana-rbr-ver.${TRAEFIK_IP_DASHED}.sslip.io"
+      root_url: "https://grafana.${TRAEFIK_IP_DASHED}.sslip.io"
     log:
       mode: "console"
     security:
@@ -20,16 +19,14 @@ spec:
       enabled: "true"
       name: "Authelia"
       allow_sign_up: "true"
-      client_id: "grafana-rbr-ver"
+      client_id: "grafana-monitoring"
       client_secret: ""
       scopes: "openid email profile groups"
       auth_url: "https://${AUTHELIA_HOST}:${AUTHELIA_PORT}/api/oidc/authorization"
       token_url: "https://${AUTHELIA_HOST}:${AUTHELIA_PORT}/api/oidc/token"
       api_url: "https://${AUTHELIA_HOST}:${AUTHELIA_PORT}/api/oidc/userinfo"
       groups_attribute_path: "groups"
-      org_attribute_path: "groups"
-      org_mapping: "rbr-db-admin:rbr:Admin rbr-ver-db-admin:rbr:Editor"
-      allowed_groups: "rbr-db-admin,rbr-ver-db-admin"
+      org_mapping: "rbr-db-admin:Main Org.:Admin rbr-ver-db-admin:Main Org.:Viewer"
       role_attribute_strict: "false"
       tls_client_ca_file: "/etc/ssl/authelia-ca/ca-chain.pem"
   deployment:
@@ -63,7 +60,7 @@ spec:
                 - name: GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET
                   valueFrom:
                     secretKeyRef:
-                      name: grafana-rbr-ver-oauth
+                      name: grafana-monitoring-oauth
                       key: client-secret
               volumeMounts:
                 - name: authelia-ca

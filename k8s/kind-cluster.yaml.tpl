@@ -5,21 +5,21 @@ nodes:
 
 # Control Plane node
 - role: control-plane
-  # Dex CA mounted into control-plane so kube-apiserver can verify the OIDC issuer cert.
-  # Path on host is rendered by setup.sh from $DEX_TLS_DIR (dex/tls).
+  # Authelia CA mounted into control-plane so kube-apiserver can verify the OIDC issuer cert.
+  # Path on host is rendered by setup.sh from $AUTHELIA_TLS_DIR (authelia/tls).
   extraMounts:
-    - hostPath: ${DEX_TLS_DIR}/ca-chain.pem
-      containerPath: /etc/kubernetes/oidc/dex-ca.pem
+    - hostPath: ${AUTHELIA_TLS_DIR}/ca-chain.pem
+      containerPath: /etc/kubernetes/oidc/oidc-ca.pem
       readOnly: true
   kubeadmConfigPatches:
     - |
       kind: ClusterConfiguration
       apiServer:
         extraArgs:
-          # Dex issuer URL — must be HTTPS and reachable from the control-plane container.
-          # ${DEX_HOST} = dex.<HOST_IP_DASHED>.sslip.io ; ${DEX_PORT} = 5556 (default).
-          oidc-issuer-url: https://${DEX_HOST}:${DEX_PORT}/dex
-          oidc-ca-file: /etc/kubernetes/oidc/dex-ca.pem
+          # Authelia issuer URL — must be HTTPS and reachable from the control-plane container.
+          # ${AUTHELIA_HOST} = authelia.<HOST_IP_DASHED>.sslip.io ; ${AUTHELIA_PORT} = 9091 (default).
+          oidc-issuer-url: https://${AUTHELIA_HOST}:${AUTHELIA_PORT}
+          oidc-ca-file: /etc/kubernetes/oidc/oidc-ca.pem
           oidc-client-id: kubernetes
           oidc-username-claim: email
           oidc-username-prefix: "oidc:"

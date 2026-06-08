@@ -354,56 +354,27 @@ EOF
         < "${SELF_SERVICE_YAML}/pgadmin/ingressroute-pgadmin-rbr-ver.yaml.tpl" \
         | kubectl apply --context "${LOCAL_CONTEXT}" -f -
 
-    # --- Grafana + Dex for rbr-ver ---
-    echo "📊 Deploying grafana-rbr-ver with Dex Generic OAuth..."
+    # --- Grafana + Authelia for rbr-ver ---
+    echo "📊 Deploying grafana-rbr-ver with Authelia Generic OAuth..."
 
     HOST_IP=$(hostname -I | awk '{print $1}')
     HOST_IP_DASHED=$(echo "${HOST_IP}" | tr '.' '-')
-    DEX_HOST="dex.${HOST_IP_DASHED}.sslip.io"
-    VAULT_HOST="vault.${HOST_IP_DASHED}.sslip.io"
+    AUTHELIA_HOST="authelia.${HOST_IP_DASHED}.sslip.io"
+    AUTHELIA_TLS_DIR="${GIT_REPO_ROOT}/authelia/tls"
 
     # K8s Secret for Grafana OAuth client secret
-    GRAFANA_RBR_VER_CLIENT_SECRET="${DEX_GRAFANA_RBR_VER_CLIENT_SECRET}"
+    GRAFANA_RBR_VER_CLIENT_SECRET="${AUTHELIA_GRAFANA_RBR_VER_CLIENT_SECRET}"
     GRAFANA_RBR_VER_CLIENT_SECRET="${GRAFANA_RBR_VER_CLIENT_SECRET}" \
     envsubst '${GRAFANA_RBR_VER_CLIENT_SECRET}' \
         < "${SELF_SERVICE_YAML}/grafana/secret-grafana-rbr-ver-oauth.yaml.tpl" \
         | kubectl apply --context "${LOCAL_CONTEXT}" -f -
 
-    # Re-render dex-config.yaml with full var set (incl. TRAEFIK_IP_DASHED) and restart Dex
-    echo "🔄 Updating Dex config with grafana-rbr-ver client (TRAEFIK_IP_DASHED=${TRAEFIK_IP_DASHED})..."
-    DEX_HOST="${DEX_HOST}" VAULT_HOST="${VAULT_HOST}" \
-    DEX_PORT="${DEX_PORT}" VAULT_PORT="${VAULT_PORT}" \
-    DEX_OIDC_CLIENT_ID="${DEX_OIDC_CLIENT_ID}" DEX_OIDC_CLIENT_SECRET="${DEX_OIDC_CLIENT_SECRET}" \
-    DEX_STATIC_PASSWORD_HASH="${DEX_STATIC_PASSWORD_HASH}" \
-    DEX_RBR_ADMIN_PASSWORD_HASH="${DEX_RBR_ADMIN_PASSWORD_HASH}" \
-    DEX_RBR_VER_ADMIN_PASSWORD_HASH="${DEX_RBR_VER_ADMIN_PASSWORD_HASH}" \
-    DEX_UNRELATED_PASSWORD_HASH="${DEX_UNRELATED_PASSWORD_HASH}" \
-    DEX_GRAFANA_RBR_VER_CLIENT_SECRET="${DEX_GRAFANA_RBR_VER_CLIENT_SECRET}" \
-    TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
-    envsubst '${DEX_HOST} ${VAULT_HOST} ${DEX_PORT} ${VAULT_PORT} ${DEX_OIDC_CLIENT_ID} ${DEX_OIDC_CLIENT_SECRET} ${DEX_STATIC_PASSWORD_HASH} ${DEX_RBR_ADMIN_PASSWORD_HASH} ${DEX_RBR_VER_ADMIN_PASSWORD_HASH} ${DEX_UNRELATED_PASSWORD_HASH} ${DEX_GRAFANA_RBR_VER_CLIENT_SECRET} ${TRAEFIK_IP_DASHED}' \
-        < "${GIT_REPO_ROOT}/dex/config/dex-config.yaml.tpl" \
-        | sudo tee "${GIT_REPO_ROOT}/dex/config/dex-config.yaml" > /dev/null
-
-    ${CONTAINER_PROVIDER} restart "${DEX_CONTAINER_NAME}"
-    echo "⏳ Waiting for Dex to restart..."
-    DEX_TLS_DIR="${GIT_REPO_ROOT}/dex/tls"
-    DISCOVERY_URL="https://${DEX_HOST}:${DEX_PORT}/dex/.well-known/openid-configuration"
-    MAX_RETRIES=20; COUNT=0
-    while [ "${COUNT}" -lt "${MAX_RETRIES}" ]; do
-        if curl -sf --cacert "${DEX_TLS_DIR}/ca-chain.pem" "${DISCOVERY_URL}" > /dev/null 2>&1; then
-            echo "✅ Dex ready"
-            break
-        fi
-        sleep 3; COUNT=$((COUNT + 1))
-    done
-    [ "${COUNT}" -ge "${MAX_RETRIES}" ] && { echo "❌ Dex did not restart within 60s"; exit 1; }
-
-    # Dex CA ConfigMap for Grafana TLS trust
-    echo "📜 Creating dex-ca-cert ConfigMap in grafana namespace..."
-    kubectl create configmap dex-ca-cert \
+    # Authelia CA ConfigMap for Grafana TLS trust
+    echo "📜 Creating authelia-ca-cert ConfigMap in grafana namespace..."
+    kubectl create configmap authelia-ca-cert \
         --namespace grafana \
         --context "${LOCAL_CONTEXT}" \
-        --from-file=ca-chain.pem="${DEX_TLS_DIR}/ca-chain.pem" \
+        --from-file=ca-chain.pem="${AUTHELIA_TLS_DIR}/ca-chain.pem" \
         --dry-run=client -o yaml \
         | kubectl apply --context "${LOCAL_CONTEXT}" -f -
 
@@ -417,8 +388,8 @@ EOF
         --for=condition=Ready certificate/grafana-rbr-ver-cert -n grafana
 
     # Grafana CR
-    DEX_HOST="${DEX_HOST}" DEX_PORT="${DEX_PORT}" TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
-    envsubst '${DEX_HOST} ${DEX_PORT} ${TRAEFIK_IP_DASHED}' \
+    AUTHELIA_HOST="${AUTHELIA_HOST}" AUTHELIA_PORT="${AUTHELIA_PORT}" TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
+    envsubst '${AUTHELIA_HOST} ${AUTHELIA_PORT} ${TRAEFIK_IP_DASHED}' \
         < "${SELF_SERVICE_YAML}/grafana/grafana-rbr-ver.yaml.tpl" \
         | kubectl apply --context "${LOCAL_CONTEXT}" -f -
 
@@ -529,8 +500,8 @@ PYEOF
     echo "   Password:    ${PGADMIN_RBR_VER_PASSWORD}"
     echo ""
     echo "   Grafana:     https://grafana-rbr-ver.${TRAEFIK_IP_DASHED}.sslip.io"
-    echo "   Dex users:   rbr-admin@example.com / rbr-ver-admin@example.com"
-    echo "   (password:   same as dexuser — see DEX_STATIC_PASSWORD_HASH)"
+    echo "   Authelia:    rbr-admin@example.com / rbr-ver-admin@example.com"
+    echo "   (password:   see AUTHELIA_STATIC_PASSWORD_HASH in scripts/common.sh)"
     echo ""
     echo "   1. Open pgAdmin URL above"
     echo "   2. Run: $0 creds local group-admin"
@@ -696,9 +667,8 @@ teardown)
         -n grafana --context "${LOCAL_CONTEXT}" --ignore-not-found
     kubectl delete certificate grafana-rbr-ver-cert \
         -n grafana --context "${LOCAL_CONTEXT}" --ignore-not-found
-    kubectl delete configmap dex-ca-cert \
+    kubectl delete configmap authelia-ca-cert \
         -n grafana --context "${LOCAL_CONTEXT}" --ignore-not-found
-    echo "ℹ️  Dex config NOT reverted — re-run scripts/dex-setup.sh to reset."
 
     echo "ℹ️  Vault VDE config, policies, and KV paths retained for post-demo inspection."
     echo "   Remove with: vault delete database/config/rbr-ver-max"

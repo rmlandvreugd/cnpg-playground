@@ -64,13 +64,25 @@ echo "=================================================="
 "${SCRIPT_DIR}/vault-setup.sh"
 "${SCRIPT_DIR}/vault-pki-setup.sh"
 "${SCRIPT_DIR}/vault-eso-setup.sh"
-"${SCRIPT_DIR}/dex-setup.sh"
+"${SCRIPT_DIR}/authelia-setup.sh"
 echo
 
 # Setup a single, shared Kubeconfig for all clusters
 export KUBECONFIG="${KUBE_CONFIG_PATH}"
 > "${KUBE_CONFIG_PATH}" # Create or clear the kubeconfig file
 cd "${GIT_REPO_ROOT}"
+
+# Render kind-cluster.yaml from template now that Authelia TLS dir exists
+HOST_IP=$(hostname -I | awk '{print $1}')
+HOST_IP_DASHED=$(echo "$HOST_IP" | tr '.' '-')
+AUTHELIA_TLS_DIR="${GIT_REPO_ROOT}/authelia/tls"
+AUTHELIA_HOST_RENDERED="authelia.${HOST_IP_DASHED}.sslip.io"
+AUTHELIA_TLS_DIR="${AUTHELIA_TLS_DIR}" \
+AUTHELIA_HOST="${AUTHELIA_HOST_RENDERED}" \
+AUTHELIA_PORT="${AUTHELIA_PORT}" \
+envsubst '${AUTHELIA_TLS_DIR} ${AUTHELIA_HOST} ${AUTHELIA_PORT}' \
+    < "${GIT_REPO_ROOT}/k8s/kind-cluster.yaml.tpl" \
+    > "${GIT_REPO_ROOT}/k8s/kind-cluster.yaml"
 kind_config_path="${GIT_REPO_ROOT}/k8s/kind-cluster.yaml"
 
 # --- Phase 1: Provision Clusters and RustFS Instances ---
@@ -428,7 +440,7 @@ TOML
 
     $CONTAINER_PROVIDER network connect kind "${STEP_CA_CONTAINER_NAME}" 2>/dev/null || true
     $CONTAINER_PROVIDER network connect kind "${VAULT_CONTAINER_NAME}" 2>/dev/null || true
-    $CONTAINER_PROVIDER network connect kind "${DEX_CONTAINER_NAME}"   2>/dev/null || true
+    $CONTAINER_PROVIDER network connect kind "${AUTHELIA_CONTAINER_NAME}" 2>/dev/null || true
 
     # Wire step-ca into K8s (namespace + headless Service/Endpoints)
     echo "🔧 Wiring step-ca into Kubernetes cluster '${K8S_CLUSTER_NAME}'..."
@@ -617,16 +629,16 @@ echo "=================================================="
 "${SCRIPT_DIR}/vault-oidc-setup.sh"
 echo
 
-echo "=================================================="
-echo "🔑 Adding step-ca OIDC provisioner (post-Dex)..."
-echo "=================================================="
+echo "========================================================"
+echo "🔑 Adding step-ca OIDC provisioner (post-Authelia)..."
+echo "========================================================"
 HOST_IP=$(hostname -I | awk '{print $1}')
 HOST_IP_DASHED=$(echo "$HOST_IP" | tr '.' '-')
-DEX_HOST="dex.${HOST_IP_DASHED}.sslip.io"
+AUTHELIA_HOST="authelia.${HOST_IP_DASHED}.sslip.io"
 
 # Add step-ca's own intermediate CA to its trust store so step-ca can verify
-# Dex's TLS cert (which is now signed by step-ca's intermediate CA via X5C provisioner)
-echo "🔐 Adding step-ca intermediate CA to step-ca trust store (for Dex OIDC)..."
+# Authelia's TLS cert (signed by step-ca's intermediate CA via X5C provisioner)
+echo "🔐 Adding step-ca intermediate CA to step-ca trust store (for Authelia OIDC)..."
 CA_CERTS_TMPFILE=$(mktemp)
 ${CONTAINER_PROVIDER} cp "${STEP_CA_CONTAINER_NAME}:/etc/ssl/certs/ca-certificates.crt" "${CA_CERTS_TMPFILE}"
 sudo cat "${GIT_REPO_ROOT}/step-ca/pki/intermediate_ca.crt" >> "${CA_CERTS_TMPFILE}"
@@ -638,10 +650,10 @@ STEP_CA_PASSWORD=$(sudo cat "${GIT_REPO_ROOT}/step-ca/secrets/.ca_password")
 ${CONTAINER_PROVIDER} exec \
     -e STEPPATH=/home/step \
     "${STEP_CA_CONTAINER_NAME}" \
-    step ca provisioner add dex --type OIDC \
-    --client-id "${DEX_OIDC_CLIENT_ID}" \
-    --client-secret "${DEX_OIDC_CLIENT_SECRET}" \
-    --configuration-endpoint "https://${DEX_HOST}:${DEX_PORT}/dex/.well-known/openid-configuration" \
+    step ca provisioner add authelia --type OIDC \
+    --client-id "step-ca" \
+    --client-secret "${AUTHELIA_STEP_CA_CLIENT_SECRET}" \
+    --configuration-endpoint "https://${AUTHELIA_HOST}:${AUTHELIA_PORT}/.well-known/openid-configuration" \
     --password-file /home/step/secrets/password \
     --ca-config /home/step/config/ca.json
 # Reload step-ca to pick up the new provisioner
