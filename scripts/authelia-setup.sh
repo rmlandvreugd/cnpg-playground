@@ -151,7 +151,7 @@ ${CONTAINER_PROVIDER} run -d \
     --network bridge \
     ${SECURITY_OPTS} \
     -p "${AUTHELIA_PORT}:${AUTHELIA_PORT}" \
-    -v "${AUTHELIA_CONFIG_DIR}/configuration.yaml:/config/configuration.yaml:ro" \
+    -v "${AUTHELIA_CONFIG_DIR}/configuration.yaml:/config/configuration.yml:ro" \
     -v "${AUTHELIA_CONFIG_DIR}/users_database.yml:/config/users_database.yml:ro" \
     -v "${AUTHELIA_TLS_DIR}:/config/tls:ro" \
     -v "${AUTHELIA_SECRETS_DIR}:/config/secrets:ro" \
