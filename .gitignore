@@ -48,3 +48,5 @@ WORKING.md
 .dolt/
 *.db
 .beads-credential-key
+rustfs/
+seaweedfs/
