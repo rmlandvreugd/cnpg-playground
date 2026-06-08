@@ -362,6 +362,29 @@ JSON
                 -s3.key.file=/etc/seaweedfs/tls/seaweedfs_key.pem \
                 -s3.config=/etc/seaweedfs/identities.json
         ${CONTAINER_PROVIDER} network connect kind "${SEAWEEDFS_CONTAINER_NAME}"
+
+        echo "🔒 Starting SeaweedFS admin UI with TLS..."
+        sudo tee "${SEAWEEDFS_CFG_DIR}/security.toml" > /dev/null <<TOML
+[https.admin]
+cert = "/etc/seaweedfs/tls/seaweedfs_cert.pem"
+key = "/etc/seaweedfs/tls/seaweedfs_key.pem"
+TOML
+
+        SEAWEEDFS_BRIDGE_IP=$(${CONTAINER_PROVIDER} inspect "${SEAWEEDFS_CONTAINER_NAME}" \
+            --format '{{.NetworkSettings.Networks.bridge.IPAddress}}')
+        ${CONTAINER_PROVIDER} stop  "${SEAWEEDFS_ADMIN_CONTAINER_NAME}" 2>/dev/null || true
+        ${CONTAINER_PROVIDER} rm    "${SEAWEEDFS_ADMIN_CONTAINER_NAME}" 2>/dev/null || true
+        ${CONTAINER_PROVIDER} run \
+            --name "${SEAWEEDFS_ADMIN_CONTAINER_NAME}" -d \
+            --network bridge \
+            -p "${SEAWEEDFS_ADMIN_PORT}:23646" \
+            -v "${SEAWEEDFS_TLS_DIR}:/etc/seaweedfs/tls:ro" \
+            -v "${SEAWEEDFS_CFG_DIR}/security.toml:/etc/seaweedfs/security.toml:ro" \
+            --restart unless-stopped \
+            "${SEAWEEDFS_IMAGE}" \
+            admin \
+                -master="${SEAWEEDFS_BRIDGE_IP}:9333" \
+                -port=23646
     fi
 
     $CONTAINER_PROVIDER network connect kind "${STEP_CA_CONTAINER_NAME}" 2>/dev/null || true
