@@ -2,7 +2,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: revocation-exporter
-  namespace: monitoring
+  namespace: prometheus-operator
   labels:
     app.kubernetes.io/name: revocation-exporter
 spec:
@@ -15,7 +15,7 @@ apiVersion: v1
 kind: Endpoints
 metadata:
   name: revocation-exporter
-  namespace: monitoring
+  namespace: prometheus-operator
 subsets:
   - addresses:
       - ip: ${HOST_IP}
