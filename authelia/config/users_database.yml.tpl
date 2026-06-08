@@ -1,6 +1,17 @@
 users:
-  dexuser:
-    displayname: "Dex User"
+  admin:
+    displayname: "Administrator"
+    password: "${AUTHELIA_STATIC_PASSWORD_HASH}"
+    email: admin@example.com
+    groups:
+      - admin
+      - authelia-admin
+      - grafana-admin
+      - vault-admin
+      - data-admin
+      - database-admin
+  authuser:
+    displayname: "Authelia User"
     password: "${AUTHELIA_STATIC_PASSWORD_HASH}"
     email: user@example.com
     groups: []
