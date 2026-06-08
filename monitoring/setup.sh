@@ -71,14 +71,14 @@ for region in "${REGIONS[@]}"; do
             --context "${CONTEXT_NAME}" \
             -n mimir \
             --image=minio/mc:latest \
-            --pod-running-timeout=60s \
+            --pod-running-timeout=180s \
             --command -- sh -c "mc --insecure alias set store https://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1 \
                 && mc --insecure mb --ignore-existing store/mimir-blocks \
                 && mc --insecure mb --ignore-existing store/mimir-alertmanager \
                 && mc --insecure mb --ignore-existing store/mimir-ruler \
                 && echo '✅ Mimir buckets ready'"
         kubectl --context "${CONTEXT_NAME}" -n mimir wait pod/mimir-bucket-init \
-            --for=jsonpath='{.status.phase}'=Succeeded --timeout=60s \
+            --for=jsonpath='{.status.phase}'=Succeeded --timeout=180s \
             && kubectl --context "${CONTEXT_NAME}" -n mimir logs pod/mimir-bucket-init \
             || echo "  ⚠️  Mimir bucket init may have failed — verify manually"
         kubectl --context "${CONTEXT_NAME}" -n mimir delete pod mimir-bucket-init --ignore-not-found
@@ -133,12 +133,12 @@ for region in "${REGIONS[@]}"; do
             --context "${CONTEXT_NAME}" \
             -n tempo \
             --image=minio/mc:latest \
-            --pod-running-timeout=60s \
+            --pod-running-timeout=180s \
             --command -- sh -c "mc --insecure alias set store https://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1 \
                 && mc --insecure mb --ignore-existing store/tempo \
                 && echo '✅ Bucket tempo ready'"
         kubectl --context "${CONTEXT_NAME}" -n tempo wait pod/tempo-bucket-init \
-            --for=jsonpath='{.status.phase}'=Succeeded --timeout=60s \
+            --for=jsonpath='{.status.phase}'=Succeeded --timeout=180s \
             && kubectl --context "${CONTEXT_NAME}" -n tempo logs pod/tempo-bucket-init \
             || echo "  ⚠️  Tempo bucket init may have failed — verify manually"
         kubectl --context "${CONTEXT_NAME}" -n tempo delete pod tempo-bucket-init --ignore-not-found
@@ -243,12 +243,12 @@ EOF
         --context "${CONTEXT_NAME}" \
         -n grafana \
         --image=minio/mc:latest \
-        --pod-running-timeout=60s \
+        --pod-running-timeout=180s \
         --command -- sh -c "mc --insecure alias set store https://seaweedfs:8333 '${SEAWEEDFS_ACCESS_KEY}' '${SEAWEEDFS_SECRET_KEY}' >/dev/null 2>&1 \
             && mc --insecure mb --ignore-existing store/loki \
             && echo '✅ Bucket loki ready'"
     kubectl --context "${CONTEXT_NAME}" -n grafana wait pod/loki-bucket-init \
-        --for=jsonpath='{.status.phase}'=Succeeded --timeout=60s \
+        --for=jsonpath='{.status.phase}'=Succeeded --timeout=180s \
         && kubectl --context "${CONTEXT_NAME}" -n grafana logs pod/loki-bucket-init \
         || echo "  ⚠️  Bucket init may have failed — verify: kubectl run mc ... mc --insecure mb store/loki"
     kubectl --context "${CONTEXT_NAME}" -n grafana delete pod loki-bucket-init --ignore-not-found
