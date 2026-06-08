@@ -72,18 +72,7 @@ export KUBECONFIG="${KUBE_CONFIG_PATH}"
 > "${KUBE_CONFIG_PATH}" # Create or clear the kubeconfig file
 cd "${GIT_REPO_ROOT}"
 
-# Render kind-cluster.yaml from template now that Authelia TLS dir exists
-HOST_IP=$(hostname -I | awk '{print $1}')
-HOST_IP_DASHED=$(echo "$HOST_IP" | tr '.' '-')
-AUTHELIA_TLS_DIR="${GIT_REPO_ROOT}/authelia/tls"
-AUTHELIA_HOST_RENDERED="authelia.${HOST_IP_DASHED}.sslip.io"
-AUTHELIA_TLS_DIR="${AUTHELIA_TLS_DIR}" \
-AUTHELIA_HOST="${AUTHELIA_HOST_RENDERED}" \
-AUTHELIA_PORT="${AUTHELIA_PORT}" \
-envsubst '${AUTHELIA_TLS_DIR} ${AUTHELIA_HOST} ${AUTHELIA_PORT}' \
-    < "${GIT_REPO_ROOT}/k8s/kind-cluster.yaml.tpl" \
-    > "${GIT_REPO_ROOT}/k8s/kind-cluster.yaml"
-kind_config_path="${GIT_REPO_ROOT}/k8s/kind-cluster.yaml"
+kind_config_path="${GIT_REPO_ROOT}/k8s/kind-cluster.yaml.tpl"
 
 # --- Phase 1: Provision Clusters and RustFS Instances ---
 let "current_objectstore_port = RUSTFS_BASE_PORT"
