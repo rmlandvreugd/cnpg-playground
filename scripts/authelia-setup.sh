@@ -150,6 +150,7 @@ ${CONTAINER_PROVIDER} run -d \
     --name "${AUTHELIA_CONTAINER_NAME}" \
     --network bridge \
     ${SECURITY_OPTS} \
+    -e X_AUTHELIA_CONFIG_FILTERS=template \
     -p "${AUTHELIA_PORT}:${AUTHELIA_PORT}" \
     -v "${AUTHELIA_CONFIG_DIR}/configuration.yaml:/config/configuration.yml:ro" \
     -v "${AUTHELIA_CONFIG_DIR}/users_database.yml:/config/users_database.yml:ro" \
