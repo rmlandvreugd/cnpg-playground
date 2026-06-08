@@ -111,7 +111,7 @@ STEP_CA_PROVISIONER_NAME="${STEP_CA_PROVISIONER_NAME:-admin}"
 TRUST_MANAGER_CHART_VERSION="${TRUST_MANAGER_CHART_VERSION:-0.17.1}"
 
 # Authelia
-AUTHELIA_IMAGE="${AUTHELIA_IMAGE:-ghcr.io/authelia/authelia:4.38.19}"
+AUTHELIA_IMAGE="${AUTHELIA_IMAGE:-ghcr.io/authelia/authelia:4.39.20}"
 AUTHELIA_CONTAINER_NAME="${AUTHELIA_CONTAINER_NAME:-authelia}"
 AUTHELIA_PORT="${AUTHELIA_PORT:-9091}"
 # User password hashes (bcrypt — same values as before, Authelia file provider accepts bcrypt)

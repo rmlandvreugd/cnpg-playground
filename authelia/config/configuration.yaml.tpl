@@ -46,6 +46,13 @@ identity_providers:
         algorithm: 'RS256'
         use: 'sig'
         key: {{ secret "/config/secrets/jwks_rsa_private.pem" | mindent 10 "|" | msquote }}
+    claims_policies:
+      default_policy:
+        id_token:
+          - 'groups'
+          - 'email'
+          - 'preferred_username'
+          - 'name'
     clients:
       - client_id: vault
         client_name: Vault
@@ -59,6 +66,7 @@ identity_providers:
           - email
           - profile
           - groups
+        claims_policy: 'default_policy'
         userinfo_signed_response_alg: none
       - client_id: step-ca
         client_name: step-ca
@@ -70,6 +78,7 @@ identity_providers:
           - email
           - profile
           - groups
+        claims_policy: 'default_policy'
         userinfo_signed_response_alg: none
       - client_id: grafana-rbr-ver
         client_name: Grafana RBR VER
@@ -81,6 +90,7 @@ identity_providers:
           - email
           - profile
           - groups
+        claims_policy: 'default_policy'
         userinfo_signed_response_alg: none
       - client_id: grafana-monitoring
         client_name: Grafana Monitoring
@@ -92,6 +102,7 @@ identity_providers:
           - email
           - profile
           - groups
+        claims_policy: 'default_policy'
         userinfo_signed_response_alg: none
       - client_id: kubernetes
         client_name: Kubernetes
@@ -104,3 +115,4 @@ identity_providers:
           - email
           - profile
           - groups
+        claims_policy: 'default_policy'
