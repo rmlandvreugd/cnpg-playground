@@ -108,15 +108,19 @@ for region in "${REGIONS[@]}"; do
             --name "${SEAWEEDFS_CONTAINER_NAME}" -d \
             --network bridge \
             -p "${SEAWEEDFS_S3_PORT}:8333" \
+            -p "${SEAWEEDFS_S3_HTTP_PORT}:${SEAWEEDFS_S3_HTTP_PORT}" \
             -p "${SEAWEEDFS_MASTER_PORT}:9333" \
             -p "${SEAWEEDFS_VOLUME_PORT}:9340" \
             -p "${SEAWEEDFS_FILER_PORT}:8889" \
-            -p "${SEAWEEDFS_ADMIN_PORT}:23646" \
             -v "${SEAWEEDFS_CONTAINER_NAME}:/data" \
             --restart unless-stopped \
             "${SEAWEEDFS_IMAGE}" \
-            mini -dir=/data \
-                -filer.port=8889
+            server -dir=/data \
+                -filer \
+                -s3 \
+                -filer.port=8889 \
+                -volume.port=9340 \
+                -s3.port="${SEAWEEDFS_S3_HTTP_PORT}"
     fi
 
     echo "🏗️  Creating Kind cluster '${K8S_CLUSTER_NAME}'..."
@@ -338,18 +342,21 @@ JSON
             --name "${SEAWEEDFS_CONTAINER_NAME}" -d \
             --network bridge \
             -p "${SEAWEEDFS_S3_PORT}:8333" \
+            -p "${SEAWEEDFS_S3_HTTP_PORT}:${SEAWEEDFS_S3_HTTP_PORT}" \
             -p "${SEAWEEDFS_MASTER_PORT}:9333" \
             -p "${SEAWEEDFS_VOLUME_PORT}:9340" \
             -p "${SEAWEEDFS_FILER_PORT}:8889" \
-            -p "${SEAWEEDFS_ADMIN_PORT}:23646" \
             -v "${SEAWEEDFS_CONTAINER_NAME}:/data" \
             -v "${SEAWEEDFS_TLS_DIR}:/etc/seaweedfs/tls:ro" \
             -v "${SEAWEEDFS_CFG_DIR}/identities.json:/etc/seaweedfs/identities.json:ro" \
             --restart unless-stopped \
             "${SEAWEEDFS_IMAGE}" \
-            mini -dir=/data \
+            server -dir=/data \
+                -filer \
+                -s3 \
                 -filer.port=8889 \
-                -s3.port=0 \
+                -volume.port=9340 \
+                -s3.port="${SEAWEEDFS_S3_HTTP_PORT}" \
                 -s3.port.https=8333 \
                 -s3.cert.file=/etc/seaweedfs/tls/seaweedfs_cert.pem \
                 -s3.key.file=/etc/seaweedfs/tls/seaweedfs_key.pem \
