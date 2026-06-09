@@ -160,7 +160,8 @@ for region in "${REGIONS[@]}"; do
     echo "🛠️  Installing Calico CNI (tigera-operator ${TIGERA_OPERATOR_CHART_VERSION}) in '${K8S_CLUSTER_NAME}'..."
     helm_upgrade_install tigera-operator tigera-operator tigera-operator "$(get_cluster_context "${region}")" \
         "${TIGERA_OPERATOR_CHART_VERSION}" \
-        --repo-url https://docs.tigera.io/calico/charts
+        --repo-url https://docs.tigera.io/calico/charts \
+        -f "${GIT_REPO_ROOT}/k8s/calico/tigera-operator-values.yaml"
     kubectl apply -f "${GIT_REPO_ROOT}/k8s/calico/installation.yaml" --context "$(get_cluster_context "${region}")"
     echo "⏳ Waiting for calico-node pods to appear..."
     until kubectl get pod -l k8s-app=calico-node -n calico-system \
