@@ -163,12 +163,12 @@ for region in "${REGIONS[@]}"; do
         --repo-url https://docs.tigera.io/calico/charts \
         -f "${GIT_REPO_ROOT}/k8s/calico/tigera-operator-values.yaml"
     kubectl apply -f "${GIT_REPO_ROOT}/k8s/calico/installation.yaml" --context "$(get_cluster_context "${region}")"
-    echo "⏳ Waiting for calico-node pods to appear..."
-    until kubectl get pod -l k8s-app=calico-node -n calico-system \
-        --no-headers --context "$(get_cluster_context "${region}")" 2>/dev/null | grep -q .; do
+    echo "⏳ Waiting for calico-node DaemonSet to appear..."
+    until kubectl get daemonset calico-node -n calico-system \
+        --context "$(get_cluster_context "${region}")" &>/dev/null; do
         sleep 3
     done
-    kubectl wait --for=condition=Ready pod -l k8s-app=calico-node -n calico-system \
+    kubectl rollout status daemonset/calico-node -n calico-system \
         --timeout=900s --context "$(get_cluster_context "${region}")"
 
     echo "🛠️  Installing MetalLB ${METALLB_CHART_VERSION} (chart) in '${K8S_CLUSTER_NAME}'..."
