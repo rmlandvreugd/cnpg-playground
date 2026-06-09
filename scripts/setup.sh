@@ -162,6 +162,11 @@ for region in "${REGIONS[@]}"; do
         "${TIGERA_OPERATOR_CHART_VERSION}" \
         --repo-url https://docs.tigera.io/calico/charts
     kubectl apply -f "${GIT_REPO_ROOT}/k8s/calico/installation.yaml" --context "$(get_cluster_context "${region}")"
+    echo "⏳ Waiting for calico-node pods to appear..."
+    until kubectl get pod -l k8s-app=calico-node -n calico-system \
+        --context "$(get_cluster_context "${region}")" &>/dev/null 2>&1; do
+        sleep 3
+    done
     kubectl wait --for=condition=Ready pod -l k8s-app=calico-node -n calico-system \
         --timeout=300s --context "$(get_cluster_context "${region}")"
 
