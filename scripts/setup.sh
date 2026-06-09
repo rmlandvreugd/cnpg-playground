@@ -705,6 +705,40 @@ ${CONTAINER_PROVIDER} run \
 echo "✅ Revocation exporter running on host:${REVOCATION_EXPORTER_PORT}"
 echo "   Endpoints: ${REVOC_ENDPOINTS}"
 
+echo "=================================================="
+echo "🔭 Installing Radar on hub cluster..."
+echo "=================================================="
+HUB_CONTEXT=$(get_cluster_context "${HUB_REGION}")
+HUB_TRAEFIK_IP=$(kubectl get svc traefik -n traefik \
+    -o jsonpath='{.status.loadBalancer.ingress[0].ip}' \
+    --context "${HUB_CONTEXT}")
+HUB_TRAEFIK_IP_DASHED=$(ip_to_dashed "${HUB_TRAEFIK_IP}")
+
+kubectl create namespace radar --context "${HUB_CONTEXT}" \
+    --dry-run=client -o yaml | kubectl apply --context "${HUB_CONTEXT}" -f -
+
+echo "📜 Issuing Radar TLS certificate..."
+TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
+    < "${GIT_REPO_ROOT}/radar/certificate.yaml.tpl" \
+    | kubectl --context "${HUB_CONTEXT}" apply -f -
+kubectl wait --for=condition=Ready certificate/radar-tls-cert \
+    -n radar --timeout=120s --context "${HUB_CONTEXT}"
+
+echo "🔭 Installing Radar ${RADAR_CHART_VERSION}..."
+helm_upgrade_install radar \
+    oci://ghcr.io/skyhook-io/radar \
+    radar "${HUB_CONTEXT}" "${RADAR_CHART_VERSION}" \
+    --values "${GIT_REPO_ROOT}/radar/values.yaml" \
+    --set "auth.oidc.issuerURL=https://authelia.${HOST_IP_DASHED}.sslip.io:${AUTHELIA_PORT}" \
+    --set "auth.oidc.clientSecret=${AUTHELIA_RADAR_CLIENT_SECRET}" \
+    --set "auth.oidc.redirectURL=https://radar.${HUB_TRAEFIK_IP_DASHED}.sslip.io/auth/callback"
+
+echo "🌐 Applying Radar IngressRoute (HTTPS)..."
+TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
+    < "${GIT_REPO_ROOT}/radar/ingressroute.yaml.tpl" \
+    | kubectl --context "${HUB_CONTEXT}" apply -f -
+echo "✅ Radar: https://radar.${HUB_TRAEFIK_IP_DASHED}.sslip.io"
+
 # --- Final Instructions ---
 echo
 # Display information using the info script

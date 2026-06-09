@@ -10,6 +10,7 @@ users:
       - vault-admin
       - data-admin
       - database-admin
+      - k8s-admin
   authuser:
     displayname: "Authelia User"
     password: "${AUTHELIA_STATIC_PASSWORD_HASH}"

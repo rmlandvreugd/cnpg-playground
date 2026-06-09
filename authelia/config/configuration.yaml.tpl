@@ -116,3 +116,15 @@ identity_providers:
           - profile
           - groups
         claims_policy: 'default_policy'
+      - client_id: radar
+        client_name: Radar
+        client_secret: '${AUTHELIA_RADAR_CLIENT_SECRET_HASH}'
+        redirect_uris:
+          - 'https://radar.${TRAEFIK_IP_DASHED}.sslip.io/auth/callback'
+        scopes:
+          - openid
+          - email
+          - profile
+          - groups
+        claims_policy: 'default_policy'
+        userinfo_signed_response_alg: none

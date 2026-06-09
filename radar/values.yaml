@@ -1,0 +1,30 @@
+auth:
+  mode: oidc
+  oidc:
+    clientID: radar
+    groupsClaim: groups
+    caCert: /etc/radar/oidc-ca.crt
+
+rbac:
+  create: true
+  podLogs: true
+  podExec: true
+  portForward: true
+  secrets: true
+  viewRBAC: true
+  viewWebhooks: true
+  helm: true
+
+extraVolumes:
+  - name: oidc-ca
+    configMap:
+      name: step-ca-external-bundle
+      items:
+        - key: ca-certificates.crt
+          path: oidc-ca.crt
+
+extraVolumeMounts:
+  - name: oidc-ca
+    mountPath: /etc/radar/oidc-ca.crt
+    subPath: oidc-ca.crt
+    readOnly: true
