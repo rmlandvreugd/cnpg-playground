@@ -705,15 +705,47 @@ ${CONTAINER_PROVIDER} run \
 echo "✅ Revocation exporter running on host:${REVOCATION_EXPORTER_PORT}"
 echo "   Endpoints: ${REVOC_ENDPOINTS}"
 
-echo "=================================================="
-echo "🔭 Installing Radar on hub cluster..."
-echo "=================================================="
 HOST_IP_DASHED=$(hostname -I | awk '{print $1}' | tr '.' '-')
 HUB_CONTEXT=$(get_cluster_context "${HUB_REGION}")
 HUB_TRAEFIK_IP=$(kubectl get svc traefik -n traefik \
     -o jsonpath='{.status.loadBalancer.ingress[0].ip}' \
     --context "${HUB_CONTEXT}")
 HUB_TRAEFIK_IP_DASHED=$(ip_to_dashed "${HUB_TRAEFIK_IP}")
+
+echo "=================================================="
+echo "🔐 Exposing Authelia via Traefik (hub cluster)..."
+echo "=================================================="
+# Radar runs at radar.TRAEFIK_IP.sslip.io but Authelia is a host container
+# at HOST_IP. Authelia requires authelia_url to share the cookie domain.
+# We proxy Authelia through Traefik so both endpoints share the Traefik domain.
+kubectl create namespace authelia --context "${HUB_CONTEXT}" \
+    --dry-run=client -o yaml | kubectl apply --context "${HUB_CONTEXT}" -f -
+
+HOST_IP_DASHED="${HOST_IP_DASHED}" \
+AUTHELIA_PORT="${AUTHELIA_PORT}" \
+envsubst '${HOST_IP_DASHED} ${AUTHELIA_PORT}' \
+    < "${GIT_REPO_ROOT}/authelia/backend-service.yaml.tpl" \
+    | kubectl --context "${HUB_CONTEXT}" apply -f -
+
+echo "📜 Issuing Authelia Traefik TLS certificate..."
+TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
+    < "${GIT_REPO_ROOT}/authelia/certificate.yaml.tpl" \
+    | kubectl --context "${HUB_CONTEXT}" apply -f -
+kubectl wait --for=condition=Ready certificate/authelia-tls-cert \
+    -n authelia --timeout=120s --context "${HUB_CONTEXT}"
+
+TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
+    < "${GIT_REPO_ROOT}/authelia/ingressroute.yaml.tpl" \
+    | kubectl --context "${HUB_CONTEXT}" apply -f -
+echo "✅ Authelia proxied at https://authelia.${HUB_TRAEFIK_IP_DASHED}.sslip.io"
+
+echo "🔄 Reconfiguring Authelia with two-domain session cookie..."
+TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" \
+    "${SCRIPT_DIR}/authelia-setup.sh"
+
+echo "=================================================="
+echo "🔭 Installing Radar on hub cluster..."
+echo "=================================================="
 
 kubectl create namespace radar --context "${HUB_CONTEXT}" \
     --dry-run=client -o yaml | kubectl apply --context "${HUB_CONTEXT}" -f -
