@@ -44,6 +44,9 @@ SCRATCHPAD.md
 TASK-QUEUE.md
 WORKING.md
 
+# Generated kind cluster config (rendered from kind-cluster.yaml.tpl)
+k8s/kind-cluster.yaml
+
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db

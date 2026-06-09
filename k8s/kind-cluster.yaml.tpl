@@ -1,10 +1,17 @@
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: cnpg
+networking:
+  disableDefaultCNI: true
+  podSubnet: "10.244.0.0/16"
 nodes:
 
 # Control Plane node
 - role: control-plane
+  extraMounts:
+    - hostPath: ${GIT_REPO_ROOT}/k8s/encryption/secretbox.key
+      containerPath: /etc/kubernetes/encryption/secretbox.key
+      readOnly: true
   kubeadmConfigPatches:
     - |
       kind: ClusterConfiguration
@@ -18,6 +25,15 @@ nodes:
         local:
           extraArgs:
             listen-metrics-urls: http://0.0.0.0:2381
+      apiServer:
+        extraArgs:
+          encryption-provider-config: /etc/kubernetes/encryption/secretbox.key
+        extraVolumes:
+          - name: encryption-config
+            hostPath: /etc/kubernetes/encryption/secretbox.key
+            mountPath: /etc/kubernetes/encryption/secretbox.key
+            readOnly: true
+            pathType: File
     - |
       kind: KubeProxyConfiguration
       metricsBindAddress: 0.0.0.0

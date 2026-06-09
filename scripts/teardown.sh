@@ -74,6 +74,16 @@ for region in "${REGIONS[@]}"; do
     fi
 done
 
+ENCRYPTION_KEY_FILE="${GIT_REPO_ROOT}/k8s/encryption/secretbox.key"
+if [[ -f "${ENCRYPTION_KEY_FILE}" ]]; then
+    echo "🗑️  Removing encryption key..."
+    rm -f "${ENCRYPTION_KEY_FILE}"
+fi
+RENDERED_CLUSTER_CONFIG="${GIT_REPO_ROOT}/k8s/kind-cluster.yaml"
+if [[ -f "${RENDERED_CLUSTER_CONFIG}" ]]; then
+    rm -f "${RENDERED_CLUSTER_CONFIG}"
+fi
+
 echo "--------------------------------------------------"
 echo "🔥 Tearing down shared services..."
 echo "--------------------------------------------------"

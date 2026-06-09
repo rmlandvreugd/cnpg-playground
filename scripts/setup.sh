@@ -72,7 +72,29 @@ export KUBECONFIG="${KUBE_CONFIG_PATH}"
 > "${KUBE_CONFIG_PATH}" # Create or clear the kubeconfig file
 cd "${GIT_REPO_ROOT}"
 
-kind_config_path="${GIT_REPO_ROOT}/k8s/kind-cluster.yaml.tpl"
+kind_config_path="${GIT_REPO_ROOT}/k8s/kind-cluster.yaml"
+
+# Generate secretbox encryption key and render kind cluster config
+echo "🔑 Generating secretbox encryption key..."
+mkdir -p "${GIT_REPO_ROOT}/k8s/encryption"
+SECRETBOX_KEY=$(head -c 32 /dev/urandom | base64)
+cat > "${GIT_REPO_ROOT}/k8s/encryption/secretbox.key" <<EOF
+apiVersion: apiserver.config.k8s.io/v1
+kind: EncryptionConfiguration
+resources:
+  - resources:
+      - secrets
+    providers:
+      - secretbox:
+          keys:
+            - name: key1
+              secret: ${SECRETBOX_KEY}
+      - identity: {}
+EOF
+chmod 0600 "${GIT_REPO_ROOT}/k8s/encryption/secretbox.key"
+GIT_REPO_ROOT="${GIT_REPO_ROOT}" envsubst '${GIT_REPO_ROOT}' \
+    < "${GIT_REPO_ROOT}/k8s/kind-cluster.yaml.tpl" \
+    > "${GIT_REPO_ROOT}/k8s/kind-cluster.yaml"
 
 # --- Phase 1: Provision Clusters and RustFS Instances ---
 let "current_objectstore_port = RUSTFS_BASE_PORT"
@@ -134,6 +156,14 @@ for region in "${REGIONS[@]}"; do
     kubectl label node -l postgres.node.kubernetes.io node-role.kubernetes.io/postgres= --context "$(get_cluster_context "${region}")"
     kubectl label node -l infra.node.kubernetes.io node-role.kubernetes.io/infra= --context "$(get_cluster_context "${region}")"
     kubectl label node -l app.node.kubernetes.io node-role.kubernetes.io/app= --context "$(get_cluster_context "${region}")"
+
+    echo "🛠️  Installing Calico CNI (tigera-operator ${TIGERA_OPERATOR_CHART_VERSION}) in '${K8S_CLUSTER_NAME}'..."
+    helm_upgrade_install tigera-operator tigera-operator tigera-operator "$(get_cluster_context "${region}")" \
+        "${TIGERA_OPERATOR_CHART_VERSION}" \
+        --repo-url https://docs.tigera.io/calico/charts
+    kubectl apply -f "${GIT_REPO_ROOT}/k8s/calico/installation.yaml" --context "$(get_cluster_context "${region}")"
+    kubectl wait --for=condition=Ready pod -l k8s-app=calico-node -n calico-system \
+        --timeout=300s --context "$(get_cluster_context "${region}")"
 
     echo "🛠️  Installing MetalLB ${METALLB_CHART_VERSION} (chart) in '${K8S_CLUSTER_NAME}'..."
     # Enable strict ARP for kube-proxy
@@ -616,38 +646,6 @@ echo "=================================================="
 echo "🔑 Configuring Vault OIDC auth (once, post-loop)..."
 echo "=================================================="
 "${SCRIPT_DIR}/vault-oidc-setup.sh"
-echo
-
-echo "========================================================"
-echo "🔑 Adding step-ca OIDC provisioner (post-Authelia)..."
-echo "========================================================"
-HOST_IP=$(hostname -I | awk '{print $1}')
-HOST_IP_DASHED=$(echo "$HOST_IP" | tr '.' '-')
-AUTHELIA_HOST="authelia.${HOST_IP_DASHED}.sslip.io"
-
-# Add step-ca's own intermediate CA to its trust store so step-ca can verify
-# Authelia's TLS cert (signed by step-ca's intermediate CA via X5C provisioner)
-echo "🔐 Adding step-ca intermediate CA to step-ca trust store (for Authelia OIDC)..."
-CA_CERTS_TMPFILE=$(mktemp)
-${CONTAINER_PROVIDER} cp "${STEP_CA_CONTAINER_NAME}:/etc/ssl/certs/ca-certificates.crt" "${CA_CERTS_TMPFILE}"
-sudo cat "${GIT_REPO_ROOT}/step-ca/pki/intermediate_ca.crt" >> "${CA_CERTS_TMPFILE}"
-${CONTAINER_PROVIDER} cp "${CA_CERTS_TMPFILE}" "${STEP_CA_CONTAINER_NAME}:/tmp/ca-certificates.crt"
-${CONTAINER_PROVIDER} exec -u 0 "${STEP_CA_CONTAINER_NAME}" sh -c 'cp /tmp/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt && rm /tmp/ca-certificates.crt'
-rm -f "${CA_CERTS_TMPFILE}"
-
-STEP_CA_PASSWORD=$(sudo cat "${GIT_REPO_ROOT}/step-ca/secrets/.ca_password")
-${CONTAINER_PROVIDER} exec \
-    -e STEPPATH=/home/step \
-    "${STEP_CA_CONTAINER_NAME}" \
-    step ca provisioner add authelia --type OIDC \
-    --client-id "step-ca" \
-    --client-secret "${AUTHELIA_STEP_CA_CLIENT_SECRET}" \
-    --configuration-endpoint "https://${AUTHELIA_HOST}:${AUTHELIA_PORT}/.well-known/openid-configuration" \
-    --password-file /home/step/secrets/password \
-    --ca-config /home/step/config/ca.json
-# Reload step-ca to pick up the new provisioner
-${CONTAINER_PROVIDER} exec "${STEP_CA_CONTAINER_NAME}" kill -HUP 1
-echo "✅ step-ca OIDC provisioner added"
 echo
 
 # --- Phase 2: Distribute RustFS Secrets to all Clusters ---
