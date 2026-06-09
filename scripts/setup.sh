@@ -165,7 +165,7 @@ for region in "${REGIONS[@]}"; do
     kubectl apply -f "${GIT_REPO_ROOT}/k8s/calico/installation.yaml" --context "$(get_cluster_context "${region}")"
     echo "⏳ Waiting for calico-node pods to appear..."
     until kubectl get pod -l k8s-app=calico-node -n calico-system \
-        --context "$(get_cluster_context "${region}")" &>/dev/null 2>&1; do
+        --no-headers --context "$(get_cluster_context "${region}")" 2>/dev/null | grep -q .; do
         sleep 3
     done
     kubectl wait --for=condition=Ready pod -l k8s-app=calico-node -n calico-system \
