@@ -9,6 +9,8 @@ spec:
   routes:
     - kind: Rule
       match: Host(`radar.${TRAEFIK_IP_DASHED}.sslip.io`)
+      middlewares:
+        - name: authelia-forwardauth
       services:
         - name: radar
           port: 9280

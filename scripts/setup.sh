@@ -727,14 +727,17 @@ kubectl wait --for=condition=Ready certificate/radar-tls-cert \
 
 echo "🔭 Installing Radar ${RADAR_CHART_VERSION}..."
 helm_upgrade_install radar \
-    oci://ghcr.io/skyhook-io/radar \
+    radar \
     radar "${HUB_CONTEXT}" "${RADAR_CHART_VERSION}" \
-    --values "${GIT_REPO_ROOT}/radar/values.yaml" \
-    --set "auth.oidc.issuerURL=https://authelia.${HOST_IP_DASHED}.sslip.io:${AUTHELIA_PORT}" \
-    --set "auth.oidc.clientSecret=${AUTHELIA_RADAR_CLIENT_SECRET}" \
-    --set "auth.oidc.redirectURL=https://radar.${HUB_TRAEFIK_IP_DASHED}.sslip.io/auth/callback"
+    --repo-url https://skyhook-io.github.io/helm-charts \
+    --values "${GIT_REPO_ROOT}/radar/values.yaml"
 
-echo "🌐 Applying Radar IngressRoute (HTTPS)..."
+echo "🌐 Applying Radar Middleware + IngressRoute (HTTPS)..."
+HOST_IP_DASHED="${HOST_IP_DASHED}" \
+AUTHELIA_PORT="${AUTHELIA_PORT}" \
+envsubst '${HOST_IP_DASHED} ${AUTHELIA_PORT}' \
+    < "${GIT_REPO_ROOT}/radar/middleware.yaml.tpl" \
+    | kubectl --context "${HUB_CONTEXT}" apply -f -
 TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
     < "${GIT_REPO_ROOT}/radar/ingressroute.yaml.tpl" \
     | kubectl --context "${HUB_CONTEXT}" apply -f -
