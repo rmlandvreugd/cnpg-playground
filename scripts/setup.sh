@@ -152,19 +152,6 @@ for region in "${REGIONS[@]}"; do
     fi
     kind create cluster --config "${kind_config_path}" --name "${K8S_CLUSTER_NAME}"
 
-    preload_images_into_kind "${K8S_CLUSTER_NAME}" \
-        "docker.io/calico/node:${TIGERA_OPERATOR_CHART_VERSION}" \
-        "docker.io/calico/cni:${TIGERA_OPERATOR_CHART_VERSION}" \
-        "docker.io/calico/kube-controllers:${TIGERA_OPERATOR_CHART_VERSION}" \
-        "docker.io/calico/apiserver:${TIGERA_OPERATOR_CHART_VERSION}" \
-        "docker.io/calico/pod2daemon-flexvol:${TIGERA_OPERATOR_CHART_VERSION}" \
-        "docker.io/calico/typha:${TIGERA_OPERATOR_CHART_VERSION}" \
-        "docker.io/calico/csi:${TIGERA_OPERATOR_CHART_VERSION}" \
-        "docker.io/calico/node-driver-registrar:${TIGERA_OPERATOR_CHART_VERSION}" \
-        "docker.io/otel/opentelemetry-collector-contrib:${OTEL_COLLECTOR_IMAGE_TAG}" \
-        "${GRAFANA_IMAGE}" \
-        "docker.io/dpage/pgadmin4:latest"
-
     echo "🏷️  Labeling nodes in '${K8S_CLUSTER_NAME}'..."
     kubectl label node -l postgres.node.kubernetes.io node-role.kubernetes.io/postgres= --context "$(get_cluster_context "${region}")"
     kubectl label node -l infra.node.kubernetes.io node-role.kubernetes.io/infra= --context "$(get_cluster_context "${region}")"
@@ -182,7 +169,7 @@ for region in "${REGIONS[@]}"; do
         sleep 3
     done
     kubectl wait --for=condition=Ready pod -l k8s-app=calico-node -n calico-system \
-        --timeout=300s --context "$(get_cluster_context "${region}")"
+        --timeout=600s --context "$(get_cluster_context "${region}")"
 
     echo "🛠️  Installing MetalLB ${METALLB_CHART_VERSION} (chart) in '${K8S_CLUSTER_NAME}'..."
     # Enable strict ARP for kube-proxy
@@ -199,7 +186,7 @@ for region in "${REGIONS[@]}"; do
     KIND_NET_SUBNET=$(get_kind_ipv4_subnet kind)
     SUBNET_IP=$(echo $KIND_NET_SUBNET | cut -d/ -f1)
     SUBNET_MASK=$(echo $KIND_NET_SUBNET | cut -d/ -f2)
-    
+
     # Find the index of the current region in the REGIONS array
     region_index=0
     for i in "${!REGIONS[@]}"; do
@@ -221,7 +208,7 @@ for region in "${REGIONS[@]}"; do
         THIRD_OCTET=$((255 - region_index))
         IP_RANGE="${SUBNET_PREFIX}.${THIRD_OCTET}.200-${SUBNET_PREFIX}.${THIRD_OCTET}.250"
     fi
-    
+
     echo "🌐 Configuring MetalLB in '${K8S_CLUSTER_NAME}' with IP range: ${IP_RANGE}"
     cat <<EOF | kubectl apply --context "$(get_cluster_context "${region}")" -f -
 apiVersion: metallb.io/v1beta1

@@ -3,6 +3,7 @@ kind: Installation
 metadata:
   name: default
 spec:
+  registry: quay.io/
   calicoNetwork:
     ipPools:
       - blockSize: 26

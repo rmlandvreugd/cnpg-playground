@@ -194,35 +194,6 @@ source $(git rev-parse --show-toplevel)/scripts/funcs_regions.sh
 TRAEFIK_VERSION="${TRAEFIK_VERSION:-v3.3.0}"
 TRAEFIK_IMAGE="${TRAEFIK_IMAGE:-traefik:v3.3}"
 
-# Pre-pull docker.io images on the host and load them into a Kind cluster,
-# eliminating in-cluster Docker Hub pulls that quickly exhaust the anonymous rate limit.
-# Usage: preload_images_into_kind <cluster_name> <image1> [image2 ...]
-preload_images_into_kind() {
-    local cluster_name="$1"
-    shift
-    local images=("$@")
-    local n="${#images[@]}"
-
-    echo "📦 Pre-pulling ${n} docker.io image(s) to bypass registry rate limits..."
-    local pids=()
-    for image in "${images[@]}"; do
-        ( "${CONTAINER_PROVIDER}" pull "${image}" >/dev/null 2>&1 \
-            && echo "  ✔ pulled ${image}" \
-            || echo "  ⚠ pull failed: ${image}" ) &
-        pids+=($!)
-    done
-    for pid in "${pids[@]}"; do
-        wait "$pid"
-    done
-
-    echo "📥 Loading ${n} image(s) into Kind cluster '${cluster_name}'..."
-    for image in "${images[@]}"; do
-        kind load docker-image "${image}" --name "${cluster_name}" >/dev/null 2>&1 \
-            && echo "  ✔ loaded ${image}" \
-            || echo "  ⚠ load failed: ${image}"
-    done
-}
-
 # Waits up to <timeout> seconds for the Traefik LoadBalancer IP to be assigned.
 # Prints the IP on success; returns 1 on timeout.
 get_traefik_lb_ip() {
