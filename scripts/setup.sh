@@ -169,7 +169,7 @@ for region in "${REGIONS[@]}"; do
         sleep 3
     done
     kubectl wait --for=condition=Ready pod -l k8s-app=calico-node -n calico-system \
-        --timeout=600s --context "$(get_cluster_context "${region}")"
+        --timeout=900s --context "$(get_cluster_context "${region}")"
 
     echo "🛠️  Installing MetalLB ${METALLB_CHART_VERSION} (chart) in '${K8S_CLUSTER_NAME}'..."
     # Enable strict ARP for kube-proxy
