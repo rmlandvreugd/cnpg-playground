@@ -1,6 +1,8 @@
 tolerations:
-  - key: node-role.kubernetes.io/control-plane
+  - effect: NoExecute
     operator: Exists
-    effect: NoSchedule
+  - effect: NoSchedule
+    operator: Exists
 nodeSelector:
+  kubernetes.io/os: linux
   node-role.kubernetes.io/control-plane: ""
