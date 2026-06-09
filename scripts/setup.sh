@@ -708,6 +708,7 @@ echo "   Endpoints: ${REVOC_ENDPOINTS}"
 echo "=================================================="
 echo "🔭 Installing Radar on hub cluster..."
 echo "=================================================="
+HOST_IP_DASHED=$(hostname -I | awk '{print $1}' | tr '.' '-')
 HUB_CONTEXT=$(get_cluster_context "${HUB_REGION}")
 HUB_TRAEFIK_IP=$(kubectl get svc traefik -n traefik \
     -o jsonpath='{.status.loadBalancer.ingress[0].ip}' \
