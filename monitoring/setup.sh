@@ -267,14 +267,11 @@ EOF
         --command -- sh -c "mc --insecure alias set store https://seaweedfs:8333 '${SEAWEEDFS_ACCESS_KEY}' '${SEAWEEDFS_SECRET_KEY}' 2>&1 \
             && mc --insecure mb --ignore-existing store/loki \
             && echo '✅ Bucket loki ready'"
-        # XXX: temporarily keep the bucket init pod around for debugging, since bucket creation is the most likely point of failure in the Loki setup. Manually delete after verifying bucket creation:
-        # --command -- sh -c "mc --insecure alias set store https://seaweedfs:8333 '${SEAWEEDFS_ACCESS_KEY}' '${SEAWEEDFS_SECRET_KEY}' >/dev/null 2>&1 \
     kubectl --context "${CONTEXT_NAME}" -n grafana wait pod/loki-bucket-init \
         --for=jsonpath='{.status.phase}'=Succeeded --timeout=180s \
         && kubectl --context "${CONTEXT_NAME}" -n grafana logs pod/loki-bucket-init \
         || echo "  ⚠️  Bucket init may have failed — verify: kubectl run mc ... mc --insecure mb store/loki"
-    # XXX: temporarily keep the bucket init pod around for debugging, since bucket creation is the most likely point of failure in the Loki setup. Manually delete after verifying bucket creation:
-    # kubectl --context "${CONTEXT_NAME}" -n grafana delete pod loki-bucket-init --ignore-not-found
+    kubectl --context "${CONTEXT_NAME}" -n grafana delete pod loki-bucket-init --ignore-not-found
 
     echo "📊 Installing Loki ${LOKI_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
     helm_upgrade_install loki oci://ghcr.io/grafana-community/helm-charts/loki \
