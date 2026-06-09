@@ -157,6 +157,7 @@ TEMPO_CHART_VERSION="${TEMPO_CHART_VERSION:-2.19.0}"
 OTEL_COLLECTOR_CHART_VERSION="${OTEL_COLLECTOR_CHART_VERSION:-0.153.0}"  # OCI: ghcr.io/open-telemetry/opentelemetry-helm-charts
 OTEL_COLLECTOR_IMAGE_TAG="${OTEL_COLLECTOR_IMAGE_TAG:-0.151.0}"          # otel/opentelemetry-collector-contrib; chart 0.153.0 appVersion is 0.151.0
 TIGERA_OPERATOR_CHART_VERSION="${TIGERA_OPERATOR_CHART_VERSION:-v3.29.1}"
+GRAFANA_IMAGE="${GRAFANA_IMAGE:-docker.io/grafana/grafana:12.4.1}"
 
 # --- Common Prerequisite Checks ---
 REQUIRED_COMMANDS="kind kubectl helm git grep sed envsubst jq"
@@ -192,6 +193,35 @@ source $(git rev-parse --show-toplevel)/scripts/funcs_regions.sh
 # --- Traefik Configuration ---
 TRAEFIK_VERSION="${TRAEFIK_VERSION:-v3.3.0}"
 TRAEFIK_IMAGE="${TRAEFIK_IMAGE:-traefik:v3.3}"
+
+# Pre-pull docker.io images on the host and load them into a Kind cluster,
+# eliminating in-cluster Docker Hub pulls that quickly exhaust the anonymous rate limit.
+# Usage: preload_images_into_kind <cluster_name> <image1> [image2 ...]
+preload_images_into_kind() {
+    local cluster_name="$1"
+    shift
+    local images=("$@")
+    local n="${#images[@]}"
+
+    echo "📦 Pre-pulling ${n} docker.io image(s) to bypass registry rate limits..."
+    local pids=()
+    for image in "${images[@]}"; do
+        ( "${CONTAINER_PROVIDER}" pull "${image}" >/dev/null 2>&1 \
+            && echo "  ✔ pulled ${image}" \
+            || echo "  ⚠ pull failed: ${image}" ) &
+        pids+=($!)
+    done
+    for pid in "${pids[@]}"; do
+        wait "$pid"
+    done
+
+    echo "📥 Loading ${n} image(s) into Kind cluster '${cluster_name}'..."
+    for image in "${images[@]}"; do
+        kind load docker-image "${image}" --name "${cluster_name}" >/dev/null 2>&1 \
+            && echo "  ✔ loaded ${image}" \
+            || echo "  ⚠ load failed: ${image}"
+    done
+}
 
 # Waits up to <timeout> seconds for the Traefik LoadBalancer IP to be assigned.
 # Prints the IP on success; returns 1 on timeout.

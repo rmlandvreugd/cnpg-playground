@@ -152,6 +152,19 @@ for region in "${REGIONS[@]}"; do
     fi
     kind create cluster --config "${kind_config_path}" --name "${K8S_CLUSTER_NAME}"
 
+    preload_images_into_kind "${K8S_CLUSTER_NAME}" \
+        "docker.io/calico/node:${TIGERA_OPERATOR_CHART_VERSION}" \
+        "docker.io/calico/cni:${TIGERA_OPERATOR_CHART_VERSION}" \
+        "docker.io/calico/kube-controllers:${TIGERA_OPERATOR_CHART_VERSION}" \
+        "docker.io/calico/apiserver:${TIGERA_OPERATOR_CHART_VERSION}" \
+        "docker.io/calico/pod2daemon-flexvol:${TIGERA_OPERATOR_CHART_VERSION}" \
+        "docker.io/calico/typha:${TIGERA_OPERATOR_CHART_VERSION}" \
+        "docker.io/calico/csi:${TIGERA_OPERATOR_CHART_VERSION}" \
+        "docker.io/calico/node-driver-registrar:${TIGERA_OPERATOR_CHART_VERSION}" \
+        "docker.io/otel/opentelemetry-collector-contrib:${OTEL_COLLECTOR_IMAGE_TAG}" \
+        "${GRAFANA_IMAGE}" \
+        "docker.io/dpage/pgadmin4:latest"
+
     echo "🏷️  Labeling nodes in '${K8S_CLUSTER_NAME}'..."
     kubectl label node -l postgres.node.kubernetes.io node-role.kubernetes.io/postgres= --context "$(get_cluster_context "${region}")"
     kubectl label node -l infra.node.kubernetes.io node-role.kubernetes.io/infra= --context "$(get_cluster_context "${region}")"
