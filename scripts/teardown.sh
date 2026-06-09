@@ -79,7 +79,7 @@ echo "🔥 Tearing down shared services..."
 echo "--------------------------------------------------"
 "${SCRIPT_DIR}/step-ca-teardown.sh"
 "${SCRIPT_DIR}/vault-teardown.sh"
-"${SCRIPT_DIR}/dex-teardown.sh"
+"${SCRIPT_DIR}/authelia-teardown.sh"
 
 # Tear down SeaweedFS sidecar containers (worker → webdav → admin) before main container
 for sidecar in "${SEAWEEDFS_WORKER_CONTAINER_NAME}" "${SEAWEEDFS_WEBDAV_CONTAINER_NAME}" "${SEAWEEDFS_ADMIN_CONTAINER_NAME}"; do
