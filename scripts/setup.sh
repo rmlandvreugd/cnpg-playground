@@ -734,7 +734,9 @@ TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
 kubectl wait --for=condition=Ready certificate/authelia-tls-cert \
     -n authelia --timeout=120s --context "${HUB_CONTEXT}"
 
-TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
+TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" \
+AUTHELIA_PORT="${AUTHELIA_PORT}" \
+envsubst '${TRAEFIK_IP_DASHED} ${AUTHELIA_PORT}' \
     < "${GIT_REPO_ROOT}/authelia/ingressroute.yaml.tpl" \
     | kubectl --context "${HUB_CONTEXT}" apply -f -
 echo "✅ Authelia proxied at https://authelia.${HUB_TRAEFIK_IP_DASHED}.sslip.io"
