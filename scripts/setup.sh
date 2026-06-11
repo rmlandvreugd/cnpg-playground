@@ -752,7 +752,8 @@ echo "=================================================="
 helm_upgrade_install caretta \
     caretta \
     caretta "${HUB_CONTEXT}" "${CARETTA_CHART_VERSION}" \
-    --repo-url https://helm.groundcover.com
+    --repo-url https://helm.groundcover.com \
+    --values "${GIT_REPO_ROOT}/caretta/values.yaml"
 echo "✅ Caretta: eBPF network topology active (metrics at http://caretta.caretta:7117)"
 
 echo "=================================================="
