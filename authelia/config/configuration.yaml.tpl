@@ -64,6 +64,7 @@ identity_providers:
       - client_id: vault
         client_name: Vault
         client_secret: '${AUTHELIA_VAULT_CLIENT_SECRET_HASH}'
+        authorization_policy: one_factor
         redirect_uris:
           - 'https://127.0.0.1:${VAULT_PORT}/ui/vault/auth/oidc/oidc/callback'
           - 'https://localhost:8250/oidc/callback'
@@ -78,6 +79,7 @@ identity_providers:
       - client_id: step-ca
         client_name: step-ca
         client_secret: '${AUTHELIA_STEP_CA_CLIENT_SECRET_HASH}'
+        authorization_policy: one_factor
         redirect_uris:
           - 'https://${STEP_CA_HOST}:${STEP_CA_PORT}/oidc/callback'
         scopes:
@@ -90,6 +92,7 @@ identity_providers:
       - client_id: grafana-rbr-ver
         client_name: Grafana RBR VER
         client_secret: '${AUTHELIA_GRAFANA_RBR_VER_CLIENT_SECRET_HASH}'
+        authorization_policy: one_factor
         redirect_uris:
           - 'https://grafana-rbr-ver.${TRAEFIK_IP_DASHED}.sslip.io/login/generic_oauth'
         scopes:
@@ -102,6 +105,7 @@ identity_providers:
       - client_id: grafana-monitoring
         client_name: Grafana Monitoring
         client_secret: '${AUTHELIA_GRAFANA_MONITORING_CLIENT_SECRET_HASH}'
+        authorization_policy: one_factor
         redirect_uris:
           - 'https://grafana.${TRAEFIK_IP_DASHED}.sslip.io/login/generic_oauth'
         scopes:
