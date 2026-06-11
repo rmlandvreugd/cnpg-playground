@@ -4,6 +4,17 @@ metadata:
   name: default
 spec:
   registry: quay.io/
+  controlPlaneReplicas: 1
+  controlPlaneNodeSelector:
+    kubernetes.io/os: linux
+    node-role.kubernetes.io/control-plane: ""
+  controlPlaneTolerations:
+    - effect: NoExecute
+      operator: Exists
+    - effect: NoSchedule
+      operator: Exists
+  nodeMetricsPort: 9091
+  typhaMetricsPort: 9092
   calicoNetwork:
     ipPools:
       - blockSize: 26
