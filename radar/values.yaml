@@ -7,3 +7,6 @@ rbac:
   viewRBAC: true
   viewWebhooks: true
   helm: true
+
+traffic:
+  prometheusUrl: "http://caretta.caretta:7083"

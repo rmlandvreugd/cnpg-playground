@@ -8,6 +8,11 @@ spec:
     - websecure
   routes:
     - kind: Rule
+      match: Host(`radar.${TRAEFIK_IP_DASHED}.sslip.io`) && PathPrefix(`/mcp`)
+      services:
+        - name: radar
+          port: 9280
+    - kind: Rule
       match: Host(`radar.${TRAEFIK_IP_DASHED}.sslip.io`)
       middlewares:
         - name: authelia-forwardauth

@@ -746,6 +746,16 @@ TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" \
     "${SCRIPT_DIR}/authelia-setup.sh"
 
 echo "=================================================="
+echo "🕸️  Installing Caretta network topology on hub cluster..."
+echo "=================================================="
+
+helm_upgrade_install caretta \
+    caretta \
+    caretta "${HUB_CONTEXT}" "${CARETTA_CHART_VERSION}" \
+    --repo-url https://groundcover-com.github.io/caretta
+echo "✅ Caretta: eBPF network topology active (metrics at http://caretta.caretta:7083)"
+
+echo "=================================================="
 echo "🔭 Installing Radar on hub cluster..."
 echo "=================================================="
 
