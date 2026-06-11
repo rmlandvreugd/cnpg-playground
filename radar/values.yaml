@@ -9,4 +9,4 @@ rbac:
   helm: true
 
 traffic:
-  prometheusUrl: "http://caretta.caretta:7117"
+  prometheusUrl: "http://caretta-vm.caretta:8428"
