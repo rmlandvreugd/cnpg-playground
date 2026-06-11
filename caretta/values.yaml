@@ -5,3 +5,13 @@ resources:
   requests:
     cpu: 10m
     memory: 64Mi
+tolerations:
+  - key: node-role.kubernetes.io/postgres
+    operator: Exists
+    effect: NoSchedule
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+
+grafana:
+  enabled: false
