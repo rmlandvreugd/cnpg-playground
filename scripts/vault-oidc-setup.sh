@@ -41,8 +41,8 @@ _vcmd_stdin() {
         vault "$@"
 }
 
-echo "🔓 Enabling OIDC auth method..."
-_vcmd auth enable oidc
+echo "🔓 Enabling OIDC auth method (idempotent)..."
+_vcmd auth enable oidc 2>/dev/null || true
 
 # Pass ca-chain.pem inline via stdin — avoids host-file-path issues with container exec
 echo "📋 Configuring OIDC provider (Authelia)..."
@@ -57,22 +57,44 @@ sudo cat "${AUTHELIA_DIR}/tls/ca-chain.pem" \
         oidc_discovery_ca_pem=- \
         oidc_client_id="vault" \
         oidc_client_secret="${AUTHELIA_VAULT_CLIENT_SECRET}" \
-        oidc_scopes="openid,email,profile,groups" \
         default_role="oidc-user"
 
-echo "📋 Creating oidc-policy..."
+echo "📋 Creating oidc-policy (base read for all OIDC users)..."
 cat <<'EOF' | _vcmd_stdin policy write oidc-policy -
 path "secret/data/common/*" { capabilities = ["read","list"] }
 EOF
 
-echo "📋 Creating oidc-user role..."
+echo "📋 Creating vault-admin policy (full superuser access)..."
+cat <<'EOF' | _vcmd_stdin policy write vault-admin -
+path "*" {
+  capabilities = ["create", "read", "update", "delete", "list", "sudo"]
+}
+EOF
+
+echo "📋 Creating oidc-user role (groups_claim enables group→policy mapping)..."
 _vcmd write auth/oidc/role/oidc-user \
     bound_audiences="vault" \
     allowed_redirect_uris="https://127.0.0.1:${VAULT_PORT}/ui/vault/auth/oidc/oidc/callback" \
     allowed_redirect_uris="https://localhost:8250/oidc/callback" \
     allowed_redirect_uris="https://${VAULT_HOST}:${VAULT_PORT}/ui/vault/auth/oidc/oidc/callback" \
     user_claim="email" \
+    groups_claim="groups" \
+    oidc_scopes="openid,email,profile,groups" \
     token_policies="oidc-policy"
 
+echo "📋 Creating vault-admin identity group (maps Authelia 'vault-admin' group → vault-admin policy)..."
+GROUP_ID=$(_vcmd write -field=id identity/group \
+    name="vault-admin" \
+    type="external" \
+    policies="vault-admin")
+
+OIDC_ACCESSOR=$(_vcmd read -field=accessor sys/auth/oidc)
+
+_vcmd write identity/group-alias \
+    name="vault-admin" \
+    mount_accessor="${OIDC_ACCESSOR}" \
+    canonical_id="${GROUP_ID}"
+
 echo "✅ OIDC integration complete."
-echo "🌐 Login: https://${VAULT_HOST}:${VAULT_PORT}/ui → OIDC → user@example.com / password"
+echo "🌐 Login: https://${VAULT_HOST}:${VAULT_PORT}/ui → OIDC → admin@example.com / password"
+echo "   Users in Authelia 'vault-admin' group get full Vault superuser access."
