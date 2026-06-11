@@ -52,6 +52,9 @@ additionalArguments:
   - "--ping=true"
   - "--ping.entrypoint=traefik"
   - "--entrypoints.postgres.address=:5432"
+  - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+  - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+  - "--entrypoints.web.http.redirections.entrypoint.permanent=true"
 
 ports:
   postgres:

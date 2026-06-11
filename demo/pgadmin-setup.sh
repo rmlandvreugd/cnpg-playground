@@ -71,7 +71,7 @@ for region in "${REGIONS[@]}"; do
             | kubectl --context "${CONTEXT_NAME}" apply -f -
         echo "-----------------------------------------------------------------------------------------------------------------"
         echo " 🔑 pgAdmin4 is available at:"
-        echo " http://pgadmin.${TRAEFIK_IP_DASHED}.sslip.io"
+        echo " https://pgadmin.${TRAEFIK_IP_DASHED}.sslip.io"
         echo " Email:    ${PGADMIN_EMAIL}"
         echo " Password: ${PGADMIN_PASSWORD}"
         echo "-----------------------------------------------------------------------------------------------------------------"
