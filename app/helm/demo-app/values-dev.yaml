@@ -1,0 +1,24 @@
+replicaCount: 1
+
+image:
+  tag: "dev"
+  pullPolicy: Always
+
+app:
+  debug: true
+  logLevel: "DEBUG"
+  tracingEnabled: false
+
+migration:
+  strategy: "startup"
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 250m
+    memory: 128Mi
+
+tls:
+  hostnamePrefix: "demo-dev-demo"

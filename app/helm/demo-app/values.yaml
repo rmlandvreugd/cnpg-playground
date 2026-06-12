@@ -1,0 +1,97 @@
+replicaCount: 2
+
+image:
+  repository: demo-app
+  tag: ""  # Defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+# Database connection
+database:
+  host: "pooler-demo-rw.demo-db.svc.cluster.local"
+  port: 5432
+  name: "demo"
+  user: "app"
+  passwordSecret: "demo-app"
+  passwordSecretKey: "password"
+  schema: "public"
+  # Secret rotation
+  credentialsMode: "static"  # "static" or "dynamic"
+  staticSecret:
+    refreshInterval: 5m
+    vaultPath: "cnpg/demo/app"
+  dynamicSecret:
+    refreshInterval: 30m
+    vaultPath: "database/creds/demo-app"
+    ttl: "1h"
+
+# Application settings
+app:
+  version: "0.1.0"
+  debug: false
+  logLevel: "INFO"
+  tracingEnabled: false
+
+# Observability
+observability:
+  metrics:
+    enabled: true
+    path: /metrics
+  tracing:
+    enabled: false  # Set to true for v2
+    otlpEndpoint: "http://otel-collector.otel.svc.cluster.local:4317"
+
+# Migration strategy
+migration:
+  strategy: "initContainer"  # "initContainer" for v1, "startup" for v2
+
+# TLS
+tls:
+  enabled: true
+  issuerRef:
+    kind: ClusterIssuer
+    name: vault-pki
+  # Hostname prefix: "demo-demo" for prod, "demo-dev-demo" for dev
+  hostnamePrefix: "demo-demo"
+
+# Ingress
+ingress:
+  enabled: true
+  entryPoint: websecure
+  tls: true
+
+# Resources
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Global values (overridden per environment)
+global:
+  traefikIpDashed: ""
+
+# ExternalSecret for DB credentials
+externalSecret:
+  enabled: true
+  refreshInterval: 5m
+  secretStoreRef:
+    name: vault-approle
+    kind: ClusterSecretStore
+  data:
+    - secretKey: password
+      remoteRef:
+        key: cnpg/demo/app
+        property: password
+  # Rotation: annotate deployment for auto-reload
+  reloadOnUpdate: true
+
+# Network policy
+networkPolicy:
+  enabled: false
+
+# PodDisruptionBudget
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1

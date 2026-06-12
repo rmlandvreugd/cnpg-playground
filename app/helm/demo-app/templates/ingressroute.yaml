@@ -1,0 +1,21 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ include "demo-app.fullname" . }}
+  labels:
+    {{- include "demo-app.labels" . | nindent 4 }}
+spec:
+  entryPoints:
+    - {{ .Values.ingress.entryPoint }}
+  routes:
+    - match: Host(`{{ .Values.tls.hostnamePrefix }}.{{ .Values.global.traefikIpDashed }}.sslip.io`)
+      kind: Rule
+      services:
+        - name: {{ include "demo-app.fullname" . }}
+          port: 8000
+  {{- if .Values.ingress.tls }}
+  tls:
+    secretName: {{ include "demo-app.fullname" . }}-tls
+  {{- end }}
+{{- end }}

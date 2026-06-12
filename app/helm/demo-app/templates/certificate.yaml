@@ -1,0 +1,15 @@
+{{- if .Values.tls.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "demo-app.fullname" . }}-tls
+  labels:
+    {{- include "demo-app.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "demo-app.fullname" . }}-tls
+  issuerRef:
+    kind: {{ .Values.tls.issuerRef.kind }}
+    name: {{ .Values.tls.issuerRef.name }}
+  dnsNames:
+    - {{ .Values.tls.hostnamePrefix }}.{{ .Values.global.traefikIpDashed }}.sslip.io
+{{- end }}

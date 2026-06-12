@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "demo-app.fullname" . }}
+  labels:
+    {{- include "demo-app.labels" . | nindent 4 }}
+  annotations:
+    reloader.stakater.com/auto: {{ .Values.externalSecret.reloadOnUpdate | quote }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "demo-app.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "demo-app.selectorLabels" . | nindent 8 }}
+      annotations:
+        secret-hash: {{ .Values.database.passwordSecret | sha256sum }}
+    spec:
+      {{- if eq .Values.migration.strategy "initContainer" }}
+      initContainers:
+      - name: db-migrate
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        command: ["litestar", "database", "upgrade"]
+        env:
+        - name: DEMO_APP_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.database.passwordSecret }}
+              key: {{ .Values.database.passwordSecretKey }}
+        - name: DEMO_APP_DB_HOST
+          value: {{ .Values.database.host }}
+        - name: DEMO_APP_DB_PORT
+          value: {{ .Values.database.port | quote }}
+        - name: DEMO_APP_DB_NAME
+          value: {{ .Values.database.name }}
+        - name: DEMO_APP_DB_USER
+          value: {{ .Values.database.user }}
+      {{- end }}
+      containers:
+      - name: app
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        {{- if eq .Values.migration.strategy "startup" }}
+        command: ["sh", "-c", "litestar database upgrade && litestar run --host 0.0.0.0 --port 8000"]
+        {{- else }}
+        command: ["litestar", "run", "--host", "0.0.0.0", "--port", "8000"]
+        {{- end }}
+        env:
+        - name: DEMO_APP_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.database.passwordSecret }}
+              key: {{ .Values.database.passwordSecretKey }}
+        - name: DEMO_APP_DB_HOST
+          value: {{ .Values.database.host | quote }}
+        - name: DEMO_APP_DB_PORT
+          value: {{ .Values.database.port | quote }}
+        - name: DEMO_APP_DB_NAME
+          value: {{ .Values.database.name | quote }}
+        - name: DEMO_APP_DB_USER
+          value: {{ .Values.database.user | quote }}
+        - name: DEMO_APP_APP_VERSION
+          value: {{ .Values.app.version | quote }}
+        - name: DEMO_APP_DEBUG
+          value: {{ .Values.app.debug | quote }}
+        - name: DEMO_APP_LOG_LEVEL
+          value: {{ .Values.app.logLevel | quote }}
+        - name: DEMO_APP_TRACING_ENABLED
+          value: {{ .Values.observability.tracing.enabled | quote }}
+        - name: DEMO_APP_OTLP_ENDPOINT
+          value: {{ .Values.observability.tracing.otlpEndpoint | quote }}
+        ports:
+        - containerPort: 8000
+          name: http
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        startupProbe:
+          httpGet:
+            path: /health/startup
+            port: 8000
+          failureThreshold: 30
+          periodSeconds: 2
+        resources:
+          {{- toYaml .Values.resources | nindent 12 }}
