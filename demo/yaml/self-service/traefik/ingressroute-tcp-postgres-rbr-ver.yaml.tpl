@@ -7,7 +7,7 @@ spec:
   entryPoints:
     - postgres
   routes:
-    - match: HostSNI(`verstappen-rbr-ver-db.${TRAEFIK_IP_DASHED}.sslip.io`)
+    - match: HostSNI(`verstappen-rbr-ver-db.${POSTGRES_IP_DASHED}.sslip.io`)
       services:
         - name: verstappen-rw
           namespace: rbr-ver-db

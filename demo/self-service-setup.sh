@@ -61,6 +61,13 @@ get_traefik_ip() {
         -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
 }
 
+# Postgres TCP traffic uses a separate MetalLB IP (traefik-postgres svc, :5432),
+# NOT the web LB (traefik svc, :80/:443). See docs/architecture-overview.md.
+get_traefik_postgres_ip() {
+    kubectl get svc traefik-postgres -n traefik --context "${LOCAL_CONTEXT}" \
+        -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+}
+
 primary_pod() {
     kubectl get pod -n rbr-ver-db --context "${LOCAL_CONTEXT}" \
         -l cnpg.io/cluster=verstappen,role=primary -o name | head -1
@@ -95,6 +102,10 @@ setup)
     TRAEFIK_IP=$(get_traefik_ip)
     TRAEFIK_IP_DASHED=$(ip_to_dashed "${TRAEFIK_IP}")
     echo "ℹ️  Traefik IP: ${TRAEFIK_IP} (dashed: ${TRAEFIK_IP_DASHED})"
+
+    POSTGRES_IP=$(get_traefik_postgres_ip)
+    POSTGRES_IP_DASHED=$(ip_to_dashed "${POSTGRES_IP}")
+    echo "ℹ️  Traefik Postgres IP: ${POSTGRES_IP} (dashed: ${POSTGRES_IP_DASHED})"
 
     # --- Vault policies ---
     echo "📋 Writing Vault policies..."
@@ -251,8 +262,8 @@ EOF
 
     # --- Traefik IngressRouteTCP ---
     echo "🌐 Applying Traefik TCP IngressRoute..."
-    TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
-    envsubst '${TRAEFIK_IP_DASHED}' \
+    POSTGRES_IP_DASHED="${POSTGRES_IP_DASHED}" \
+    envsubst '${POSTGRES_IP_DASHED}' \
         < "${SELF_SERVICE_YAML}/traefik/ingressroute-tcp-postgres-rbr-ver.yaml.tpl" \
         | kubectl apply --context "${LOCAL_CONTEXT}" -f -
 
@@ -295,7 +306,7 @@ EOF
 
     _vcmd write database/config/rbr-ver-max \
         plugin_name="postgresql-database-plugin" \
-        connection_url="postgresql://{{username}}:{{password}}@verstappen-rbr-ver-db.${TRAEFIK_IP_DASHED}.sslip.io:5432/max?sslmode=require" \
+        connection_url="postgresql://{{username}}:{{password}}@verstappen-rbr-ver-db.${POSTGRES_IP_DASHED}.sslip.io:5432/max?sslmode=require" \
         allowed_roles="rbr-db-admin,rbr-ver-db-admin,rbr-ver-db-readonly" \
         username="rbr_ver_vde_admin" \
         password="${VDE_ADMIN_PASS}"
@@ -492,7 +503,7 @@ PYEOF
     echo "======================================================"
     echo "✅ Setup complete"
     echo "   Cluster:     verstappen  Namespace: rbr-ver-db"
-    echo "   External DB: verstappen-rbr-ver-db.${TRAEFIK_IP_DASHED}.sslip.io:5432"
+    echo "   External DB: verstappen-rbr-ver-db.${POSTGRES_IP_DASHED}.sslip.io:5432"
     echo "   sslmode:     require"
     echo ""
     echo "   pgAdmin:     http://pgadmin-rbr-ver.${TRAEFIK_IP_DASHED}.sslip.io"
