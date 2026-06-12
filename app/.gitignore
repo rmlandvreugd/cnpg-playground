@@ -8,3 +8,6 @@ dist/
 build/
 .uv/
 uv.lock
+
+# Docker Compose volumes
+pgdata/

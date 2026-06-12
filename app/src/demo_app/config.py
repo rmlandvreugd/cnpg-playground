@@ -4,13 +4,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="DEMO_APP_")
 
-    # Database
-    db_host: str = "pooler-demo-rw.demo-db.svc.cluster.local"
+    # Database — individual fields (used in K8s with secrets)
+    db_host: str = "localhost"
     db_port: int = 5432
     db_name: str = "demo"
     db_user: str = "app"
-    db_password: str = ""  # From ESO/Vault secret
+    db_password: str = ""  # From ESO/Vault secret, or set locally
     db_schema: str = "public"
+
+    # Database — full connection string override.
+    # When set, takes priority over individual DB_* fields.
+    # Supports: postgresql://user:pass@host:port/dbname (driver auto-detected)
+    # Also accepts: postgresql+asyncpg:// or postgresql+psycopg:// explicitly
+    database_url: str | None = None
 
     # Application
     app_version: str = "0.1.0"
@@ -27,7 +33,23 @@ class AppSettings(BaseSettings):
     port: int = 8000
 
     @property
-    def database_url(self) -> str:
+    def database_url_async(self) -> str:
+        """Async database URL (asyncpg driver).
+
+        Priority: DEMO_APP_DATABASE_URL > individual DEMO_APP_DB_* fields.
+        If DATABASE_URL uses postgresql://, the driver is auto-replaced
+        with postgresql+asyncpg://. If it already specifies a driver,
+        it's used as-is.
+        """
+        if self.database_url:
+            url = self.database_url
+            # Replace plain postgresql:// with asyncpg driver
+            if url.startswith("postgresql://"):
+                url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            # If user specified psycopg or another sync driver, swap to asyncpg
+            url = url.replace("+psycopg://", "+asyncpg://", 1)
+            url = url.replace("+psycopg2://", "+asyncpg://", 1)
+            return url
         return (
             f"postgresql+asyncpg://{self.db_user}:{self.db_password}"
             f"@{self.db_host}:{self.db_port}/{self.db_name}"
@@ -35,7 +57,21 @@ class AppSettings(BaseSettings):
 
     @property
     def database_url_sync(self) -> str:
-        """Sync URL for Alembic migrations."""
+        """Sync URL for Alembic migrations (psycopg driver).
+
+        Priority: DEMO_APP_DATABASE_URL > individual DEMO_APP_DB_* fields.
+        Always uses psycopg driver for sync operations.
+        """
+        if self.database_url:
+            url = self.database_url
+            # Normalize to sync psycopg driver
+            if url.startswith("postgresql+asyncpg://"):
+                url = url.replace("+asyncpg://", "+psycopg://", 1)
+            elif url.startswith("postgresql://"):
+                url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+            elif url.startswith("postgresql+psycopg2://"):
+                url = url.replace("+psycopg2://", "+psycopg://", 1)
+            return url
         return (
             f"postgresql+psycopg://{self.db_user}:{self.db_password}"
             f"@{self.db_host}:{self.db_port}/{self.db_name}"

@@ -1,0 +1,83 @@
+# Local development Docker Compose
+# Starts PostgreSQL, PgBouncer, and pgAdmin for local development
+#
+# Usage:
+#   docker compose up -d          # Start all services
+#   docker compose down            # Stop all services
+#   docker compose logs -f pgbouncer  # View PgBouncer logs
+#
+# Connection strings:
+#   App (via PgBouncer):  postgresql://app:app_password@localhost:6432/demo
+#   App (direct PG):      postgresql://app:app_password@localhost:5432/demo
+#   Superuser (direct):   postgresql://postgres:postgres_secret@localhost:5432/demo
+#   pgAdmin:              http://localhost:5050 (admin@example.com / pgadmin_secret)
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: demo-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_secret
+      POSTGRES_DB: demo
+    ports:
+      - "15432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - demo-net
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: demo-pgbouncer
+    environment:
+      DATABASE_URL: "postgres://app:app_password@postgres:5432/demo"
+      ADMIN_USERS: "admin,pgbouncer"
+      ADMIN_PASSWORD: "pgbouncer_admin"
+      PGBOUNCER_POOL_MODE: "session"
+      PGBOUNCER_MAX_CLIENT_CONN: "1000"
+      PGBOUNCER_DEFAULT_POOL_SIZE: "10"
+      PGBOUNCER_RESERVE_POOL_SIZE: "5"
+      PGBOUNCER_RESERVE_POOL_TIMEOUT: "3"
+    ports:
+      - "16432:5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -p 5432"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - demo-net
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: demo-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: pgadmin_secret
+    ports:
+      - "5050:80"
+    volumes:
+      - ./docker/pgadmin_servers.json:/pgadmin4/servers.json:ro
+      - ./docker/pgadmin_pgpass:/pgadmin4/pgpass:ro
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - demo-net
+
+volumes:
+  pgdata:
+    driver: local
+
+networks:
+  demo-net:
+    driver: bridge

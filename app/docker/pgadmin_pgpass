@@ -1,0 +1,4 @@
+pgbouncer:5432:demo:app:app_password
+postgres:5432:demo:postgres:postgres_secret
+localhost:5432:demo:app:app_password
+localhost:6432:demo:app:app_password

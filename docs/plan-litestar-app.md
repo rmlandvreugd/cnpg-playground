@@ -264,13 +264,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="DEMO_APP_")
 
-    # Database
-    db_host: str = "pooler-demo-rw.demo-db.svc.cluster.local"
+    # Database — individual fields (used in K8s with secrets)
+    db_host: str = "localhost"
     db_port: int = 5432
     db_name: str = "demo"
     db_user: str = "app"
-    db_password: str = ""  # From ESO/Vault secret
+    db_password: str = ""  # From ESO/Vault secret, or set locally
     db_schema: str = "public"
+
+    # Database — full connection string override.
+    # When set, takes priority over individual DB_* fields.
+    # Supports: postgresql://user:pass@host:port/dbname (driver auto-detected)
+    # Also accepts: postgresql+asyncpg:// or postgresql+psycopg:// explicitly
+    database_url: str | None = None
 
     # Application
     app_version: str = "0.1.0"
@@ -287,7 +293,21 @@ class AppSettings(BaseSettings):
     port: int = 8000
 
     @property
-    def database_url(self) -> str:
+    def database_url_async(self) -> str:
+        """Async database URL (asyncpg driver).
+
+        Priority: DEMO_APP_DATABASE_URL > individual DEMO_APP_DB_* fields.
+        If DATABASE_URL uses postgresql://, the driver is auto-replaced
+        with postgresql+asyncpg://. If it already specifies a driver,
+        it's used as-is.
+        """
+        if self.database_url:
+            url = self.database_url
+            if url.startswith("postgresql://"):
+                url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            url = url.replace("+psycopg://", "+asyncpg://", 1)
+            url = url.replace("+psycopg2://", "+asyncpg://", 1)
+            return url
         return (
             f"postgresql+asyncpg://{self.db_user}:{self.db_password}"
             f"@{self.db_host}:{self.db_port}/{self.db_name}"
@@ -295,7 +315,20 @@ class AppSettings(BaseSettings):
 
     @property
     def database_url_sync(self) -> str:
-        """Sync URL for Alembic migrations."""
+        """Sync URL for Alembic migrations (psycopg driver).
+
+        Priority: DEMO_APP_DATABASE_URL > individual DEMO_APP_DB_* fields.
+        Always uses psycopg driver for sync operations.
+        """
+        if self.database_url:
+            url = self.database_url
+            if url.startswith("postgresql+asyncpg://"):
+                url = url.replace("+asyncpg://", "+psycopg://", 1)
+            elif url.startswith("postgresql://"):
+                url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+            elif url.startswith("postgresql+psycopg2://"):
+                url = url.replace("+psycopg2://", "+psycopg://", 1)
+            return url
         return (
             f"postgresql+psycopg://{self.db_user}:{self.db_password}"
             f"@{self.db_host}:{self.db_port}/{self.db_name}"
@@ -1042,9 +1075,187 @@ k8s_resource('demo-app', port_forwards='8000:8000')
 
 ---
 
-## 9. Observability Integration
+## 9. Local Development
 
-### 9.1 Structured Logging (v1+)
+### 9.1 Overview
+
+The app supports local development with Docker Compose providing PostgreSQL, PgBouncer, and pgAdmin — matching the production topology (app → PgBouncer → PostgreSQL).
+
+### 9.2 Configuration: DATABASE_URL
+
+The `AppSettings` class supports two modes for database configuration:
+
+**Mode 1: Single connection string (recommended for local dev)**
+
+```bash
+export DEMO_APP_DATABASE_URL="postgresql://app:app_password@localhost:6432/demo"
+```
+
+When `DEMO_APP_DATABASE_URL` is set, it takes priority over individual `DEMO_APP_DB_*` fields. The driver is auto-detected:
+- `postgresql://` → `postgresql+asyncpg://` (for async) / `postgresql+psycopg://` (for sync/Alembic)
+- `postgresql+asyncpg://` → used as-is for async, converted to `+psycopg://` for sync
+- `postgresql+psycopg://` → converted to `+asyncpg://` for async, used as-is for sync
+
+**Mode 2: Individual fields (used in K8s with secrets)**
+
+```bash
+export DEMO_APP_DB_HOST=pooler-demo-rw.demo-db.svc.cluster.local
+export DEMO_APP_DB_PORT=5432
+export DEMO_APP_DB_NAME=demo
+export DEMO_APP_DB_USER=app
+export DEMO_APP_DB_PASSWORD=secret
+```
+
+### 9.3 Docker Compose Services
+
+| Service | Port | Purpose |
+|---------|------|---------|
+| PostgreSQL | 5432 | Direct database access (superuser) |
+| PgBouncer | 6432 | Connection pooler (app connects here) |
+| pgAdmin | 5050 | Web UI for database management |
+
+**Connection strings:**
+
+| Purpose | URL |
+|---------|-----|
+| App (via PgBouncer) | `postgresql://app:app_password@localhost:6432/demo` |
+| Direct PostgreSQL | `postgresql://postgres:postgres_secret@localhost:5432/demo` |
+| pgAdmin | `http://localhost:5050` (admin@example.com / pgadmin_secret) |
+
+### 9.4 dev.sh Script
+
+The `scripts/dev.sh` script provides a complete local development workflow:
+
+```bash
+./scripts/dev.sh up        # Start PostgreSQL, PgBouncer, pgAdmin
+./scripts/dev.sh migrate   # Run Alembic migrations
+./scripts/dev.sh seed      # Seed database with sample data
+./scripts/dev.sh run       # Start Litestar dev server with hot-reload
+./scripts/dev.sh all       # up + migrate + seed + run (full setup)
+./scripts/dev.sh down      # Stop all services
+./scripts/dev.sh reset     # Stop services and remove all data
+./scripts/dev.sh status    # Show service status
+```
+
+### 9.5 Quick Start
+
+```bash
+cd app
+
+# Start database services
+./scripts/dev.sh up
+
+# Run migrations and seed data
+./scripts/dev.sh migrate
+./scripts/dev.sh seed
+
+# Start the app (with DATABASE_URL set automatically)
+./scripts/dev.sh run
+```
+
+Or in one command:
+
+```bash
+./scripts/dev.sh all
+```
+
+### 9.6 Connecting to an Existing Database
+
+If you already have PostgreSQL running locally, skip Docker Compose and set the connection string directly:
+
+```bash
+export DEMO_APP_DATABASE_URL="postgresql://myuser:mypass@localhost:5432/mydb"
+uv run litestar database upgrade   # Run migrations
+uv run python -m demo_app.seed    # Seed data
+uv run uvicorn demo_app.main:create_app --factory --host 0.0.0.0 --port 8000 --reload
+```
+
+### 9.7 Docker Compose File
+
+Located at `app/compose.yaml`:
+
+```yaml
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: demo-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_secret
+      POSTGRES_DB: demo
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - demo-net
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: demo-pgbouncer
+    environment:
+      DATABASE_URL: "postgres://app:app_password@postgres:5432/demo"
+      PGBOUNCER_POOL_MODE: "session"
+      PGBOUNCER_MAX_CLIENT_CONN: "1000"
+      PGBOUNCER_DEFAULT_POOL_SIZE: "10"
+    ports:
+      - "6432:5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -p 5432"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - demo-net
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: demo-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: pgadmin_secret
+    ports:
+      - "5050:80"
+    volumes:
+      - ./docker/pgadmin_servers.json:/pgadmin4/servers.json:ro
+      - ./docker/pgadmin_pgpass:/pgadmin4/pgpass:ro
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - demo-net
+
+volumes:
+  pgdata:
+    driver: local
+
+networks:
+  demo-net:
+    driver: bridge
+```
+
+### 9.8 pgAdmin Configuration
+
+Pre-configured server connections in `app/docker/pgadmin_servers.json`:
+
+- **Demo (via PgBouncer)** — connects through the pooler on port 5432 (mapped to host 6432)
+- **Demo (direct PG)** — connects directly to PostgreSQL on port 5432
+
+Password file `app/docker/pgadmin_pgpass` provides auto-login for both connections.
+
+---
+
+## 10. Observability Integration
+
+### 10.1 Structured Logging (v1+)
 
 Litestar's `StructlogPlugin` outputs structured JSON logs to stdout. Alloy already scrapes all pod logs cluster-wide (see `monitoring/alloy/alloy-config.river`), so no additional configuration is needed — the app's stdout logs will automatically appear in Loki with labels:
 
@@ -1052,7 +1263,7 @@ Litestar's `StructlogPlugin` outputs structured JSON logs to stdout. Alloy alrea
 {namespace="demo", pod="demo-app-xxx", container="app", app="demo-app"}
 ```
 
-### 9.2 Prometheus Metrics (v1+)
+### 10.2 Prometheus Metrics (v1+)
 
 The `PrometheusPlugin` exposes `/metrics` with standard HTTP metrics:
 
@@ -1062,7 +1273,7 @@ The `PrometheusPlugin` exposes `/metrics` with standard HTTP metrics:
 
 A `PodMonitor` resource tells Prometheus to scrape the app. Prometheus remote-writes to Mimir.
 
-### 9.3 OpenTelemetry Tracing with Auto-Instrumentation (v2)
+### 10.3 OpenTelemetry Tracing with Auto-Instrumentation (v2)
 
 v2 uses **OTel auto-instrumentation** — libraries are wrapped transparently at startup without manual span creation in application code. This gives full distributed tracing coverage with zero per-endpoint boilerplate.
 
@@ -1114,7 +1325,7 @@ This allows filtering traces by service, version, and namespace in Grafana/Tempo
 
 ---
 
-## 10. TLS/PKI Integration
+## 11. TLS/PKI Integration
 
 The app uses the existing step-ca → cert-manager PKI chain:
 
@@ -1142,11 +1353,11 @@ spec:
 
 ---
 
-## 11. Secret Rotation
+## 12. Secret Rotation
 
 CNPG and ESO work together to enable zero-downtime credential rotation. When Vault rotates a password, ESO syncs the new secret into Kubernetes, and CNPG detects the change and rolls the pods.
 
-### 11.1 Rotation Flow
+### 12.1 Rotation Flow
 
 ```mermaid
 sequenceDiagram
@@ -1165,7 +1376,7 @@ sequenceDiagram
     App->>App: Reconnect with new credentials
 ```
 
-### 11.2 ESO Configuration for Rotation
+### 12.2 ESO Configuration for Rotation
 
 The ExternalSecret for the `app` user is configured with a short refresh interval and a reload trigger:
 
@@ -1201,7 +1412,7 @@ spec:
         property: password
 ```
 
-### 11.3 CNPG Secret Rotation Detection
+### 12.3 CNPG Secret Rotation Detection
 
 CNPG watches the secrets it references. When the `demo-app` secret is updated by ESO, CNPG automatically:
 
@@ -1223,7 +1434,7 @@ managed:
         name: demo-app  # CNPG watches this secret
 ```
 
-### 11.4 Application Pod Rotation
+### 12.4 Application Pod Rotation
 
 The demo-app Deployment includes the `secret-reload` annotation pattern. When the secret changes, the pods are rolled:
 
@@ -1252,7 +1463,7 @@ spec:
               # Optional: use optional field to allow startup before secret exists
 ```
 
-### 11.5 Two Credential Modes
+### 12.5 Two Credential Modes
 
 **Mode 1: Static credentials (default)** — Vault KV stores a fixed username/password. ESO syncs it to K8s. Rotation requires manually updating Vault KV, then ESO syncs and CNPG rolls.
 
@@ -1305,7 +1516,7 @@ database:
     ttl: "1h"
 ```
 
-### 11.6 SQLAlchemy Connection Resilience for Rotation
+### 12.6 SQLAlchemy Connection Resilience for Rotation
 
 When credentials rotate, existing DB connections may fail. The SQLAlchemy session config handles this gracefully:
 
@@ -1331,9 +1542,9 @@ engine_config = {
 
 ---
 
-## 12. Deployment Workflow
+## 13. Deployment Workflow
 
-### 11.1 v1 Deployment
+### 13.1 v1 Deployment
 
 ```bash
 # 1. Create namespaces
@@ -1355,7 +1566,7 @@ helm upgrade --install demo-app ./helm/demo-app \
   --set observability.tracing.enabled=false
 ```
 
-### 11.2 v2 Deployment (Upgrade)
+### 13.2 v2 Deployment (Upgrade)
 
 ```bash
 # Upgrade to v2 with tracing enabled
@@ -1367,7 +1578,7 @@ helm upgrade demo-app ./helm/demo-app \
   --set observability.tracing.enabled=true
 ```
 
-### 11.3 Development (Tilt)
+### 13.3 Development (Tilt)
 
 ```bash
 # Start Tilt for live development
@@ -1376,9 +1587,9 @@ tilt up
 
 ---
 
-## 13. Suggested Improvements
+## 14. Suggested Improvements
 
-### 12.1 High Priority
+### 14.1 High Priority
 
 1. **HTMX for progressive enhancement** — The HTML interface should use HTMX for dynamic updates without full page reloads. Litestar has first-class HTMX support via `HTMXPlugin`. This makes the CRUD interface feel responsive without writing JavaScript.
 
@@ -1406,7 +1617,7 @@ tilt up
          app.kubernetes.io/name: demo-app
    ```
 
-### 12.2 Medium Priority
+### 14.2 Medium Priority
 
 7. **HorizontalPodAutoscaler** — Scale based on CPU/memory or custom metrics (request rate):
    ```yaml
@@ -1443,7 +1654,7 @@ tilt up
 
 12. **Versioned API prefix** — Use `/api/v1/tasks` instead of `/tasks` for the API endpoints. The HTML interface can use `/tasks` for user-facing URLs, but the API should be versioned for future compatibility.
 
-### 12.3 Lower Priority
+### 14.3 Lower Priority
 
 13. **Canary deployments** — Use Flagger or Argo Rollouts for progressive delivery of v2, automatically promoting when metrics are healthy.
 
@@ -1459,7 +1670,7 @@ tilt up
 
 ---
 
-## 14. Implementation Phases
+## 15. Implementation Phases
 
 ### Phase 1: Foundation (v1 — no tracing)
 
@@ -1511,7 +1722,7 @@ tilt up
 
 ---
 
-## 15. File Checklist
+## 16. File Checklist
 
 ### Must Create
 
@@ -1572,3 +1783,7 @@ tilt up
 - [ ] `app/Tiltfile`
 - [ ] `app/scripts/setup.sh`
 - [ ] `app/scripts/teardown.sh`
+- [ ] `app/scripts/dev.sh`                          # Local dev workflow script
+- [ ] `app/compose.yaml`                            # Docker Compose for local dev (PG + PgBouncer + pgAdmin)
+- [ ] `app/docker/pgadmin_servers.json`             # pgAdmin pre-configured server connections
+- [ ] `app/docker/pgadmin_pgpass`                   # pgAdmin password file
