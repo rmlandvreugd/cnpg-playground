@@ -12,10 +12,12 @@ SUBCOMMAND="${1:-}"
 MODE="${2:-}"
 
 usage() {
-    echo "Usage: $0 <setup|rotate|verify|teardown> local [target]"
+    echo "Usage: $0 <setup|rotate|verify|connect|connect-mtls|teardown> local [target]"
     echo "  setup   local                          — seed Vault + deploy ESO-backed CNPG cluster"
     echo "  rotate  local <superuser|app|readonly> — rotate a credential in Vault + force ESO sync"
     echo "  verify  local <superuser|app|readonly> — test psql connectivity with current credentials"
+    echo "  connect      local <superuser|app|readonly> — print external psql for the -t (TLS-term, password) endpoint"
+    echo "  connect-mtls local <superuser|app|readonly> — print external psql for the -p (passthrough, cert-auth) endpoint"
     echo "  teardown local                         — remove demo-local-db ns + Vault KV paths"
     exit 1
 }
@@ -87,6 +89,32 @@ verify_connectivity() {
 # Generate a URL-safe random password (32 chars).
 random_password() {
     openssl rand -base64 32 | tr -d '/+=' | head -c 32
+}
+
+# Recompute the dashed sslip.io host octet for the Postgres endpoints, independent of
+# the setup case: Traefik LB IP, 4th octet +10, dotted → dashed (matches setup, ~L133-135).
+traefik_pg_host_dashed() {
+    local ip pg_ip
+    ip=$(get_traefik_lb_ip "${LOCAL_CONTEXT}") \
+        || { echo "❌ Could not resolve Traefik LoadBalancer IP" >&2; exit 1; }
+    pg_ip=$(echo "${ip}" | awk -F. '{OFS="."; $4=$4+10; print}')
+    ip_to_dashed "${pg_ip}"
+}
+
+# Stage a client cert + CA into a fresh temp dir for an external psql; print the dir.
+# Usage: stage_secret_certs <cert-secret> <ca-secret>  (cert provides tls.crt/tls.key,
+# ca provides ca.crt). The private key is chmod 600 so libpq accepts it.
+stage_secret_certs() {
+    local cert_secret="$1" ca_secret="$2" dir
+    dir=$(mktemp -d "${TMPDIR:-/tmp}/eso-vault-connect.XXXXXX")
+    kubectl get secret "${ca_secret}" -n "${CNPG_DEMO_NAMESPACE}" --context "${LOCAL_CONTEXT}" \
+        -o jsonpath='{.data.ca\.crt}' | base64 -d > "${dir}/ca.crt"
+    kubectl get secret "${cert_secret}" -n "${CNPG_DEMO_NAMESPACE}" --context "${LOCAL_CONTEXT}" \
+        -o jsonpath='{.data.tls\.crt}' | base64 -d > "${dir}/tls.crt"
+    kubectl get secret "${cert_secret}" -n "${CNPG_DEMO_NAMESPACE}" --context "${LOCAL_CONTEXT}" \
+        -o jsonpath='{.data.tls\.key}' | base64 -d > "${dir}/tls.key"
+    chmod 600 "${dir}/tls.key"
+    echo "${dir}"
 }
 
 case "${SUBCOMMAND}" in
@@ -284,6 +312,82 @@ teardown)
     echo "✅ Demo teardown complete."
     echo "   ESO infra (ClusterSecretStore, AppRole, cnpg/ mount) retained."
     echo "   Run scripts/teardown.sh to remove the full environment."
+    ;;
+
+connect)
+    TARGET="${3:-}"
+    case "${TARGET}" in
+        superuser|app|readonly) ;;
+        *) echo "❌ target must be one of: superuser app readonly"; usage ;;
+    esac
+    DB="app"; [ "${TARGET}" = "superuser" ] && DB="postgres"
+
+    DASHED=$(traefik_pg_host_dashed)
+    HOST="pg-local-${CNPG_DEMO_NAMESPACE}-t.${DASHED}.sslip.io"
+
+    USERNAME=$(kubectl get secret "pg-local-${TARGET}" -n "${CNPG_DEMO_NAMESPACE}" \
+        --context "${LOCAL_CONTEXT}" -o jsonpath='{.data.username}' | base64 -d)
+    PASSWORD=$(kubectl get secret "pg-local-${TARGET}" -n "${CNPG_DEMO_NAMESPACE}" \
+        --context "${LOCAL_CONTEXT}" -o jsonpath='{.data.password}' | base64 -d)
+
+    # The -t endpoint terminates TLS at Traefik (edge mTLS: RequireAndVerifyClientCert),
+    # then connects plaintext to Postgres → `host all all all scram-sha-256` → password auth.
+    # The reused pooler-client cert only satisfies the Traefik edge (its CN is irrelevant here).
+    CERTDIR=$(stage_secret_certs "pg-local-pooler-client-tls" "vault-pki-bundle")
+
+    echo "🔌 Connect to '${TARGET}' via the TLS-termination endpoint (password auth):"
+    echo ""
+    echo "PGPASSWORD='${PASSWORD}' psql \"host=${HOST} port=5432 dbname=${DB} user=${USERNAME} sslmode=verify-full sslrootcert=${CERTDIR}/ca.crt sslcert=${CERTDIR}/tls.crt sslkey=${CERTDIR}/tls.key\""
+    ;;
+
+connect-mtls)
+    TARGET="${3:-}"
+    case "${TARGET}" in
+        superuser|app|readonly) ;;
+        *) echo "❌ target must be one of: superuser app readonly"; usage ;;
+    esac
+    DB="app"; [ "${TARGET}" = "superuser" ] && DB="postgres"
+    ROLE="${TARGET}"; [ "${TARGET}" = "superuser" ] && ROLE="postgres"
+
+    DASHED=$(traefik_pg_host_dashed)
+    HOST="pg-local-${CNPG_DEMO_NAMESPACE}-p.${DASHED}.sslip.io"
+
+    CERT_NAME="pg-local-connect-${TARGET}"
+    CERT_SECRET="${CERT_NAME}-tls"
+
+    # The -p endpoint passes TLS straight to Postgres → `hostssl all all all cert` → client-cert
+    # auth where the cert CN must equal the role. Issue a short-lived (1h) client cert on demand;
+    # it lives in the demo namespace, so `teardown` removes it with the namespace.
+    echo "📜 Issuing 1h client certificate (CN=${ROLE}) for '${TARGET}'..."
+    kubectl apply --context "${LOCAL_CONTEXT}" -f - <<EOF
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: ${CERT_NAME}
+  namespace: ${CNPG_DEMO_NAMESPACE}
+spec:
+  commonName: ${ROLE}
+  dnsNames:
+    - ${ROLE}
+  secretName: ${CERT_SECRET}
+  duration: 1h
+  renewBefore: 5m
+  issuerRef:
+    kind: ClusterIssuer
+    name: vault-pki
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+EOF
+
+    kubectl wait --for=condition=Ready "certificate/${CERT_NAME}" \
+        -n "${CNPG_DEMO_NAMESPACE}" --context "${LOCAL_CONTEXT}" --timeout=120s
+
+    CERTDIR=$(stage_secret_certs "${CERT_SECRET}" "vault-pki-bundle")
+
+    echo "🔐 Connect to '${TARGET}' via the TLS-passthrough endpoint (mTLS cert auth, no password):"
+    echo ""
+    echo "psql \"host=${HOST} port=5432 dbname=${DB} user=${ROLE} sslmode=verify-full sslrootcert=${CERTDIR}/ca.crt sslcert=${CERTDIR}/tls.crt sslkey=${CERTDIR}/tls.key\""
     ;;
 
 *)
