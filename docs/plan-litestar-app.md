@@ -164,8 +164,6 @@ app-v1/
 │       │       └── task_row.html    # HTMX partial (future)
 │       └── static/                  # CSS, JS, favicon
 │           └── style.css
-├── seed/
-│   └── seed_data.py                 # Database seeding script
 ├── k8s/                             # Raw K8s manifests (for reference)
 │   ├── namespace-demo.yaml
 │   ├── namespace-demo-dev.yaml
@@ -1047,7 +1045,6 @@ docker_build(
     dockerfile='Dockerfile.dev',
     live_update=[
         sync('./src/demo_app', '/app/src/demo_app'),
-        sync('./seed', '/app/seed'),
         run('cd /app && uv sync', trigger=['./pyproject.toml', './uv.lock']),
     ]
 )
@@ -1752,7 +1749,7 @@ tilt up
 - [ ] `app/src/demo_app/templates/tasks/detail.html`
 - [ ] `app/src/demo_app/templates/tasks/form.html`
 - [ ] `app/src/demo_app/static/style.css`
-- [ ] `app/seed/seed_data.py`
+- [ ] `app/src/demo_app/seed.py`
 - [ ] `app/Dockerfile`
 - [ ] `app/Dockerfile.dev`
 - [ ] `app/helm/demo-app/Chart.yaml`

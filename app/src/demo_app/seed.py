@@ -8,7 +8,6 @@ works through PgBouncer or a direct Postgres connection.
 """
 
 import asyncio
-from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -17,17 +16,26 @@ from demo_app.config import AppSettings
 from demo_app.db.models import Task
 
 SAMPLE_TASKS = [
-    {"title": "Set up local dev environment", "done": True, "priority": 1},
-    {"title": "Wire up Alembic migrations", "done": True, "priority": 1},
-    {"title": "Write the seed script", "done": False, "assignee": "alice", "priority": 2},
-    {
-        "title": "Add task list UI",
-        "done": False,
-        "assignee": "bob",
-        "priority": 3,
-        "due_date": datetime.now(timezone.utc) + timedelta(days=7),
-    },
-    {"title": "Configure observability", "done": False, "priority": 4},
+    {"title": "Set up CI/CD pipeline", "done": True, "priority": 1},
+    {"title": "Write API documentation", "done": False, "priority": 2, "assignee": "alice"},
+    {"title": "Fix login page CSS bug", "done": False, "priority": 1, "assignee": "bob"},
+    {"title": "Add unit tests for auth module", "done": False, "priority": 2},
+    {"title": "Deploy staging environment", "done": True, "priority": 3, "assignee": "charlie"},
+    {"title": "Review PR #42", "done": False, "priority": 1, "assignee": "alice"},
+    {"title": "Update dependencies", "done": False, "priority": 3},
+    {"title": "Implement password reset flow", "done": False, "priority": 1, "assignee": "bob"},
+    {"title": "Set up monitoring alerts", "done": True, "priority": 2, "assignee": "charlie"},
+    {"title": "Refactor database queries", "done": False, "priority": 3, "assignee": "alice"},
+    {"title": "Add rate limiting middleware", "done": False, "priority": 2},
+    {"title": "Write integration tests", "done": False, "priority": 2, "assignee": "bob"},
+    {"title": "Optimize image loading", "done": True, "priority": 3},
+    {"title": "Fix memory leak in worker", "done": False, "priority": 1, "assignee": "charlie"},
+    {"title": "Update README with setup instructions", "done": True, "priority": 3, "assignee": "alice"},
+    {"title": "Add CORS configuration", "done": False, "priority": 2},
+    {"title": "Implement search functionality", "done": False, "priority": 1, "assignee": "bob"},
+    {"title": "Set up database backups", "done": True, "priority": 2, "assignee": "charlie"},
+    {"title": "Add user profile page", "done": False, "priority": 3, "assignee": "alice"},
+    {"title": "Configure auto-scaling policies", "done": False, "priority": 2, "assignee": "charlie"},
 ]
 
 
