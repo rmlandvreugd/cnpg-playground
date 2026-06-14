@@ -27,8 +27,18 @@ ok()    { echo -e "${GREEN}[OK]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
-# Default database URL (via PgBouncer)
-DEFAULT_DATABASE_URL="postgresql://app:app_password@localhost:6432/demo"
+# Default database URL (via PgBouncer) — used by the app at runtime
+DEFAULT_DATABASE_URL="postgresql://app:app_password@localhost:16432/demo"
+
+# Direct Postgres URL (bypasses PgBouncer) — used for migrations.
+# PgBouncer rejects the psycopg3 SCRAM negotiation with "wrong password type",
+# and DDL/migrations should not run through a transaction pooler anyway.
+DEFAULT_DIRECT_DATABASE_URL="postgresql://app:app_password@localhost:15432/demo"
+
+# App spec for the litestar CLI. Required for the advanced-alchemy `database`
+# command group to register — the CLI does not read [tool.litestar] from
+# pyproject.toml for app discovery.
+export LITESTAR_APP="demo_app.main:create_app"
 
 cmd_up() {
     info "Starting PostgreSQL, PgBouncer, and pgAdmin..."
@@ -69,24 +79,39 @@ cmd_up() {
     docker compose -f "$APP_DIR/compose.yaml" exec -T postgres psql -U postgres -d demo -c \
         "GRANT ALL PRIVILEGES ON DATABASE demo TO app;" 2>/dev/null || true
 
+    # Postgres 15+ no longer grants CREATE on schema public to non-owners, so
+    # the app role needs explicit schema privileges to run migrations (DDL).
+    docker compose -f "$APP_DIR/compose.yaml" exec -T postgres psql -U postgres -d demo -c \
+        "GRANT ALL ON SCHEMA public TO app;" 2>/dev/null || true
+
+    docker compose -f "$APP_DIR/compose.yaml" exec -T postgres psql -U postgres -d demo -c \
+        "GRANT USAGE ON SCHEMA public TO readonly;" 2>/dev/null || true
+
     docker compose -f "$APP_DIR/compose.yaml" exec -T postgres psql -U postgres -d demo -c \
         "GRANT SELECT ON ALL TABLES IN SCHEMA public TO readonly;" 2>/dev/null || true
 
+    # Ensure readonly automatically gets SELECT on tables the app creates later.
+    docker compose -f "$APP_DIR/compose.yaml" exec -T postgres psql -U postgres -d demo -c \
+        "ALTER DEFAULT PRIVILEGES FOR ROLE app IN SCHEMA public GRANT SELECT ON TABLES TO readonly;" 2>/dev/null || true
+
     ok "Database services are ready"
     echo ""
-    echo "  PostgreSQL:  localhost:5432 (direct)"
-    echo "  PgBouncer:   localhost:6432 (pooled — use this for the app)"
+    echo "  PostgreSQL:  localhost:15432 (direct)"
+    echo "  PgBouncer:   localhost:16432 (pooled — use this for the app)"
     echo "  pgAdmin:     http://localhost:5050 (admin@example.com / pgadmin_secret)"
     echo ""
     echo "  Connection string for the app:"
-    echo "    export DEMO_APP_DATABASE_URL=\"postgresql://app:app_password@localhost:6432/demo\""
+    echo "    export DEMO_APP_DATABASE_URL=\"postgresql://app:app_password@localhost:16432/demo\""
 }
 
 cmd_migrate() {
-    info "Running Alembic migrations..."
+    info "Running Alembic migrations (direct to Postgres, bypassing PgBouncer)..."
     cd "$APP_DIR"
-    export DEMO_APP_DATABASE_URL="${DEMO_APP_DATABASE_URL:-$DEFAULT_DATABASE_URL}"
-    uv run litestar database upgrade
+    # Migrations are DDL admin work — run them directly against Postgres rather
+    # than through the connection pooler.
+    export DEMO_APP_DATABASE_URL="${DEMO_APP_MIGRATE_DATABASE_URL:-$DEFAULT_DIRECT_DATABASE_URL}"
+    info "DATABASE_URL: $DEMO_APP_DATABASE_URL"
+    uv run litestar database upgrade --no-prompt
     ok "Migrations complete"
 }
 
@@ -106,7 +131,7 @@ cmd_run() {
     export DEMO_APP_LOG_LEVEL=DEBUG
     export DEMO_APP_TRACING_ENABLED=false
     info "DATABASE_URL: $DEMO_APP_DATABASE_URL"
-    uv run uvicorn demo_app.main:create_app --factory --host 0.0.0.0 --port 8000 --reload
+    uv run uvicorn demo_app.main:create_app --factory --host 0.0.0.0 --port 8008 --reload
 }
 
 cmd_down() {

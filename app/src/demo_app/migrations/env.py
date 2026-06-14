@@ -1,4 +1,5 @@
 import asyncio
+import os
 from logging.config import fileConfig
 
 from sqlalchemy import pool
@@ -15,8 +16,10 @@ from demo_app.config import AppSettings
 # this is the Alembic Config object
 config = context.config
 
-# Interpret the config file for Python logging
-if config.config_file_name is not None:
+# Interpret the config file for Python logging.
+# advanced-alchemy's CLI sets config_file_name to "alembic.ini" even though no
+# physical ini file exists here, so guard on the file actually being present.
+if config.config_file_name is not None and os.path.exists(config.config_file_name):
     fileConfig(config.config_file_name)
 
 # Set the database URL from app settings (use sync driver for Alembic)
