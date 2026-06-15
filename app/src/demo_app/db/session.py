@@ -31,5 +31,9 @@ def get_sqlalchemy_config(settings: AppSettings) -> SQLAlchemyAsyncConfig:
             pool_pre_ping=True,
             pool_recycle=300,
             pool_timeout=30,
+            # Pin the asyncpg connection's search_path to the configured schema
+            # (migrations create it). Sent as a startup parameter, so it is not
+            # subject to SQL injection.
+            connect_args={"server_settings": {"search_path": settings.db_schema}},
         ),
     )

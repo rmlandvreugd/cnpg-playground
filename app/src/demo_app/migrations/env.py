@@ -3,9 +3,10 @@ import os
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import pool
+from sqlalchemy import pool, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
+from sqlalchemy.schema import CreateSchema
 
 from demo_app.config import AppSettings
 
@@ -43,8 +44,26 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
-    """Run migrations with a sync connection."""
-    context.configure(connection=connection, target_metadata=target_metadata)
+    """Run migrations with a sync connection, honoring DEMO_APP_DB_SCHEMA.
+
+    Tables (and alembic_version) land in ``db_schema`` instead of always in
+    ``public``. The schema is created on demand and pinned via search_path so
+    unqualified DDL resolves to it.
+    """
+    schema = settings.db_schema or "public"
+    non_public = schema != "public"
+    quoted = connection.dialect.identifier_preparer.quote_schema(schema)
+
+    if non_public:
+        connection.execute(CreateSchema(schema, if_not_exists=True))
+    connection.execute(text(f"SET search_path TO {quoted}, public"))
+    connection.commit()
+
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        version_table_schema=schema if non_public else None,
+    )
     with context.begin_transaction():
         context.run_migrations()
 
