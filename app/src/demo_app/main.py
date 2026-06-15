@@ -1,9 +1,11 @@
 import logging
 
+import structlog
 from litestar import Litestar
 from litestar.datastructures import State
+from litestar.logging.config import StructLoggingConfig
 from litestar.plugins.prometheus import PrometheusConfig, PrometheusController
-from litestar.plugins.structlog import StructlogPlugin
+from litestar.plugins.structlog import StructlogConfig, StructlogPlugin
 from litestar.contrib.jinja import JinjaTemplateEngine
 from litestar.static_files.config import StaticFilesConfig
 from litestar.template.config import TemplateConfig
@@ -81,14 +83,29 @@ def create_app(settings: AppSettings | None = None) -> Litestar:
     from advanced_alchemy.extensions.litestar import SQLAlchemyPlugin
     plugins.append(SQLAlchemyPlugin(config=alchemy_config))
 
-    # Structured logging
-    plugins.append(StructlogPlugin())
-
-    # Prometheus
-    prometheus_config = PrometheusConfig(
-        app_name="demo_app",
-        labels={"version": settings.app_version},
+    # Structured logging — honor DEMO_APP_LOG_LEVEL (e.g. DEBUG)
+    log_level = logging.getLevelName(settings.log_level)
+    plugins.append(
+        StructlogPlugin(
+            config=StructlogConfig(
+                structlog_logging_config=StructLoggingConfig(
+                    wrapper_class=structlog.make_filtering_bound_logger(log_level),
+                ),
+            ),
+        )
     )
+
+    # Prometheus — register the middleware (which records request metrics) and
+    # the /metrics controller only when metrics are enabled.
+    route_handlers = [TaskController, PageController, HealthController]
+    middleware = []
+    if settings.metrics_enabled:
+        prometheus_config = PrometheusConfig(
+            app_name="demo_app",
+            labels={"version": settings.app_version},
+        )
+        middleware.append(prometheus_config.middleware)
+        route_handlers.append(PrometheusController)
 
     # OpenTelemetry plugin (adds Litestar-specific spans on top of auto-instrumentation)
     if settings.tracing_enabled:
@@ -96,12 +113,9 @@ def create_app(settings: AppSettings | None = None) -> Litestar:
         plugins.append(OpenTelemetryPlugin(OpenTelemetryConfig()))
 
     return Litestar(
-        route_handlers=[
-            TaskController,
-            PageController,
-            HealthController,
-            PrometheusController,
-        ],
+        debug=settings.debug,
+        route_handlers=route_handlers,
+        middleware=middleware,
         plugins=plugins,
         template_config=TemplateConfig(
             directory="src/demo_app/templates",
