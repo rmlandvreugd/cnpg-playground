@@ -1,108 +1,73 @@
-from litestar import Controller, get, post, put, delete
+from litestar import Controller, delete, get, post, put
+from litestar.dto import DTOData
+from litestar.exceptions import NotFoundException
 from litestar.status_codes import HTTP_200_OK, HTTP_201_CREATED, HTTP_204_NO_CONTENT
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from demo_app.db.models import Task
+from demo_app.domain.tasks.dto import TaskReadDTO, TaskUpdateDTO, TaskWriteDTO
+from demo_app.domain.tasks.service import TaskService
 
 
 class TaskController(Controller):
     path = "/api/v1/tasks"
+    # All JSON responses are serialized through the read DTO.
+    return_dto = TaskReadDTO
+    signature_types = [Task]
 
     @get(status_code=HTTP_200_OK, operation_id="ListTasks")
     async def list_tasks(
         self,
         db_session: AsyncSession,
         done: bool | None = None,
-    ) -> list[dict]:
+    ) -> list[Task]:
         """List all tasks, optionally filtered by done status."""
-        stmt = select(Task).order_by(Task.id)
-        if done is not None:
-            stmt = stmt.where(Task.done == done)
-        result = await db_session.execute(stmt)
-        tasks = result.scalars().all()
-        return [
-            {
-                "id": t.id,
-                "title": t.title,
-                "done": t.done,
-                "created_at": t.created_at.isoformat() if t.created_at else None,
-                "assignee": t.assignee,
-                "due_date": t.due_date.isoformat() if t.due_date else None,
-                "priority": t.priority,
-            }
-            for t in tasks
-        ]
+        return await TaskService(db_session).list_tasks(done)
 
     @get(path="/{task_id:int}", status_code=HTTP_200_OK, operation_id="GetTask")
-    async def get_task(self, db_session: AsyncSession, task_id: int) -> dict:
+    async def get_task(self, db_session: AsyncSession, task_id: int) -> Task:
         """Get a single task by ID."""
-        task = await db_session.get(Task, task_id)
+        task = await TaskService(db_session).get_task(task_id)
         if task is None:
-            from litestar.exceptions import NotFoundException
-
             raise NotFoundException(detail=f"Task {task_id} not found")
-        return {
-            "id": task.id,
-            "title": task.title,
-            "done": task.done,
-            "created_at": task.created_at.isoformat() if task.created_at else None,
-            "assignee": task.assignee,
-            "due_date": task.due_date.isoformat() if task.due_date else None,
-            "priority": task.priority,
-        }
+        return task
 
-    @post(status_code=HTTP_201_CREATED, operation_id="CreateTask")
-    async def create_task(self, db_session: AsyncSession, data: dict) -> dict:
-        """Create a new task."""
-        task = Task(
-            title=data.get("title", ""),
-            done=data.get("done", False),
-            assignee=data.get("assignee"),
-            due_date=data.get("due_date"),
-            priority=data.get("priority"),
-        )
-        db_session.add(task)
-        await db_session.flush()
-        return {
-            "id": task.id,
-            "title": task.title,
-            "done": task.done,
-            "created_at": task.created_at.isoformat() if task.created_at else None,
-            "assignee": task.assignee,
-            "due_date": task.due_date.isoformat() if task.due_date else None,
-            "priority": task.priority,
-        }
+    @post(status_code=HTTP_201_CREATED, operation_id="CreateTask", dto=TaskWriteDTO)
+    async def create_task(self, db_session: AsyncSession, data: Task) -> Task:
+        """Create a new task.
 
-    @put(path="/{task_id:int}", status_code=HTTP_200_OK, operation_id="UpdateTask")
+        The write DTO decodes + type-validates the body and excludes
+        server-managed fields (``id``, ``created_at``); the service enforces
+        value constraints. No raw-dict handling, no mass-assignment.
+        """
+        return await TaskService(db_session).create(data)
+
+    @put(
+        path="/{task_id:int}",
+        status_code=HTTP_200_OK,
+        operation_id="UpdateTask",
+        dto=TaskUpdateDTO,
+    )
     async def update_task(
-        self, db_session: AsyncSession, task_id: int, data: dict
-    ) -> dict:
-        """Update an existing task."""
-        task = await db_session.get(Task, task_id)
+        self, db_session: AsyncSession, task_id: int, data: DTOData[Task]
+    ) -> Task:
+        """Partially update an existing task.
+
+        ``TaskUpdateDTO`` is partial, so ``data`` carries only the submitted
+        fields and is applied via ``update_instance``.
+        """
+        task = await TaskService(db_session).update(task_id, data)
         if task is None:
-            from litestar.exceptions import NotFoundException
-
             raise NotFoundException(detail=f"Task {task_id} not found")
-        for key, value in data.items():
-            if hasattr(task, key) and key != "id":
-                setattr(task, key, value)
-        await db_session.flush()
-        return {
-            "id": task.id,
-            "title": task.title,
-            "done": task.done,
-            "created_at": task.created_at.isoformat() if task.created_at else None,
-            "assignee": task.assignee,
-            "due_date": task.due_date.isoformat() if task.due_date else None,
-            "priority": task.priority,
-        }
+        return task
 
-    @delete(path="/{task_id:int}", status_code=HTTP_204_NO_CONTENT, operation_id="DeleteTask")
+    @delete(
+        path="/{task_id:int}",
+        status_code=HTTP_204_NO_CONTENT,
+        operation_id="DeleteTask",
+    )
     async def delete_task(self, db_session: AsyncSession, task_id: int) -> None:
         """Delete a task."""
-        task = await db_session.get(Task, task_id)
-        if task is None:
-            from litestar.exceptions import NotFoundException
-
+        deleted = await TaskService(db_session).delete_task(task_id)
+        if not deleted:
             raise NotFoundException(detail=f"Task {task_id} not found")
-        await db_session.delete(task)
