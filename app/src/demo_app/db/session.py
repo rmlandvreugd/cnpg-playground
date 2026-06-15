@@ -11,7 +11,11 @@ def get_sqlalchemy_config(settings: AppSettings) -> SQLAlchemyAsyncConfig:
     """Create SQLAlchemy async config from app settings."""
     return SQLAlchemyAsyncConfig(
         connection_string=settings.database_url_async,
-        before_send_handler="autocommit",
+        # "autocommit" only commits on 2xx responses; our page handlers use the
+        # POST-redirect-GET pattern and return 3xx redirects, so we need the
+        # variant that also commits on redirect responses — otherwise writes are
+        # silently rolled back at session teardown.
+        before_send_handler="autocommit_include_redirects",
         # Point the `litestar database` CLI at the in-package migrations dir
         # (default is "migrations" relative to CWD, which doesn't exist here).
         alembic_config=AlembicAsyncConfig(

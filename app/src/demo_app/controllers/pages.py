@@ -1,4 +1,8 @@
+from typing import Annotated
+
 from litestar import Controller, get, post
+from litestar.enums import RequestEncodingType
+from litestar.params import Body
 from litestar.response import Template, Redirect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -70,13 +74,18 @@ class PageController(Controller):
         )
 
     @post(path="/tasks/create", status_code=303, operation_id="CreateTaskPage")
-    async def create_task_page(self, db_session: AsyncSession, data: dict) -> Redirect:
+    async def create_task_page(
+        self,
+        db_session: AsyncSession,
+        data: Annotated[dict, Body(media_type=RequestEncodingType.URL_ENCODED)],
+    ) -> Redirect:
         """Handle task creation form submission."""
+        priority = data.get("priority")
         task = Task(
             title=data.get("title", ""),
-            done=data.get("done", False),
+            done=data.get("done") == "true",
             assignee=data.get("assignee") or None,
-            priority=data.get("priority") or None,
+            priority=int(priority) if priority else None,
         )
         db_session.add(task)
         await db_session.flush()
@@ -84,7 +93,10 @@ class PageController(Controller):
 
     @post(path="/tasks/{task_id:int}/update", status_code=303, operation_id="UpdateTaskPage")
     async def update_task_page(
-        self, db_session: AsyncSession, task_id: int, data: dict
+        self,
+        db_session: AsyncSession,
+        task_id: int,
+        data: Annotated[dict, Body(media_type=RequestEncodingType.URL_ENCODED)],
     ) -> Redirect:
         """Handle task update form submission."""
         task = await db_session.get(Task, task_id)
@@ -92,10 +104,11 @@ class PageController(Controller):
             from litestar.exceptions import NotFoundException
 
             raise NotFoundException(detail=f"Task {task_id} not found")
+        priority = data.get("priority")
         task.title = data.get("title", task.title)
-        task.done = data.get("done", task.done)
+        task.done = data.get("done") == "true"
         task.assignee = data.get("assignee") or None
-        task.priority = data.get("priority") or None
+        task.priority = int(priority) if priority else None
         await db_session.flush()
         return Redirect(path=f"/tasks/{task_id}")
 
