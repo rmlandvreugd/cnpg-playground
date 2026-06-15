@@ -28,11 +28,11 @@ def setup_opentelemetry(settings: AppSettings) -> None:
     from opentelemetry import trace
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
-    from opentelemetry.sdk.resources import Resource, SERVICE_NAME_ATTRIBUTE
+    from opentelemetry.sdk.resources import Resource
     from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 
     resource = Resource.create({
-        SERVICE_NAME_ATTRIBUTE: "demo-app",
+        "service.name": "demo-app",
         "service.version": settings.app_version,
         "service.namespace": "demo",
     })
@@ -45,13 +45,14 @@ def setup_opentelemetry(settings: AppSettings) -> None:
     )
     trace.set_tracer_provider(provider)
 
-    from opentelemetry.instrumentation.asgi import ASGIInstrumentor
+    # Note: HTTP/ASGI request spans are emitted by Litestar's own
+    # OpenTelemetryPlugin (wired in create_app), not a global instrumentor —
+    # opentelemetry.instrumentation.asgi exposes only OpenTelemetryMiddleware.
     from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
     from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
     from opentelemetry.instrumentation.logging import LoggingInstrumentor
     from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 
-    ASGIInstrumentor().instrument()
     SQLAlchemyInstrumentor().instrument()
     AsyncPGInstrumentor().instrument()
     LoggingInstrumentor().instrument()
