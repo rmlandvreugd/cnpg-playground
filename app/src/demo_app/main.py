@@ -1,6 +1,7 @@
 import logging
 
 from litestar import Litestar
+from litestar.datastructures import State
 from litestar.plugins.prometheus import PrometheusConfig, PrometheusController
 from litestar.plugins.structlog import StructlogPlugin
 from litestar.contrib.jinja import JinjaTemplateEngine
@@ -111,5 +112,5 @@ def create_app(settings: AppSettings | None = None) -> Litestar:
         ],
         on_startup=[_log_startup],
         on_shutdown=[_log_shutdown],
-        state={"version": settings.app_version},
+        state=State({"version": settings.app_version}),
     )
