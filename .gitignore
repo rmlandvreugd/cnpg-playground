@@ -43,6 +43,8 @@ hipocampus.config.json
 SCRATCHPAD.md
 TASK-QUEUE.md
 WORKING.md
+.claude/
+.opencode/
 
 # Generated kind cluster config (rendered from kind-cluster.yaml.tpl)
 k8s/kind-cluster.yaml
@@ -53,3 +55,6 @@ k8s/kind-cluster.yaml
 .beads-credential-key
 rustfs/
 seaweedfs/
+
+graphify-out/cost.json        # local only
+graphify-out/cache/           # optional: commit for speed, skip to keep repo small
