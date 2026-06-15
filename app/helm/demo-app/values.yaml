@@ -13,6 +13,9 @@ database:
   user: "app"
   passwordSecret: "demo-app"
   passwordSecretKey: "password"
+  # Only used when credentialsMode=dynamic: the username rotates with the
+  # password, so it is sourced from the same Secret instead of database.user.
+  usernameSecretKey: "username"
   schema: "public"
   # Secret rotation
   credentialsMode: "static"  # "static" or "dynamic"

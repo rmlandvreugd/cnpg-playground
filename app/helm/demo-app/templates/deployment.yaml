@@ -35,8 +35,16 @@ spec:
           value: {{ .Values.database.port | quote }}
         - name: DEMO_APP_DB_NAME
           value: {{ .Values.database.name }}
+        {{- if eq .Values.database.credentialsMode "dynamic" }}
+        - name: DEMO_APP_DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.database.passwordSecret }}
+              key: {{ .Values.database.usernameSecretKey }}
+        {{- else }}
         - name: DEMO_APP_DB_USER
           value: {{ .Values.database.user }}
+        {{- end }}
       {{- end }}
       containers:
       - name: app
@@ -59,8 +67,16 @@ spec:
           value: {{ .Values.database.port | quote }}
         - name: DEMO_APP_DB_NAME
           value: {{ .Values.database.name | quote }}
+        {{- if eq .Values.database.credentialsMode "dynamic" }}
+        - name: DEMO_APP_DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.database.passwordSecret }}
+              key: {{ .Values.database.usernameSecretKey }}
+        {{- else }}
         - name: DEMO_APP_DB_USER
           value: {{ .Values.database.user | quote }}
+        {{- end }}
         - name: DEMO_APP_APP_VERSION
           value: {{ .Values.app.version | quote }}
         - name: DEMO_APP_DEBUG
