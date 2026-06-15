@@ -1,5 +1,6 @@
 from datetime import datetime
-from sqlalchemy import String, Boolean, Integer, DateTime, func
+
+from sqlalchemy import Boolean, DateTime, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
@@ -26,7 +27,9 @@ class Task(Base):
 
     # v2 columns (nullable for backward compatibility)
     assignee: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    due_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    due_date: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     priority: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     def __repr__(self) -> str:

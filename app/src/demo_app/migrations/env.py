@@ -2,16 +2,16 @@ import asyncio
 import os
 from logging.config import fileConfig
 
+from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from alembic import context
+from demo_app.config import AppSettings
 
 # Import the Base metadata and models so autogenerate can detect them
 from demo_app.db.base import Base
 from demo_app.db.models import Task  # noqa: F401
-from demo_app.config import AppSettings
 
 # this is the Alembic Config object
 config = context.config

@@ -2,19 +2,20 @@ import logging
 
 import structlog
 from litestar import Litestar
+from litestar.contrib.jinja import JinjaTemplateEngine
 from litestar.datastructures import State
 from litestar.logging.config import StructLoggingConfig
+from litestar.plugins import PluginProtocol
 from litestar.plugins.prometheus import PrometheusConfig, PrometheusController
 from litestar.plugins.structlog import StructlogConfig, StructlogPlugin
-from litestar.contrib.jinja import JinjaTemplateEngine
 from litestar.static_files.config import StaticFilesConfig
 from litestar.template.config import TemplateConfig
 
 from demo_app.config import AppSettings
-from demo_app.db.session import get_sqlalchemy_config
-from demo_app.controllers.tasks import TaskController
-from demo_app.controllers.pages import PageController
 from demo_app.controllers.health import HealthController
+from demo_app.controllers.pages import PageController
+from demo_app.controllers.tasks import TaskController
+from demo_app.db.session import get_sqlalchemy_config
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +27,10 @@ def setup_opentelemetry(settings: AppSettings) -> None:
     libraries at import time.
     """
     from opentelemetry import trace
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
-    from opentelemetry.sdk.resources import Resource
-    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 
     resource = Resource.create({
         "service.name": "demo-app",
@@ -48,10 +49,10 @@ def setup_opentelemetry(settings: AppSettings) -> None:
     # Note: HTTP/ASGI request spans are emitted by Litestar's own
     # OpenTelemetryPlugin (wired in create_app), not a global instrumentor —
     # opentelemetry.instrumentation.asgi exposes only OpenTelemetryMiddleware.
-    from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
     from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
-    from opentelemetry.instrumentation.logging import LoggingInstrumentor
     from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+    from opentelemetry.instrumentation.logging import LoggingInstrumentor
+    from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 
     SQLAlchemyInstrumentor().instrument()
     AsyncPGInstrumentor().instrument()
@@ -77,7 +78,7 @@ def create_app(settings: AppSettings | None = None) -> Litestar:
     if settings.tracing_enabled:
         setup_opentelemetry(settings)
 
-    plugins = []
+    plugins: list[PluginProtocol] = []
 
     # SQLAlchemy
     alchemy_config = get_sqlalchemy_config(settings)
@@ -110,7 +111,10 @@ def create_app(settings: AppSettings | None = None) -> Litestar:
 
     # OpenTelemetry plugin (adds Litestar-specific spans on top of auto-instrumentation)
     if settings.tracing_enabled:
-        from litestar.plugins.opentelemetry import OpenTelemetryPlugin, OpenTelemetryConfig
+        from litestar.plugins.opentelemetry import (
+            OpenTelemetryConfig,
+            OpenTelemetryPlugin,
+        )
         plugins.append(OpenTelemetryPlugin(OpenTelemetryConfig()))
 
     return Litestar(
