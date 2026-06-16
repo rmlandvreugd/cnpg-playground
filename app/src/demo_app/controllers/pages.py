@@ -11,7 +11,7 @@ service ``create`` / ``update_fields`` path used by the API.
 """
 from typing import Annotated
 
-from litestar import Controller, get, post
+from litestar import Controller, Request, get, post
 from litestar.enums import RequestEncodingType
 from litestar.exceptions import NotFoundException
 from litestar.params import Body
@@ -44,7 +44,7 @@ class PageController(Controller):
     path = "/"
 
     @get(status_code=200, operation_id="IndexPage")
-    async def index(self, db_session: AsyncSession) -> Template:
+    async def index(self, request: Request, db_session: AsyncSession) -> Template:
         """Landing page showing app version and DB status."""
         db_ok = False
         try:
@@ -55,9 +55,12 @@ class PageController(Controller):
         except Exception:
             db_ok = False
 
+        # Single-source the version from settings (stashed in app.state at
+        # startup) instead of a hard-coded literal that drifts on bumps.
+        version = request.app.state.get("version", "unknown")
         return Template(
             template_name="index.html",
-            context={"db_ok": db_ok, "version": "0.1.0"},
+            context={"db_ok": db_ok, "version": version},
         )
 
     @get(path="/tasks", status_code=200, operation_id="TasksPage")

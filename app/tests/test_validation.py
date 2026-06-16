@@ -28,8 +28,8 @@ def test_json_create_priority_out_of_range_returns_400(client: TestClient) -> No
 
 # --- HTML form path (controllers/pages.py) ---
 
-def test_form_create_empty_title_returns_400(client: TestClient) -> None:
-    r = client.post(
+def test_form_create_empty_title_returns_400(form_post) -> None:
+    r = form_post(
         "/tasks/create",
         data={"title": "", "done": "false", "assignee": "", "priority": ""},
         follow_redirects=False,
@@ -37,8 +37,8 @@ def test_form_create_empty_title_returns_400(client: TestClient) -> None:
     assert r.status_code == 400
 
 
-def test_form_create_priority_out_of_range_returns_400(client: TestClient) -> None:
-    r = client.post(
+def test_form_create_priority_out_of_range_returns_400(form_post) -> None:
+    r = form_post(
         "/tasks/create",
         data={"title": "x", "done": "false", "assignee": "", "priority": "99"},
         follow_redirects=False,

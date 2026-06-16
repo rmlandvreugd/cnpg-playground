@@ -38,6 +38,7 @@
                 <a href="/tasks/{{ task.id }}" class="btn-sm">View</a>
                 <a href="/tasks/{{ task.id }}/edit" class="btn-sm">Edit</a>
                 <form method="POST" action="/tasks/{{ task.id }}/delete" style="display:inline">
+                    {{ csrf_input | safe }}
                     <button type="submit" class="btn-sm btn-danger" onclick="return confirm('Delete this task?')">Delete</button>
                 </form>
             </td>

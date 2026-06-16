@@ -2,6 +2,7 @@ import logging
 
 import structlog
 from litestar import Litestar
+from litestar.config.csrf import CSRFConfig
 from litestar.contrib.jinja import JinjaTemplateEngine
 from litestar.datastructures import State
 from litestar.logging.config import StructLoggingConfig
@@ -117,11 +118,21 @@ def create_app(settings: AppSettings | None = None) -> Litestar:
         )
         plugins.append(OpenTelemetryPlugin(OpenTelemetryConfig()))
 
+    # CSRF protection for the server-rendered HTML forms (double-submit cookie;
+    # token rendered into each <form> via `{{ csrf_input | safe }}`). The JSON
+    # API under /api/ is consumed programmatically, not from a browser session,
+    # so it is excluded — those clients don't carry the CSRF cookie.
+    csrf_config = CSRFConfig(
+        secret=settings.csrf_secret,
+        exclude=["^/api/", "^/metrics", "^/health"],
+    )
+
     return Litestar(
         debug=settings.debug,
         route_handlers=route_handlers,
         middleware=middleware,
         plugins=plugins,
+        csrf_config=csrf_config,
         template_config=TemplateConfig(
             directory="src/demo_app/templates",
             engine=JinjaTemplateEngine,

@@ -7,7 +7,6 @@ image:
 app:
   debug: true
   logLevel: "DEBUG"
-  tracingEnabled: false
 
 migration:
   strategy: "startup"

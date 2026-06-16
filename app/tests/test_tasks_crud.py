@@ -57,11 +57,11 @@ def test_json_partial_update_changes_only_submitted_field(client: TestClient) ->
         _delete_by_title(client, title)
 
 
-def test_form_create_normalizes_blanks_and_done(client: TestClient) -> None:
+def test_form_create_normalizes_blanks_and_done(client: TestClient, form_post) -> None:
     """Blank optionals -> NULL; done='false' stored as not-done (truthiness fix)."""
     title = "crud-form-blanks"
     try:
-        r = client.post(
+        r = form_post(
             "/tasks/create",
             data={"title": title, "done": "false", "assignee": "", "priority": ""},
             follow_redirects=False,
@@ -74,17 +74,17 @@ def test_form_create_normalizes_blanks_and_done(client: TestClient) -> None:
         _delete_by_title(client, title)
 
 
-def test_form_update_can_clear_optional_fields(client: TestClient) -> None:
+def test_form_update_can_clear_optional_fields(client: TestClient, form_post) -> None:
     """The form path can clear a field to NULL (not possible with a partial DTO)."""
     title = "crud-form-clear"
     try:
-        client.post(
+        form_post(
             "/tasks/create",
             data={"title": title, "done": "true", "assignee": "bob", "priority": "4"},
             follow_redirects=False,
         )
         tid = _find_by_title(client, title)["id"]
-        r = client.post(
+        r = form_post(
             f"/tasks/{tid}/update",
             data={"title": title, "done": "false", "assignee": "", "priority": ""},
             follow_redirects=False,

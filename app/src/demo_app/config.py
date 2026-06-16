@@ -33,6 +33,12 @@ class AppSettings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
+    # Security — secret used to sign CSRF tokens on the HTML form routes.
+    # The default is deterministic, so it already works across replicas/restarts;
+    # in production set DEMO_APP_CSRF_SECRET to a real secret so the signing key
+    # isn't a published constant.
+    csrf_secret: str = "dev-insecure-csrf-secret-change-me"
+
     @property
     def database_url_async(self) -> str:
         """Async database URL (asyncpg driver).
