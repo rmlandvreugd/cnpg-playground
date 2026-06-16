@@ -27,6 +27,25 @@ kubectl apply -f "$APP_DIR/k8s/namespace-demo.yaml"
 kubectl apply -f "$APP_DIR/k8s/namespace-demo-dev.yaml"
 kubectl apply -f "$APP_DIR/k8s/namespace-demo-db.yaml"
 
+# Seed Vault credentials (idempotent: kv put overwrites existing versions)
+VAULT_CONTAINER="${VAULT_CONTAINER_NAME:-vault}"
+VAULT_ADDR_INNER="https://127.0.0.1:8200"
+ROOT_TOKEN=$(sudo cat "$(git -C "$APP_DIR" rev-parse --show-toplevel)/vault/.root_token")
+_vcmd() {
+    docker exec \
+        -e VAULT_ADDR="$VAULT_ADDR_INNER" \
+        -e VAULT_CACERT=/vault/certs/vault-ca.pem \
+        -e VAULT_TOKEN="$ROOT_TOKEN" \
+        "$VAULT_CONTAINER" vault "$@"
+}
+_gen_pw() { openssl rand -base64 24 | tr -d '/+=' | head -c 32; }
+
+echo "Seeding Vault credentials at cnpg/demo/..."
+_vcmd kv put cnpg/demo/superuser username=postgres  password="$(_gen_pw)" > /dev/null
+_vcmd kv put cnpg/demo/app        username=app       password="$(_gen_pw)" > /dev/null
+_vcmd kv put cnpg/demo/readonly   username=readonly  password="$(_gen_pw)" > /dev/null
+echo "Vault credentials seeded."
+
 # Deploy ExternalSecrets
 echo "Deploying ExternalSecrets..."
 kubectl apply -f "$APP_DIR/k8s/externalsecret-demo-app.yaml"
@@ -51,6 +70,7 @@ kubectl get svc traefik -n traefik -o json \
     | jq 'del(.status,.spec.clusterIP,.spec.clusterIPs,.spec.loadBalancerIP,
               .metadata.uid,.metadata.resourceVersion,.metadata.creationTimestamp,
               .metadata.annotations)
+          | (.spec.ports[] |= del(.nodePort))
           | .metadata.name="traefik-dev"
           | .metadata.annotations={"metallb.universe.tf/address-pool":"kind-pool"}' \
     | kubectl apply -f -
