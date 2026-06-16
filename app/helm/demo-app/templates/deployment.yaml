@@ -54,8 +54,9 @@ spec:
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         {{- /* --reload-dir src so the watcher does not scan ~7000 .venv files */}}
         {{- $reload := ternary " --reload --reload-dir src" "" .Values.app.reload }}
+        {{- $seed := ternary " && python -m demo_app.seed" "" .Values.app.seed }}
         {{- if eq .Values.migration.strategy "startup" }}
-        command: ["sh", "-c", "litestar db upgrade --no-prompt && litestar run --host 0.0.0.0 --port 8000{{ $reload }}"]
+        command: ["sh", "-c", "litestar db upgrade --no-prompt{{ $seed }} && litestar run --host 0.0.0.0 --port 8000{{ $reload }}"]
         {{- else if .Values.app.reload }}
         command: ["litestar", "run", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "src"]
         {{- else }}

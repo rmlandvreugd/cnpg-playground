@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from demo_app.config import AppSettings
 from demo_app.db.models import Task
+from demo_app.db.session import pin_search_path
 
 SAMPLE_TASKS = [
     {"title": "Set up CI/CD pipeline", "done": True, "priority": 1},
@@ -42,6 +43,9 @@ SAMPLE_TASKS = [
 async def seed() -> None:
     settings = AppSettings()
     engine = create_async_engine(settings.database_url_async)
+    # Select the configured schema per connection (PgBouncer-safe); without
+    # this the seeder writes to the default search_path, not db_schema.
+    pin_search_path(engine, settings.db_schema)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     try:

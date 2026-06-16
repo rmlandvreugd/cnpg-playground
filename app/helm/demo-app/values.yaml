@@ -37,6 +37,9 @@ app:
   debug: false
   logLevel: "INFO"
   reload: false
+  # Seed sample tasks on startup (idempotent: skipped if rows exist). Only
+  # honoured with migration.strategy=startup; intended for dev, off for prod.
+  seed: false
   # Tracing is toggled via observability.tracing.enabled (below), which feeds
   # DEMO_APP_TRACING_ENABLED in the ConfigMap.
 

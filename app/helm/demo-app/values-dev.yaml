@@ -8,6 +8,7 @@ app:
   debug: true
   logLevel: "DEBUG"
   reload: true
+  seed: true
 
 database:
   schema: "dev"
