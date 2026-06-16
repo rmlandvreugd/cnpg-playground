@@ -23,7 +23,7 @@ k8s_yaml(helm(
 local_resource(
     'db-check',
     cmd='kubectl get cluster demo -n demo-db >/dev/null 2>&1 '
-        '|| { echo "demo-db not found — run app/scripts/setup.sh first"; exit 1; }',
+        + '|| { echo "demo-db not found — run app/scripts/setup.sh first"; exit 1; }',
 )
 
 k8s_resource('demo-app', port_forwards='8000:8000', resource_deps=['db-check'])

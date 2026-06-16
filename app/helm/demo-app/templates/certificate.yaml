@@ -7,6 +7,9 @@ metadata:
     {{- include "demo-app.labels" . | nindent 4 }}
 spec:
   secretName: {{ include "demo-app.fullname" . }}-tls
+  privateKey:
+    algorithm: ECDSA
+    size: 256
   issuerRef:
     kind: {{ .Values.tls.issuerRef.kind }}
     name: {{ .Values.tls.issuerRef.name }}
