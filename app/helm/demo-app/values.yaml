@@ -8,6 +8,10 @@ image:
 # Database connection
 database:
   host: "pooler-demo-rw.demo-db.svc.cluster.local"
+  # DDL migrations must bypass the PgBouncer pooler (transaction-mode pooling
+  # breaks DDL/session semantics) and talk directly to the CNPG -rw service.
+  # Defaults to host when empty.
+  migrationHost: "demo-rw.demo-db.svc.cluster.local"
   port: 5432
   name: "demo"
   user: "app"

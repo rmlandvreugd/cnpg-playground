@@ -27,6 +27,10 @@ spec:
         - configMapRef:
             name: {{ include "demo-app.fullname" . }}
         env:
+        # Override the pooler host from the ConfigMap: migrations run DDL, which
+        # must hit the CNPG -rw service directly, not PgBouncer.
+        - name: DEMO_APP_DB_HOST
+          value: {{ .Values.database.migrationHost | default .Values.database.host | quote }}
         - name: DEMO_APP_DB_PASSWORD
           valueFrom:
             secretKeyRef:
