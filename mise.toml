@@ -2,3 +2,4 @@
 "aqua:theseus-rs/postgresql-binaries" = "latest"
 envsubst = "latest"
 kind = "0.31.0"
+tilt = "latest"
