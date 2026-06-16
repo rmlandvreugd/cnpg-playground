@@ -17,3 +17,4 @@ data:
   DEMO_APP_TRACING_ENABLED: {{ .Values.observability.tracing.enabled | quote }}
   DEMO_APP_OTLP_ENDPOINT: {{ .Values.observability.tracing.otlpEndpoint | quote }}
   DEMO_APP_METRICS_ENABLED: {{ .Values.observability.metrics.enabled | quote }}
+  LITESTAR_APP: "demo_app.main:create_app"
