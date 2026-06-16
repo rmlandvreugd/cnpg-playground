@@ -7,6 +7,10 @@ image:
 app:
   debug: true
   logLevel: "DEBUG"
+  reload: true
+
+database:
+  schema: "dev"
 
 migration:
   strategy: "startup"

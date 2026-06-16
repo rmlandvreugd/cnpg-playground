@@ -51,8 +51,11 @@ spec:
       - name: app
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
         imagePullPolicy: {{ .Values.image.pullPolicy }}
+        {{- $reload := ternary " --reload" "" .Values.app.reload }}
         {{- if eq .Values.migration.strategy "startup" }}
-        command: ["sh", "-c", "litestar database upgrade && litestar run --host 0.0.0.0 --port 8000"]
+        command: ["sh", "-c", "litestar database upgrade && litestar run --host 0.0.0.0 --port 8000{{ $reload }}"]
+        {{- else if .Values.app.reload }}
+        command: ["litestar", "run", "--host", "0.0.0.0", "--port", "8000", "--reload"]
         {{- else }}
         command: ["litestar", "run", "--host", "0.0.0.0", "--port", "8000"]
         {{- end }}

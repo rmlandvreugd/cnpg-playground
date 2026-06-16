@@ -3,9 +3,14 @@ set -euo pipefail
 
 echo "=== Demo App Teardown ==="
 
-# Uninstall Helm release
-echo "Removing Helm release..."
+# Uninstall Helm releases
+echo "Removing Helm releases..."
 helm uninstall demo-app --namespace demo 2>/dev/null || true
+helm uninstall demo-app --namespace demo-dev 2>/dev/null || true
+
+# Remove dev Traefik LoadBalancer
+echo "Removing dev Traefik LoadBalancer..."
+kubectl delete svc traefik-dev -n traefik --ignore-not-found 2>/dev/null || true
 
 # Delete CNPG cluster
 echo "Removing CNPG cluster..."

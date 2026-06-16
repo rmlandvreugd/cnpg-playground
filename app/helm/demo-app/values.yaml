@@ -36,6 +36,7 @@ app:
   version: "0.1.0"
   debug: false
   logLevel: "INFO"
+  reload: false
   # Tracing is toggled via observability.tracing.enabled (below), which feeds
   # DEMO_APP_TRACING_ENABLED in the ConfigMap.
 
