@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy import URL
 
 
 class AppSettings(BaseSettings):
@@ -32,6 +33,12 @@ class AppSettings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
+    # Security — secret used to sign CSRF tokens on the HTML form routes.
+    # The default is deterministic, so it already works across replicas/restarts;
+    # in production set DEMO_APP_CSRF_SECRET to a real secret so the signing key
+    # isn't a published constant.
+    csrf_secret: str = "dev-insecure-csrf-secret-change-me"
+
     @property
     def database_url_async(self) -> str:
         """Async database URL (asyncpg driver).
@@ -50,10 +57,17 @@ class AppSettings(BaseSettings):
             url = url.replace("+psycopg://", "+asyncpg://", 1)
             url = url.replace("+psycopg2://", "+asyncpg://", 1)
             return url
-        return (
-            f"postgresql+asyncpg://{self.db_user}:{self.db_password}"
-            f"@{self.db_host}:{self.db_port}/{self.db_name}"
-        )
+        # URL.create percent-encodes special characters in the credentials
+        # (e.g. @ : / ? in a generated password) that would otherwise break
+        # URL parsing.
+        return URL.create(
+            "postgresql+asyncpg",
+            username=self.db_user,
+            password=self.db_password,
+            host=self.db_host,
+            port=self.db_port,
+            database=self.db_name,
+        ).render_as_string(hide_password=False)
 
     @property
     def database_url_sync(self) -> str:
@@ -72,7 +86,11 @@ class AppSettings(BaseSettings):
             elif url.startswith("postgresql+psycopg2://"):
                 url = url.replace("+psycopg2://", "+psycopg://", 1)
             return url
-        return (
-            f"postgresql+psycopg://{self.db_user}:{self.db_password}"
-            f"@{self.db_host}:{self.db_port}/{self.db_name}"
-        )
+        return URL.create(
+            "postgresql+psycopg",
+            username=self.db_user,
+            password=self.db_password,
+            host=self.db_host,
+            port=self.db_port,
+            database=self.db_name,
+        ).render_as_string(hide_password=False)

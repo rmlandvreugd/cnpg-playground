@@ -8,11 +8,18 @@ image:
 # Database connection
 database:
   host: "pooler-demo-rw.demo-db.svc.cluster.local"
+  # DDL migrations must bypass the PgBouncer pooler (transaction-mode pooling
+  # breaks DDL/session semantics) and talk directly to the CNPG -rw service.
+  # Defaults to host when empty.
+  migrationHost: "demo-rw.demo-db.svc.cluster.local"
   port: 5432
   name: "demo"
   user: "app"
   passwordSecret: "demo-app"
   passwordSecretKey: "password"
+  # Only used when credentialsMode=dynamic: the username rotates with the
+  # password, so it is sourced from the same Secret instead of database.user.
+  usernameSecretKey: "username"
   schema: "public"
   # Secret rotation
   credentialsMode: "static"  # "static" or "dynamic"
@@ -29,7 +36,8 @@ app:
   version: "0.1.0"
   debug: false
   logLevel: "INFO"
-  tracingEnabled: false
+  # Tracing is toggled via observability.tracing.enabled (below), which feeds
+  # DEMO_APP_TRACING_ENABLED in the ConfigMap.
 
 # Observability
 observability:
@@ -90,6 +98,10 @@ externalSecret:
 # Network policy
 networkPolicy:
   enabled: false
+  # Namespace the Prometheus instance runs in (it scrapes the pod's :8000
+  # /metrics). The repo deploys Prometheus into "prometheus-operator", not the
+  # generic "monitoring" namespace.
+  monitoringNamespace: "prometheus-operator"
 
 # PodDisruptionBudget
 podDisruptionBudget:

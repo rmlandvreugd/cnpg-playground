@@ -1,6 +1,7 @@
 """Task repository for database operations."""
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from demo_app.db.models import Task
 
 

@@ -7,9 +7,9 @@
 #   docker compose logs -f pgbouncer  # View PgBouncer logs
 #
 # Connection strings:
-#   App (via PgBouncer):  postgresql://app:app_password@localhost:6432/demo
-#   App (direct PG):      postgresql://app:app_password@localhost:5432/demo
-#   Superuser (direct):   postgresql://postgres:postgres_secret@localhost:5432/demo
+#   App (via PgBouncer):  postgresql://app:app_password@localhost:16432/demo
+#   App (direct PG):      postgresql://app:app_password@localhost:15432/demo
+#   Superuser (direct):   postgresql://postgres:postgres_secret@localhost:15432/demo
 #   pgAdmin:              http://localhost:5050 (admin@example.com / pgadmin_secret)
 
 services:
@@ -23,7 +23,7 @@ services:
     ports:
       - "15432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -39,6 +39,12 @@ services:
       DATABASE_URL: "postgres://app:app_password@postgres:5432/demo"
       ADMIN_USERS: "admin,pgbouncer"
       ADMIN_PASSWORD: "pgbouncer_admin"
+      # Postgres 18 stores role passwords as scram-sha-256. With the default
+      # AUTH_TYPE=md5, edoburu stores an md5 hash in userlist.txt, and pgbouncer
+      # then cannot negotiate SCRAM to the upstream server ("cannot do SCRAM
+      # authentication: wrong password type"). scram-sha-256 keeps the password
+      # as plaintext in userlist, letting pgbouncer speak SCRAM to both sides.
+      AUTH_TYPE: "scram-sha-256"
       PGBOUNCER_POOL_MODE: "session"
       PGBOUNCER_MAX_CLIENT_CONN: "1000"
       PGBOUNCER_DEFAULT_POOL_SIZE: "10"

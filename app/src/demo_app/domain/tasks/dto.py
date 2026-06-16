@@ -1,38 +1,34 @@
-"""Data transfer objects for Task CRUD operations."""
-from __future__ import annotations
+"""Data transfer objects for Task CRUD operations.
 
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Optional
+These are model-derived ``SQLAlchemyDTO``s — they put validation, type coercion,
+and mass-assignment protection on the request path for both the JSON API
+(``controllers/tasks.py``) and the HTML form controller (``controllers/pages.py``).
+"""
+from advanced_alchemy.extensions.litestar.dto import SQLAlchemyDTO, SQLAlchemyDTOConfig
 
-
-@dataclass
-class TaskCreateDTO:
-    """DTO for creating a task."""
-    title: str
-    done: bool = False
-    assignee: Optional[str] = None
-    due_date: Optional[datetime] = None
-    priority: Optional[int] = None
+from demo_app.db.models import Task
 
 
-@dataclass
-class TaskUpdateDTO:
-    """DTO for updating a task."""
-    title: Optional[str] = None
-    done: Optional[bool] = None
-    assignee: Optional[str] = None
-    due_date: Optional[datetime] = None
-    priority: Optional[int] = None
+class TaskWriteDTO(SQLAlchemyDTO[Task]):
+    """Request DTO for creating a task.
+
+    Excludes server-managed fields so they cannot be mass-assigned by the client.
+    """
+
+    config = SQLAlchemyDTOConfig(exclude={"id", "created_at"})
 
 
-@dataclass
-class TaskResponseDTO:
-    """DTO for task responses."""
-    id: int
-    title: str
-    done: bool
-    created_at: Optional[datetime] = None
-    assignee: Optional[str] = None
-    due_date: Optional[datetime] = None
-    priority: Optional[int] = None
+class TaskUpdateDTO(SQLAlchemyDTO[Task]):
+    """Request DTO for partial updates (PATCH/form edit).
+
+    ``partial=True`` makes the handler receive a ``DTOData[Task]`` carrying only
+    the submitted fields; apply with ``data.update_instance(existing_task)``.
+    """
+
+    config = SQLAlchemyDTOConfig(exclude={"id", "created_at"}, partial=True)
+
+
+class TaskReadDTO(SQLAlchemyDTO[Task]):
+    """Response DTO — full read model serialized for JSON responses."""
+
+    config = SQLAlchemyDTOConfig()

@@ -1,0 +1,43 @@
+# Build context hygiene for `COPY . .` in Dockerfile.
+# Keep images small and free of host-local artifacts and developer notes.
+
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+*$py.class
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Virtualenv — the image builds its own via `uv sync`; copying the host one
+# would clobber it.
+.venv/
+.uv/
+
+# Local agent / planning / memory files (not part of the app)
+knowledge/
+memory/
+plans/
+SCRATCHPAD.md
+TASK-QUEUE.md
+WORKING.md
+hipocampus.config.json
+
+# Local dev / deploy tooling not needed in the runtime image
+Dockerfile.dev
+Tiltfile
+compose.yaml
+docker/
+helm/
+k8s/
+scripts/
+pgdata/
+
+# Env / secrets
+.env
+.env.*
+
+# VCS & docker metadata
+.git/
+.gitignore
+.dockerignore

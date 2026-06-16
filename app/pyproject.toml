@@ -47,3 +47,9 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# Alembic-generated revisions are not hand-formatted.
+"src/demo_app/migrations/*" = ["E501"]
+# Inline seed-data rows read better on one line than wrapped.
+"src/demo_app/seed.py" = ["E501"]

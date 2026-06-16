@@ -1,17 +1,22 @@
 import logging
 
+import structlog
 from litestar import Litestar
-from litestar.plugins.prometheus import PrometheusConfig, PrometheusController
-from litestar.plugins.structlog import StructlogPlugin
+from litestar.config.csrf import CSRFConfig
 from litestar.contrib.jinja import JinjaTemplateEngine
+from litestar.datastructures import State
+from litestar.logging.config import StructLoggingConfig
+from litestar.plugins import PluginProtocol
+from litestar.plugins.prometheus import PrometheusConfig, PrometheusController
+from litestar.plugins.structlog import StructlogConfig, StructlogPlugin
 from litestar.static_files.config import StaticFilesConfig
 from litestar.template.config import TemplateConfig
 
 from demo_app.config import AppSettings
-from demo_app.db.session import get_sqlalchemy_config
-from demo_app.controllers.tasks import TaskController
-from demo_app.controllers.pages import PageController
 from demo_app.controllers.health import HealthController
+from demo_app.controllers.pages import PageController
+from demo_app.controllers.tasks import TaskController
+from demo_app.db.session import get_sqlalchemy_config
 
 logger = logging.getLogger(__name__)
 
@@ -23,13 +28,13 @@ def setup_opentelemetry(settings: AppSettings) -> None:
     libraries at import time.
     """
     from opentelemetry import trace
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
-    from opentelemetry.sdk.resources import Resource, SERVICE_NAME_ATTRIBUTE
-    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 
     resource = Resource.create({
-        SERVICE_NAME_ATTRIBUTE: "demo-app",
+        "service.name": "demo-app",
         "service.version": settings.app_version,
         "service.namespace": "demo",
     })
@@ -42,13 +47,14 @@ def setup_opentelemetry(settings: AppSettings) -> None:
     )
     trace.set_tracer_provider(provider)
 
-    from opentelemetry.instrumentation.asgi import ASGIInstrumentor
-    from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+    # Note: HTTP/ASGI request spans are emitted by Litestar's own
+    # OpenTelemetryPlugin (wired in create_app), not a global instrumentor —
+    # opentelemetry.instrumentation.asgi exposes only OpenTelemetryMiddleware.
     from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
-    from opentelemetry.instrumentation.logging import LoggingInstrumentor
     from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+    from opentelemetry.instrumentation.logging import LoggingInstrumentor
+    from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 
-    ASGIInstrumentor().instrument()
     SQLAlchemyInstrumentor().instrument()
     AsyncPGInstrumentor().instrument()
     LoggingInstrumentor().instrument()
@@ -73,35 +79,60 @@ def create_app(settings: AppSettings | None = None) -> Litestar:
     if settings.tracing_enabled:
         setup_opentelemetry(settings)
 
-    plugins = []
+    plugins: list[PluginProtocol] = []
 
     # SQLAlchemy
     alchemy_config = get_sqlalchemy_config(settings)
     from advanced_alchemy.extensions.litestar import SQLAlchemyPlugin
     plugins.append(SQLAlchemyPlugin(config=alchemy_config))
 
-    # Structured logging
-    plugins.append(StructlogPlugin())
-
-    # Prometheus
-    prometheus_config = PrometheusConfig(
-        app_name="demo_app",
-        labels={"version": settings.app_version},
+    # Structured logging — honor DEMO_APP_LOG_LEVEL (e.g. DEBUG)
+    log_level = logging.getLevelName(settings.log_level)
+    plugins.append(
+        StructlogPlugin(
+            config=StructlogConfig(
+                structlog_logging_config=StructLoggingConfig(
+                    wrapper_class=structlog.make_filtering_bound_logger(log_level),
+                ),
+            ),
+        )
     )
+
+    # Prometheus — register the middleware (which records request metrics) and
+    # the /metrics controller only when metrics are enabled.
+    route_handlers = [TaskController, PageController, HealthController]
+    middleware = []
+    if settings.metrics_enabled:
+        prometheus_config = PrometheusConfig(
+            app_name="demo_app",
+            labels={"version": settings.app_version},
+        )
+        middleware.append(prometheus_config.middleware)
+        route_handlers.append(PrometheusController)
 
     # OpenTelemetry plugin (adds Litestar-specific spans on top of auto-instrumentation)
     if settings.tracing_enabled:
-        from litestar.plugins.opentelemetry import OpenTelemetryPlugin, OpenTelemetryConfig
+        from litestar.plugins.opentelemetry import (
+            OpenTelemetryConfig,
+            OpenTelemetryPlugin,
+        )
         plugins.append(OpenTelemetryPlugin(OpenTelemetryConfig()))
 
+    # CSRF protection for the server-rendered HTML forms (double-submit cookie;
+    # token rendered into each <form> via `{{ csrf_input | safe }}`). The JSON
+    # API under /api/ is consumed programmatically, not from a browser session,
+    # so it is excluded — those clients don't carry the CSRF cookie.
+    csrf_config = CSRFConfig(
+        secret=settings.csrf_secret,
+        exclude=["^/api/", "^/metrics", "^/health"],
+    )
+
     return Litestar(
-        route_handlers=[
-            TaskController,
-            PageController,
-            HealthController,
-            PrometheusController,
-        ],
+        debug=settings.debug,
+        route_handlers=route_handlers,
+        middleware=middleware,
         plugins=plugins,
+        csrf_config=csrf_config,
         template_config=TemplateConfig(
             directory="src/demo_app/templates",
             engine=JinjaTemplateEngine,
@@ -111,5 +142,5 @@ def create_app(settings: AppSettings | None = None) -> Litestar:
         ],
         on_startup=[_log_startup],
         on_shutdown=[_log_shutdown],
-        state={"version": settings.app_version},
+        state=State({"version": settings.app_version}),
     )

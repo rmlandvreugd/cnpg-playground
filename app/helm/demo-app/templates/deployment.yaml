@@ -23,20 +23,29 @@ spec:
       - name: db-migrate
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
         command: ["litestar", "database", "upgrade"]
+        envFrom:
+        - configMapRef:
+            name: {{ include "demo-app.fullname" . }}
         env:
+        # Override the pooler host from the ConfigMap: migrations run DDL, which
+        # must hit the CNPG -rw service directly, not PgBouncer.
+        - name: DEMO_APP_DB_HOST
+          value: {{ .Values.database.migrationHost | default .Values.database.host | quote }}
         - name: DEMO_APP_DB_PASSWORD
           valueFrom:
             secretKeyRef:
               name: {{ .Values.database.passwordSecret }}
               key: {{ .Values.database.passwordSecretKey }}
-        - name: DEMO_APP_DB_HOST
-          value: {{ .Values.database.host }}
-        - name: DEMO_APP_DB_PORT
-          value: {{ .Values.database.port | quote }}
-        - name: DEMO_APP_DB_NAME
-          value: {{ .Values.database.name }}
+        {{- if eq .Values.database.credentialsMode "dynamic" }}
+        - name: DEMO_APP_DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.database.passwordSecret }}
+              key: {{ .Values.database.usernameSecretKey }}
+        {{- else }}
         - name: DEMO_APP_DB_USER
           value: {{ .Values.database.user }}
+        {{- end }}
       {{- end }}
       containers:
       - name: app
@@ -47,30 +56,27 @@ spec:
         {{- else }}
         command: ["litestar", "run", "--host", "0.0.0.0", "--port", "8000"]
         {{- end }}
+        envFrom:
+        - configMapRef:
+            name: {{ include "demo-app.fullname" . }}
         env:
+        # Secrets and the credentialsMode-dependent username stay inline; all
+        # non-secret config is single-sourced from the ConfigMap above.
         - name: DEMO_APP_DB_PASSWORD
           valueFrom:
             secretKeyRef:
               name: {{ .Values.database.passwordSecret }}
               key: {{ .Values.database.passwordSecretKey }}
-        - name: DEMO_APP_DB_HOST
-          value: {{ .Values.database.host | quote }}
-        - name: DEMO_APP_DB_PORT
-          value: {{ .Values.database.port | quote }}
-        - name: DEMO_APP_DB_NAME
-          value: {{ .Values.database.name | quote }}
+        {{- if eq .Values.database.credentialsMode "dynamic" }}
+        - name: DEMO_APP_DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.database.passwordSecret }}
+              key: {{ .Values.database.usernameSecretKey }}
+        {{- else }}
         - name: DEMO_APP_DB_USER
           value: {{ .Values.database.user | quote }}
-        - name: DEMO_APP_APP_VERSION
-          value: {{ .Values.app.version | quote }}
-        - name: DEMO_APP_DEBUG
-          value: {{ .Values.app.debug | quote }}
-        - name: DEMO_APP_LOG_LEVEL
-          value: {{ .Values.app.logLevel | quote }}
-        - name: DEMO_APP_TRACING_ENABLED
-          value: {{ .Values.observability.tracing.enabled | quote }}
-        - name: DEMO_APP_OTLP_ENDPOINT
-          value: {{ .Values.observability.tracing.otlpEndpoint | quote }}
+        {{- end }}
         ports:
         - containerPort: 8000
           name: http
