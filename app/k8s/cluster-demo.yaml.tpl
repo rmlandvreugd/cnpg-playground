@@ -103,3 +103,7 @@ spec:
     parameters:
       max_client_conn: "1000"
       default_pool_size: "10"
+      # The app pins its schema via asyncpg's search_path startup parameter
+      # (see app db/session.py). PgBouncer rejects unknown startup parameters
+      # by default; allow it here so the param is forwarded to PostgreSQL.
+      ignore_startup_parameters: "search_path"

@@ -15,13 +15,16 @@ database:
 migration:
   strategy: "startup"
 
+# --reload forks a second full Python interpreter (litestar[standard] +
+# advanced-alchemy + otel), so dev needs at least as much memory as prod.
+# 128Mi OOM-killed the reload worker before it could bind :8000.
 resources:
   requests:
-    cpu: 50m
-    memory: 64Mi
-  limits:
-    cpu: 250m
+    cpu: 100m
     memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
 
 tls:
   hostnamePrefix: "demo-dev-demo"
