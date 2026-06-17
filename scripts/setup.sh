@@ -533,10 +533,15 @@ TOML
 ${STEP_CA_INT_CERT}" \
         --dry-run=client -o yaml | kubectl apply --context "${CONTEXT_NAME}" -f -
 
-    # Apply trust-manager Bundle resources
+    # Apply trust-manager Bundle resources. Retry: the trust-manager webhook
+    # Service endpoint may not be programmed yet right after the Deployment goes
+    # Available (kube-proxy lag -> "connection refused"). Render to a file first
+    # so the apply is re-runnable across retries.
     echo "📋 Applying step-ca trust-manager Bundle..."
-    envsubst < "${GIT_REPO_ROOT}/step-ca/trust-manager/bundle.yaml.tpl" \
-        | kubectl --context "${CONTEXT_NAME}" -n cert-manager apply -f -
+    TRUST_BUNDLE_TMPFILE=$(mktemp)
+    envsubst < "${GIT_REPO_ROOT}/step-ca/trust-manager/bundle.yaml.tpl" > "${TRUST_BUNDLE_TMPFILE}"
+    retry 12 5 kubectl --context "${CONTEXT_NAME}" -n cert-manager apply -f "${TRUST_BUNDLE_TMPFILE}"
+    rm -f "${TRUST_BUNDLE_TMPFILE}"
 
     # Create vault-pki-int-ca Secret (Vault PKI Intermediate CA 2)
     # This is the signing CA used by Vault's pki_int engine, chained to step-ca.

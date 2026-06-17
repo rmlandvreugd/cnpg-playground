@@ -245,6 +245,25 @@ get_kind_ipv4_subnet() {
     fi
 }
 
+# retry <tries> <delay_seconds> <command...>
+# Re-runs the command until it succeeds or <tries> is reached. Intended for
+# operations that race with a not-yet-reachable admission webhook (e.g. applying
+# a resource right after its controller's Deployment goes Available, before
+# kube-proxy has programmed the webhook Service endpoint -> "connection refused").
+retry() {
+    local tries="$1" delay="$2"; shift 2
+    local n=1
+    until "$@"; do
+        if (( n >= tries )); then
+            echo "❌ command failed after ${tries} attempts: $*" >&2
+            return 1
+        fi
+        echo "⚠️  attempt ${n}/${tries} failed, retrying in ${delay}s: $*" >&2
+        sleep "${delay}"
+        n=$((n + 1))
+    done
+}
+
 helm_upgrade_install() {
     local release="$1"
     local chart_ref="$2"
