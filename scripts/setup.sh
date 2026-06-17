@@ -157,7 +157,9 @@ for region in "${REGIONS[@]}"; do
     kubectl label node -l infra.node.kubernetes.io node-role.kubernetes.io/infra= --context "$(get_cluster_context "${region}")"
     kubectl label node -l app.node.kubernetes.io node-role.kubernetes.io/app= --context "$(get_cluster_context "${region}")"
 
-    echo "🛠️  Installing Calico CNI (tigera-operator ${TIGERA_OPERATOR_CHART_VERSION}) in '${K8S_CLUSTER_NAME}'..."
+    echo "🛠️  Installing Calico CNI (tigera-operator ${TIGERA_OPERATOR_CHART_VERSION} with v3 CRDs) in '${K8S_CLUSTER_NAME}'..."
+    kubectl create namespace tigera-operator --context "$(get_cluster_context "${region}")"
+    helm template calico-crds projectcalico.org.v3 --version ${TIGERA_OPERATOR_CHART_VERSION} --repo https://docs.tigera.io/calico/charts | kubectl apply --context "$(get_cluster_context "${region}")" --server-side -f -
     helm_upgrade_install tigera-operator tigera-operator tigera-operator "$(get_cluster_context "${region}")" \
         "${TIGERA_OPERATOR_CHART_VERSION}" \
         --repo-url https://docs.tigera.io/calico/charts \
@@ -169,6 +171,10 @@ for region in "${REGIONS[@]}"; do
         sleep 3
     done
     kubectl rollout status daemonset/calico-node -n calico-system \
+        --timeout=900s --context "$(get_cluster_context "${region}")"
+    kubectl rollout status deployment/calico-kube-controllers -n calico-system \
+        --timeout=900s --context "$(get_cluster_context "${region}")"
+    kubectl rollout status deployment/calico-webhooks -n calico-system \
         --timeout=900s --context "$(get_cluster_context "${region}")"
 
     echo "🛠️  Installing MetalLB ${METALLB_CHART_VERSION} (chart) in '${K8S_CLUSTER_NAME}'..."

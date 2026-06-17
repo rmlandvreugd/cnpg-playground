@@ -28,6 +28,8 @@ nodes:
       apiServer:
         extraArgs:
           encryption-provider-config: /etc/kubernetes/encryption/secretbox.key
+          feature-gates: "MutatingAdmissionPolicy=true"
+          runtime-config: "admissionregistration.k8s.io/v1beta1=true"
         extraVolumes:
           - name: encryption-config
             hostPath: /etc/kubernetes/encryption/secretbox.key
