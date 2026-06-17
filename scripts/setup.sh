@@ -495,9 +495,12 @@ TOML
 
     # cert-manager
     echo "🔧 Installing cert-manager ${CERT_MANAGER_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
+    # --no-wait: `helm --wait` stalls on cert-manager even when all pods are Ready;
+    # the explicit `kubectl wait` below is the real readiness gate.
     helm_upgrade_install cert-manager \
         oci://quay.io/jetstack/charts/cert-manager \
         cert-manager "${CONTEXT_NAME}" "${CERT_MANAGER_CHART_VERSION}" \
+        --no-wait \
         --set crds.enabled=true
 
     # Wait for cert-manager to be ready before creating Issuers/ClusterIssuers
@@ -509,6 +512,7 @@ TOML
     helm_upgrade_install trust-manager \
         oci://quay.io/jetstack/charts/trust-manager \
         cert-manager "${CONTEXT_NAME}" "${TRUST_MANAGER_CHART_VERSION}" \
+        --no-wait \
         --set app.webhook.tls.helmCert.enabled=true \
         --set secretTargets.enabled=true \
         --set "secretTargets.authorizedSecrets[0]=vault-pki-bundle" \

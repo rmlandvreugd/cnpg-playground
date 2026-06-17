@@ -19,7 +19,17 @@
 # limitations under the License.
 #
 
-set -euo pipefail
+set -Eeuo pipefail
+
+# Centralized failure diagnostics: with `set -E` this ERR trap propagates into
+# functions/subshells and fires for every script that sources common.sh, turning
+# a silent `set -e` abort into a clear "<file> line <N>: <command>" message.
+# Commands guarded with `|| true` (common in teardown scripts) do NOT trigger it.
+_common_on_err() {
+    local rc=$?
+    echo "❌ ${BASH_SOURCE[1]:-script} failed (exit ${rc}) at line ${BASH_LINENO[0]}: ${BASH_COMMAND}" >&2
+}
+trap _common_on_err ERR
 
 # Minimal thresholds to check before calling tuning script
 declare -A thresholds=(
@@ -253,15 +263,43 @@ helm_upgrade_install() {
         shift 2
     fi
 
+    # `--no-wait` opt-out: some charts (e.g. cert-manager) make `helm --wait`
+    # stall indefinitely even when every resource is already Ready. Callers that
+    # do their own explicit `kubectl wait` afterwards can pass --no-wait to skip it.
+    local wait_args=(--wait)
+    local passthrough=() arg
+    for arg in "$@"; do
+        if [[ "${arg}" == "--no-wait" ]]; then
+            wait_args=()
+        else
+            passthrough+=("${arg}")
+        fi
+    done
+    set -- ${passthrough[@]+"${passthrough[@]}"}
+
     local attempt retries=3 delay=15
     for attempt in $(seq 1 $retries); do
-        helm upgrade --install "${release}" "${chart_ref}" \
+        # Clear a release stuck in a pending/failed state so retries and re-runs
+        # self-heal instead of failing with "another operation in progress".
+        local st
+        st=$(helm status "${release}" -n "${namespace}" --kube-context "${context}" \
+             -o json 2>/dev/null | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+        case "${st}" in
+            pending-install)
+                helm uninstall "${release}" -n "${namespace}" --kube-context "${context}" --wait || true ;;
+            pending-upgrade|pending-rollback|failed)
+                helm rollback "${release}" -n "${namespace}" --kube-context "${context}" || true ;;
+        esac
+
+        # Wrap in `timeout` so a stuck `helm --wait` (which can blow past its own
+        # --timeout) becomes a failure the retry loop can act on, not a frozen process.
+        timeout --kill-after=30s 360s helm upgrade --install "${release}" "${chart_ref}" \
             "${repo_args[@]}" \
             --namespace "${namespace}" \
             --create-namespace \
             --kube-context "${context}" \
             --version "${version}" \
-            --wait \
+            ${wait_args[@]+"${wait_args[@]}"} \
             --timeout 300s \
             "$@" && return 0
         if [[ $attempt -lt $retries ]]; then
