@@ -89,7 +89,7 @@ metadata:
 spec:
   cluster:
     name: pg-local
-  instances: 2
+  instances: 1
   type: rw
   pgbouncer:
     poolMode: session
