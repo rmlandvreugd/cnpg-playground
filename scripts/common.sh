@@ -307,7 +307,12 @@ helm_upgrade_install() {
             pending-install)
                 helm uninstall "${release}" -n "${namespace}" --kube-context "${context}" --wait || true ;;
             pending-upgrade|pending-rollback|failed)
-                helm rollback "${release}" -n "${namespace}" --kube-context "${context}" || true ;;
+                # Roll back to the last good revision; if there is none (e.g. the very
+                # first install failed -> "release has no 0 version"), uninstall so the
+                # next attempt is a clean install.
+                helm rollback "${release}" -n "${namespace}" --kube-context "${context}" 2>/dev/null \
+                    || helm uninstall "${release}" -n "${namespace}" --kube-context "${context}" --wait \
+                    || true ;;
         esac
 
         # Wrap in `timeout` so a stuck `helm --wait` (which can blow past its own
