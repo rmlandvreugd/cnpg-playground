@@ -11,6 +11,12 @@ mimir:
   structuredConfig:
     ingest_storage:
       enabled: false
+    ingester:
+      # mimir-distributed 6.x enables ingest storage by default and ships
+      # push_grpc_method_enabled=false. We run the classic architecture
+      # (ingest_storage + kafka disabled), so the Push gRPC method must be
+      # re-enabled or the ingester fails config validation on startup.
+      push_grpc_method_enabled: true
     common:
       storage:
         backend: s3

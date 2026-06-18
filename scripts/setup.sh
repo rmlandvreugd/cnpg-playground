@@ -157,7 +157,7 @@ for region in "${REGIONS[@]}"; do
     kubectl label node -l infra.node.kubernetes.io node-role.kubernetes.io/infra= --context "$(get_cluster_context "${region}")"
     kubectl label node -l app.node.kubernetes.io node-role.kubernetes.io/app= --context "$(get_cluster_context "${region}")"
 
-    echo "🛠️  Installing Calico CNI (tigera-operator ${TIGERA_OPERATOR_CHART_VERSION} with v3 CRDs) in '${K8S_CLUSTER_NAME}'..."
+    echo "🛠️  Installing Calico CNI (tigera-operator ${TIGERA_OPERATOR_CHART_VERSION} with v1 CRDs) in '${K8S_CLUSTER_NAME}'..."
     kubectl create namespace tigera-operator --context "$(get_cluster_context "${region}")"
     # helm template calico-crds projectcalico.org.v3 --version ${TIGERA_OPERATOR_CHART_VERSION} --repo https://docs.tigera.io/calico/charts | kubectl apply --context "$(get_cluster_context "${region}")" --server-side -f -
     helm template calico-crds crd.projectcalico.org.v1 --version ${TIGERA_OPERATOR_CHART_VERSION} --repo https://docs.tigera.io/calico/charts | kubectl apply --context "$(get_cluster_context "${region}")" --server-side -f -
@@ -175,8 +175,13 @@ for region in "${REGIONS[@]}"; do
         --timeout=900s --context "$(get_cluster_context "${region}")"
     kubectl rollout status deployment/calico-kube-controllers -n calico-system \
         --timeout=900s --context "$(get_cluster_context "${region}")"
-    # kubectl rollout status deployment/calico-webhooks -n calico-system \
-    #     --timeout=900s --context "$(get_cluster_context "${region}")"
+    # Wait for the full Calico v3 control plane (apiserver/webhooks/goldmane/whisker) to
+    # be Available before proceeding. The aggregated v3.projectcalico.org APIService can
+    # stall cluster-wide discovery/list/apply calls while it converges, which otherwise
+    # makes downstream helm installs (and monitoring/setup.sh) race an unready Calico.
+    # retry guards the brief window before the TigeraStatus objects exist.
+    retry 30 10 kubectl wait --for=condition=Available tigerastatus --all \
+        --timeout=900s --context "$(get_cluster_context "${region}")"
 
     echo "🛠️  Installing MetalLB ${METALLB_CHART_VERSION} (chart) in '${K8S_CLUSTER_NAME}'..."
     # Enable strict ARP for kube-proxy

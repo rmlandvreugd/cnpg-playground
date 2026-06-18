@@ -7,6 +7,15 @@ alertmanager:
 
 prometheusOperator:
   enabled: true
+  # Issue the admission webhook serving cert via cert-manager (already installed) instead
+  # of the default kube-webhook-certgen pre-install Helm hook Job. That hook must complete
+  # before `helm --wait` creates any chart resource; on a fresh cluster its uncached
+  # ghcr.io image pull + Calico CNI race made it exceed the 360s timeout (context canceled).
+  # cainjector injects the CA into the webhook configs; helm --wait does not block on the
+  # Certificate CRs, so the install no longer hangs.
+  admissionWebhooks:
+    certManager:
+      enabled: true
 
 kubeStateMetrics:
   enabled: true
