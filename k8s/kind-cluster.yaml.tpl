@@ -12,6 +12,9 @@ nodes:
     - hostPath: ${GIT_REPO_ROOT}/k8s/encryption/secretbox.key
       containerPath: /etc/kubernetes/encryption/secretbox.key
       readOnly: true
+    - hostPath: ${GIT_REPO_ROOT}/k8s/authn-config.yaml
+      containerPath: /etc/kubernetes/authn-config.yaml
+      readOnly: true
   kubeadmConfigPatches:
     - |
       kind: ClusterConfiguration
@@ -30,10 +33,16 @@ nodes:
           encryption-provider-config: /etc/kubernetes/encryption/secretbox.key
           feature-gates: "MutatingAdmissionPolicy=true"
           runtime-config: "admissionregistration.k8s.io/v1beta1=true"
+          authentication-config: /etc/kubernetes/authn-config.yaml
         extraVolumes:
           - name: encryption-config
             hostPath: /etc/kubernetes/encryption/secretbox.key
             mountPath: /etc/kubernetes/encryption/secretbox.key
+            readOnly: true
+            pathType: File
+          - name: authn-config
+            hostPath: /etc/kubernetes/authn-config.yaml
+            mountPath: /etc/kubernetes/authn-config.yaml
             readOnly: true
             pathType: File
     - |

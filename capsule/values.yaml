@@ -1,0 +1,7 @@
+manager:
+  options:
+    capsuleUserGroups:
+      - "oidc:capsule-admin"
+      - "oidc:rbr-db-admin"
+      - "oidc:rbr-ver-db-admin"
+    protectedNamespaceRegex: "^(kube-.*|capsule-.*|cert-manager|external-secrets|traefik|vault|authelia|grafana|monitoring|argocd|kyverno|metallb-system|cnpg-system|otel|caretta|radar|seaweedfs)$"

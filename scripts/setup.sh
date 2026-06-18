@@ -96,6 +96,15 @@ GIT_REPO_ROOT="${GIT_REPO_ROOT}" envsubst '${GIT_REPO_ROOT}' \
     < "${GIT_REPO_ROOT}/k8s/kind-cluster.yaml.tpl" \
     > "${GIT_REPO_ROOT}/k8s/kind-cluster.yaml"
 
+echo "📝 Rendering initial authn-config (will be updated post-MetalLB)..."
+HOST_IP_INIT=$(hostname -I | awk '{print $1}' | tr '.' '-')
+STEP_CA_CHAIN_PEM=$(sudo cat "${GIT_REPO_ROOT}/step-ca/pki/root_ca.crt" "${GIT_REPO_ROOT}/step-ca/pki/intermediate_ca.crt" | sed 's/^/        /')
+TRAEFIK_IP_DASHED="${HOST_IP_INIT}" \
+STEP_CA_CHAIN_PEM="${STEP_CA_CHAIN_PEM}" \
+envsubst '${TRAEFIK_IP_DASHED} ${STEP_CA_CHAIN_PEM}' \
+    < "${GIT_REPO_ROOT}/k8s/authn-config.yaml.tpl" \
+    > "${GIT_REPO_ROOT}/k8s/authn-config.yaml"
+
 # --- Phase 1: Provision Clusters and RustFS Instances ---
 let "current_objectstore_port = RUSTFS_BASE_PORT"
 declare -A objectstore_ports
@@ -611,6 +620,14 @@ ${STEP_CA_INT_CERT}" \
 
     TRAEFIK_IP=$(echo "$IP_RANGE" | cut -d- -f1)
     TRAEFIK_IP_DASHED=$(ip_to_dashed "${TRAEFIK_IP}")
+    echo "🔄 Re-rendering authn-config with Traefik IP (apiserver hot-reload)..."
+    STEP_CA_CHAIN_PEM=$(sudo cat "${GIT_REPO_ROOT}/step-ca/pki/root_ca.crt" "${GIT_REPO_ROOT}/step-ca/pki/intermediate_ca.crt" | sed 's/^/        /')
+    TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
+    STEP_CA_CHAIN_PEM="${STEP_CA_CHAIN_PEM}" \
+    envsubst '${TRAEFIK_IP_DASHED} ${STEP_CA_CHAIN_PEM}' \
+        < "${GIT_REPO_ROOT}/k8s/authn-config.yaml.tpl" \
+        > "${GIT_REPO_ROOT}/k8s/authn-config.yaml"
+
     echo "🔧 Installing Traefik ${TRAEFIK_CHART_VERSION} (chart) in '${K8S_CLUSTER_NAME}'..."
     if [[ "${region}" == "${HUB_REGION}" ]]; then
         # Hub: wire gRPC tracing to in-cluster OTel Collector (may not exist yet; Traefik retries)
@@ -660,6 +677,32 @@ ${STEP_CA_INT_CERT}" \
     echo "🔧 Installing CNPG operator and Barman Cloud Plugin in '${K8S_CLUSTER_NAME}'..."
     install_cnpg_operator "${CONTEXT_NAME}"
     install_barman_plugin "${CONTEXT_NAME}"
+
+    echo "🏛️  Installing Capsule ${CAPSULE_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
+    helm_upgrade_install capsule \
+        oci://ghcr.io/projectcapsule/charts/capsule \
+        capsule-system "${CONTEXT_NAME}" "${CAPSULE_CHART_VERSION}" \
+        --values "${GIT_REPO_ROOT}/capsule/values.yaml"
+
+    echo "🔗 Installing capsule-proxy ${CAPSULE_PROXY_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
+    helm_upgrade_install capsule-proxy \
+        oci://ghcr.io/projectcapsule/charts/capsule-proxy \
+        capsule-system "${CONTEXT_NAME}" "${CAPSULE_PROXY_CHART_VERSION}" \
+        --set "options.enableSSL=true" \
+        --set "certManager.enabled=true" \
+        --set "certManager.issuerRef.name=vault-pki-issuer" \
+        --set "certManager.issuerRef.kind=ClusterIssuer"
+
+    echo "🏳️  Installing Kyverno ${KYVERNO_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
+    helm_upgrade_install kyverno \
+        oci://ghcr.io/kyverno/charts/kyverno \
+        kyverno "${CONTEXT_NAME}" "${KYVERNO_CHART_VERSION}"
+
+    echo "🚀 Installing ArgoCD ${ARGOCD_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
+    helm_upgrade_install argocd \
+        oci://ghcr.io/argoproj/argo-helm/argo-cd \
+        argocd "${CONTEXT_NAME}" "${ARGOCD_CHART_VERSION}" \
+        --set "server.service.type=ClusterIP"
 
     echo "✅ Resource provisioning for '${region}' complete."
 
@@ -765,6 +808,45 @@ echo "✅ Authelia proxied at https://authelia.${HUB_TRAEFIK_IP_DASHED}.sslip.io
 echo "🔄 Reconfiguring Authelia with two-domain session cookie..."
 TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" \
     "${SCRIPT_DIR}/authelia-setup.sh"
+
+echo "🔑 Installing gangplank (OIDC kubeconfig dispenser)..."
+AUTHELIA_GANGPLANK_CLIENT_SECRET_ENCODED=$(printf '%s' "${AUTHELIA_GANGPLANK_CLIENT_SECRET}" | base64 -w0)
+kubectl create namespace gangplank --context "${HUB_CONTEXT}" \
+    --dry-run=client -o yaml | kubectl apply --context "${HUB_CONTEXT}" -f -
+kubectl create secret generic gangplank-oidc \
+    --namespace gangplank --context "${HUB_CONTEXT}" \
+    --from-literal=client-id=gangplank \
+    --from-literal=client-secret="${AUTHELIA_GANGPLANK_CLIENT_SECRET}" \
+    --dry-run=client -o yaml | kubectl apply --context "${HUB_CONTEXT}" -f -
+helm_upgrade_install gangplank \
+    gangplank \
+    gangplank "${HUB_CONTEXT}" "${GANGPLANK_CHART_VERSION}" \
+    --repo-url https://peak-scale.github.io/helm-charts \
+    --set "config.clusterName=cnpg" \
+    --set "config.apiServerURL=https://capsule-proxy.${HUB_TRAEFIK_IP_DASHED}.sslip.io" \
+    --set "config.authorizeURL=https://authelia.${HUB_TRAEFIK_IP_DASHED}.sslip.io/api/oidc/authorization" \
+    --set "config.tokenURL=https://authelia.${HUB_TRAEFIK_IP_DASHED}.sslip.io/api/oidc/token" \
+    --set "config.redirectURL=https://gangplank.${HUB_TRAEFIK_IP_DASHED}.sslip.io/callback" \
+    --set "config.usernameClaim=email" \
+    --set "config.groupsClaim=groups" \
+    --set "config.scopes=openid email profile groups" \
+    --set "config.audience=gangplank" \
+    --set "oidc.existingSecret=gangplank-oidc" \
+    --set "oidc.clientIDKey=client-id" \
+    --set "oidc.clientSecretKey=client-secret"
+echo "✅ gangplank: https://gangplank.${HUB_TRAEFIK_IP_DASHED}.sslip.io"
+
+echo "🏗️  Applying Capsule Tenant 'rbr'..."
+kubectl apply --context "${HUB_CONTEXT}" -f "${GIT_REPO_ROOT}/manifests/capsule-tenant-rbr.yaml"
+echo "🏷️  Labelling tenant namespaces..."
+for ns in rbr-ver rbr-ver-db; do
+    kubectl label namespace "${ns}" \
+        capsule.clastix.io/tenant=rbr \
+        cnpg.io/driver-group=ver \
+        --context "${HUB_CONTEXT}" \
+        --overwrite 2>/dev/null || true
+done
+echo "✅ Tenant 'rbr' active"
 
 echo "=================================================="
 echo "🕸️  Installing Caretta network topology on hub cluster..."
