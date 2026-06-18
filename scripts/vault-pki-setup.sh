@@ -44,28 +44,6 @@ _scmd() {
 
 sudo mkdir -p "${VAULT_PKI_DIR}"
 
-# --- Root PKI engine (kept for CA chain serving, no longer generates its own root) ---
-echo "📜 Enabling root PKI engine (serves step-ca root chain)..."
-_vcmd secrets enable pki
-_vcmd secrets tune -max-lease-ttl=87600h pki
-
-# Import the step-ca root certificate into Vault's pki/ engine
-# so that Vault can serve the full CA chain to clients
-STEP_CA_ROOT_CERT=$(sudo cat "${STEP_CA_PKI_DIR}/root_ca.crt")
-echo "${STEP_CA_ROOT_CERT}" | sudo tee "${VAULT_PKI_DIR}/root.crt" > /dev/null
-sudo chmod 644 "${VAULT_PKI_DIR}/root.crt"
-
-_vcmd write pki/config/urls \
-    issuing_certificates="https://${VAULT_HOST}:${VAULT_PORT}/v1/pki/ca" \
-    crl_distribution_points="https://${VAULT_HOST}:${VAULT_PORT}/v1/pki/crl" \
-    ocsp_servers="https://${VAULT_HOST}:${VAULT_PORT}/v1/pki/ocsp"
-
-# Enable CRL auto-rebuild so the CRL stays fresh without manual rotation
-_vcmd write pki/config/crl \
-    auto_rebuild=true \
-    auto_rebuild_grace_period=12h \
-    ocsp_disable=false
-
 # --- Intermediate PKI engine (signed by step-ca) ---
 echo "📜 Enabling intermediate PKI engine..."
 _vcmd secrets enable -path=pki_int pki
@@ -202,7 +180,6 @@ path "pki_int/issue/cluster-certs" { capabilities = ["create","update"] }
 path "pki_int/sign/mtls-client"    { capabilities = ["create","update"] }
 path "pki_int/issue/mtls-client"   { capabilities = ["create","update"] }
 path "pki_int/cert/ca"             { capabilities = ["read"] }
-path "pki/cert/ca"                 { capabilities = ["read"] }
 path "pki_int/certs"               { capabilities = ["list"] }
 EOF
 
