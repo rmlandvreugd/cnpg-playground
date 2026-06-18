@@ -463,3 +463,90 @@ flowchart LR
 | pgaudit-dashboard | PGAudit logging |
 | pki-dashboard | PKI / certificate health |
 | traefik-traces | Traefik request tracing |
+
+---
+
+## 8. Self-Service Tenancy (target state)
+
+> **Status: planned, not yet deployed.** This section describes the target architecture added by
+> `demo/self-service-setup.sh` for the **local region**. Master plan:
+> [`plan-self-service-setup-local.md`](plan-self-service-setup-local.md). Identity model:
+> [`plan-tenant-personas-authelia.md`](plan-tenant-personas-authelia.md). The components below are
+> **not** in the "Current Cluster State (Live)" inventory above until implemented.
+
+The self-service slice turns the demo into a Kubernetes-native multi-tenant platform: tenants
+self-provision a CNPG database (`verstappen` in `rbr-ver-db`) and run the `demo-app` (in `rbr-ver`),
+governed by Capsule, Kyverno, and ArgoCD, with Authelia OIDC across every surface.
+
+Tenant model: constructor `rbr` (= Capsule Tenant) → driver group `ver` → namespaces `rbr-ver-db`
+(database) + `rbr-ver` (app). Future driver groups (`rbr-had`, …) join the same Tenant.
+
+```mermaid
+flowchart TB
+    subgraph IdP["Authelia (OIDC, host)"]
+      G["groups: rbr-db-admin, rbr-ver-db-admin,<br/>rbr-ver-dev, rbr-po, *-admin"]
+    end
+
+    subgraph Access["Tenant API access"]
+      GP["gangplank<br/>(OIDC → kubeconfig)"]
+      CP["capsule-proxy<br/>(tenant-scoped API)"]
+      GP --> CP --> API["kube-apiserver<br/>(AuthenticationConfiguration:<br/>audiences kubernetes+gangplank)"]
+    end
+
+    subgraph Gov["Governance"]
+      CAP["Capsule Tenant 'rbr'<br/>owns rbr-ver*, rbr-ver-db*"]
+      KY["Kyverno<br/>generate RoleBindings + NetPol,<br/>validate baseline"]
+      AR["ArgoCD<br/>app-of-apps"]
+    end
+
+    subgraph Tenant["Tenant namespaces"]
+      APP["rbr-ver:<br/>demo-app (Litestar)"]
+      DB["rbr-ver-db:<br/>verstappen CNPG + pgAdmin"]
+    end
+
+    G --> GP & API
+    G --> Vault["Vault DB engine<br/>config user rbr_ver_vde_config<br/>(rotate-root)"]
+    AR -->|sync| CAP & KY & APP & DB & GO["grafana org"]
+    KY -.generate.-> APP & DB
+    CAP -.owns.-> APP & DB
+    Vault -->|dynamic creds / static-role| DB
+    APP -->|app role via ESO| DB
+    G --> SW["SeaweedFS<br/>admin-UI + S3 OIDC"]
+```
+
+### New components (planned)
+
+| Component | Namespace / Host | Role |
+|---|---|---|
+| Capsule | `capsule-system` | multi-tenancy (`Tenant rbr`) |
+| capsule-proxy | `capsule-system` | tenant-scoped K8s API gateway |
+| gangplank (`sighupio/gangplank`) | `capsule-system` | OIDC → kubeconfig dispenser (fronts capsule-proxy) |
+| Kyverno | `kyverno` | generate per-driver-group RoleBindings + default NetworkPolicy; validate baseline |
+| ArgoCD | `argocd` | GitOps engine (app-of-apps for tenant resources) |
+| demo-app | `rbr-ver` | Litestar sample app (ArgoCD-deployed, static Vault-rotated DB creds) |
+| SeaweedFS OIDC | host | admin-UI + S3 human OIDC (machine keys stay static) |
+
+### Identity → access (summary)
+
+See the full matrix in [`plan-tenant-personas-authelia.md`](plan-tenant-personas-authelia.md).
+
+| Persona | K8s | DB | Grafana |
+|---|---|---|---|
+| `admin` | tenant owner everywhere | full | Admin |
+| `rbr-db-admin` | Tenant `rbr` owner | `rbr-db-admin` creds | rbr/Admin |
+| `rbr-ver-db-admin` | admin in `rbr-ver*` | `rbr-ver-db-admin` creds | rbr/Editor |
+| `rbr-ver-dev` | edit in `rbr-ver*` | `app`/`readonly` creds | rbr/Editor |
+| `rbr-po` | view across `rbr-*` | — | rbr/Viewer |
+
+### Two independent authority layers
+
+K8s API access (Capsule + apiserver OIDC + capsule-proxy) and DB credential issuance (Vault
+policies) are configured independently; **Authelia is the common IdP**, and each layer verifies the
+`email`/`groups` claims on its own. Monitoring additions: ServiceMonitors + Grafana dashboards for
+Capsule, capsule-proxy, Calico (felix/typha/kube-controllers), Kyverno, and ArgoCD.
+
+Related plans: [`capsule-integration-plan.md`](capsule-integration-plan.md),
+[`plan-kyverno-policies.md`](plan-kyverno-policies.md),
+[`plan-argocd-gitops.md`](plan-argocd-gitops.md),
+[`plan-seaweedfs-oidc.md`](plan-seaweedfs-oidc.md),
+[`plan-self-service-dynamic-creds-pgadmin.md`](plan-self-service-dynamic-creds-pgadmin.md).

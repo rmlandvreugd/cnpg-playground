@@ -107,7 +107,7 @@ Tenant model: `rbr` (org) / `ver` (group) / `verstappen` (cluster), split across
   the `verstappen-backups/` bucket on the local object store.
 
 ### B6. Observability (Grafana + pgaudit)
-- Open `https://grafana-rbr-ver...sslip.io`, log in via Dex OAuth.
+- Open `https://grafana-rbr-ver...sslip.io`, log in via Authelia OAuth.
 - Show the custom CNPG metrics dashboard.
 - Show the **pgaudit** dashboard — the `CREATE TABLE` from B3 appears as a DDL
   audit line (pgaudit → stdout → Loki → Grafana).
@@ -117,9 +117,43 @@ Tenant model: `rbr` (org) / `ver` (group) / `verstappen` (cluster), split across
 - `psql "host=verstappen-rbr-ver-db.<ip>.sslip.io port=5432 sslmode=require ..."`
   using dynamic creds from B2.
 
+### B9. The running app (GitOps-deployed)
+- Show the `demo-app` (Litestar) pods Running in `rbr-ver`, deployed by **ArgoCD** from
+  `app/helm/demo-app`. Hit its endpoint; it reads/writes the `verstappen` DB as the `app` role
+  using the Vault-static-role-rotated `verstappen-app` Secret (Reloader restarts on rotation).
+- Tie back to B4: rotate `app` creds → Reloader bounces the app → still healthy.
+
+### B10. Tenant K8s access (Capsule + capsule-proxy + gangplank)
+- Open `https://gangplank.<ip>.sslip.io`, log in via Authelia, download the kubeconfig.
+- As **`rbr-ver-dev`**: `kubectl get pods -n rbr-ver` works; `-n rbr-ver-db` works (edit);
+  another tenant's namespace is **forbidden**.
+- As **`rbr-po`**: read-only `get` across all `rbr-*` namespaces; any `apply`/`delete` denied.
+- As **`unrelated`**: sees nothing. Contrast with Vault DB-creds layer (independent authority).
+
+### B11. GitOps (ArgoCD)
+- Open `https://argocd.<ip>.sslip.io`, SSO via Authelia as `admin`.
+- Show the `rbr-root` app-of-apps: `tenant-rbr`, `kyverno-policies`, `demo-app`, `grafana-rbr-ver`
+  all `Synced/Healthy`. Make a values change in Git → watch ArgoCD re-sync.
+
+### B12. Policy enforcement (Kyverno)
+- Show the auto-generated per-driver-group RoleBindings + default-deny NetworkPolicy on `rbr-ver`.
+- `kubectl run nginx --privileged ...` in `rbr-ver` → **rejected** by Kyverno (Enforce).
+- A pod without resource limits → rejected. Show the PolicyReport.
+
+### B13. SeaweedFS OIDC
+- Admin UI (`https://…:23646`): anonymous blocked; `admin` logs in via Authelia → full admin.
+- S3: `admin` assumes the admin role and lists all buckets; `rbr-ver-db-admin` rw on
+  `verstappen-backups`; `rbr-po` read-only. Loki/Barman still use static keys (B5 backup intact).
+
+### B14. Hardened DB config user
+- Show Vault `database/config/rbr-ver-max` connects as least-priv `rbr_ver_vde_config`
+  (CREATEROLE, no ownership, no superuser); its password is Vault-rotated (`rotate-root`).
+- `vault read database/creds/...` still mints short-TTL roles — no superuser anywhere in the path.
+
 ### B8. Teardown (only if resetting)
-- `./demo/self-service-setup.sh teardown local` — removes `rbr-ver-db` + `rbr-ver`,
-  the ClusterSecretStore, the Traefik TCP route, and pgAdmin resources.
+- `./demo/self-service-setup.sh teardown local` — deletes the ArgoCD `rbr-root` app (cascading
+  child apps), then `rbr-ver-db` + `rbr-ver`, the ClusterSecretStore, the Traefik TCP route,
+  pgAdmin resources, and the `rbr` Capsule Tenant.
 
 ---
 

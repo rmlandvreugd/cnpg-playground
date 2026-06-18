@@ -1,11 +1,16 @@
-# Capsule Integration Plan — self-service-demo
+# Capsule Integration Plan — self-service-demo (local region)
 
-Status: research complete 2026-05-05; integration plan ready for review
+Status: research complete 2026-05-05; **revised 2026-06-18** for the Authelia identity model and
+the self-service-setup decisions (see `plan-self-service-setup-local.md` and
+`plan-tenant-personas-authelia.md`).
 
-Resolves the open questions in `docs/capsule-research.md` (R1–R8) with verified data from
-[projectcapsule.dev](https://projectcapsule.dev/docs/) and the [Capsule release tracker](https://github.com/projectcapsule/capsule/releases).
-Output is the concrete delta to layer Capsule on top of the existing self-service demo
-(`docs/self-service-demo.md`) without breaking CNPG / ESO / Traefik / Grafana / Vault.
+> **Migration note:** earlier revisions of this plan described **Dex** as the OIDC provider. The
+> stack now uses **Authelia** (host container). All group subjects below are Authelia-issued
+> `groups` claims. Earlier decisions D1/D2 ("one Tenant per constructor+driver pair") are
+> **superseded** — see §2.
+
+Output is the concrete delta to layer Capsule + capsule-proxy + gangplank on top of the existing
+self-service demo without breaking CNPG / ESO / Traefik / Grafana / Vault.
 
 ---
 
@@ -16,135 +21,111 @@ Output is the concrete delta to layer Capsule on top of the existing self-servic
 | Item | Value |
 |---|---|
 | Helm chart | OCI `ghcr.io/projectcapsule/charts/capsule` |
-| Chart version (current) | `0.12.4` |
-| Image | `ghcr.io/projectcapsule/capsule:0.10.9` |
-| K8s minimum | `v1.34.0` for app `v0.10.9`; `v1.33.0` for `v0.10.8` |
-| cert-manager | Recommended, **not required** (chart can self-sign via `tls.create=true`) |
+| Chart version | pin current stable; confirm against the Kind node image at install time |
 | Install namespace | `capsule-system` |
-| Required admission plugins | `PodNodeSelector`, `LimitRanger`, `ResourceQuota`, `MutatingAdmissionWebhook`, `ValidatingAdmissionWebhook` |
+| cert-manager | Recommended; chart can self-sign (`tls.create=true`) — already have cert-manager |
+| Required admission plugins | `PodNodeSelector`, `LimitRanger`, `ResourceQuota`, Mutating/Validating webhooks |
 
-**Pin:** `0.10.7` (chart `0.10.7`) targets K8s 1.32 — confirm Kind node image once chart version is chosen, since current Kind defaults may be older. Use `kindest/node:v1.34.x` to match `0.12.4`.
-
-**Webhook conflicts:** Capsule webhooks scope by `userGroups` (`manager.options.capsuleUserGroups` or new `users`).
+**Webhook conflicts:** Capsule webhooks scope by `userGroups` (`manager.options.capsuleUserGroups`).
 Service accounts of CNPG (`cnpg-system`), ESO (`external-secrets`), Grafana Operator (`grafana`),
-and cert-manager (`cert-manager-system`) are **not** in this list → bypass tenant validation entirely.
-No deadlock on `failurePolicy: Fail`.
+cert-manager (`cert-manager-system`) are **not** in this list → they bypass tenant validation
+entirely; no `failurePolicy: Fail` deadlock. If a problematic webhook appears, per-webhook
+`matchConditions` CEL expressions exclude system service accounts.
 
-If a problematic webhook hits (e.g. node webhook), per-webhook `matchConditions` CEL expressions
-exclude system service accounts:
-
-```yaml
-webhooks:
-  hooks:
-    namespaces:
-      matchConditions:
-      - name: 'exclude-cnpg'
-        expression: '!("system:serviceaccounts:cnpg-system" in request.userInfo.groups)'
-```
-
-Rootless Podman + Kind: no Capsule-specific issues. Capsule webhooks talk to the operator inside the cluster — same path that already works for CNPG / ESO / cert-manager.
+Rootless Podman + Kind: no Capsule-specific issues — webhooks use the same in-cluster path CNPG/ESO
+already use.
 
 ### R2 — Tenant model
 
-API: `capsule.clastix.io/v1beta2`.
-- One `Tenant` owns multiple namespaces — namespaces opt in via label `capsule.clastix.io/tenant=<tenant>`.
-- Owner kinds: `User`, `Group`, `ServiceAccount`.
-- Default cluster roles bound per owner per namespace: `admin`, `capsule-namespace-deleter`.
-- Non-owner access (group-admin pattern): `spec.additionalRoleBindings[]` distributes RoleBindings to all tenant namespaces.
+API `capsule.clastix.io/v1beta2`. One `Tenant` owns multiple namespaces (opt-in via label
+`capsule.clastix.io/tenant=<tenant>`). Owner kinds: `User`, `Group`, `ServiceAccount`. Default
+cluster roles bound per owner per namespace (`admin`, `capsule-namespace-deleter`). Non-owner access
+via `spec.additionalRoleBindings[]` (distributed to **all** tenant namespaces — tenant-wide).
 
 ### R3 — CNPG / ESO / Grafana Operator compatibility
 
 Capsule's tenant-scope check applies **only** to subjects in `userGroups`. Cluster-scoped operators
-run as their own service accounts, which are not in that list → unaffected.
-Confirmed for parallel projects ([NashTech blog example](https://blog.nashtechglobal.com/how-to-implement-custom-admission-policies-with-capsule/);
-existing CNPG + Capsule deployments in the wild).
-
-`ClusterSecretStore` (ESO) reads/writes Secrets in tenant namespaces from the `external-secrets`
-service account — passes through Capsule.
-
-`GrafanaDatasource` lives in `grafana` namespace (not a tenant namespace) → no Capsule involvement.
+run as their own service accounts → unaffected. `ClusterSecretStore` (ESO) read/writes Secrets in
+tenant namespaces from the `external-secrets` SA → passes through. `GrafanaDatasource` lives in the
+`grafana` namespace (not a tenant namespace) → no Capsule involvement.
 
 ### R4 — Traefik + networking
 
 | Subject | Behavior |
 |---|---|
-| `IngressRouteTCP` (Traefik CRD) | Capsule ingress class enforcement targets `networking.k8s.io/v1` `Ingress` only — Traefik CRDs pass through. |
-| `IngressRoute` HTTP | Same — pass through. |
-| Built-in NetworkPolicy generation | Off by default. Capsule generates only when `spec.networkPolicies.items[]` is set. **Deprecated** — leave unset. |
-| TenantReplications / TenantResource | Replacement for NetworkPolicy generation. Not needed for first slice. |
-| capsule-proxy | Optional. Adds tenant-scoped `kubectl get namespaces`. **Excluded from first slice** — adds component, doesn't change demo correctness. |
+| `IngressRouteTCP` / `IngressRoute` (Traefik CRDs) | Capsule ingress-class enforcement targets `networking.k8s.io/v1` `Ingress` only → Traefik CRDs pass through. |
+| Built-in NetworkPolicy generation | Deprecated; leave `spec.networkPolicies` unset. Default-deny per-tenant NetworkPolicies are instead **generated by Kyverno** on namespace create (see `plan-kyverno-policies.md`). |
+| **capsule-proxy** | **In scope now** (was excluded in the first slice). Tenant-scoped `kubectl get namespaces` etc. Fronted by gangplank for OIDC kubeconfig. |
 
-Net result: existing Traefik TCP passthrough on `:5432` and HTTPS on `:443` keep working unchanged.
+Existing Traefik TCP passthrough on `:5432` and HTTPS on `:443` keep working unchanged.
 
-### R5 — Kind OIDC config
+### R5 — Kind OIDC config (Authelia)
 
-Capsule docs explicitly publish a Kind OIDC example (sourced verbatim):
+The API server must consume Authelia's `groups` claim **and** accept the extra `gangplank` audience.
+Use a structured **`AuthenticationConfiguration`** file (preferred over legacy `--oidc-*` flags
+because it supports multiple audiences):
 
 ```yaml
-apiVersion: kind.x-k8s.io/v1alpha4
-kind: Cluster
-nodes:
-  - role: control-plane
-    kubeadmConfigPatches:
-     - |
-       kind: ClusterConfiguration
-       apiServer:
-           extraArgs:
-             oidc-issuer-url: https://${OIDC_ISSUER}
-             oidc-username-claim: email
-             oidc-client-id: kubernetes
-             oidc-groups-claim: groups
-             oidc-username-prefix: "oidc:"
-             oidc-groups-prefix: "oidc:"
-             oidc-ca-file: /etc/kubernetes/oidc/ca.crt
+# k8s/authn-config.yaml.tpl (mounted into the control-plane node)
+apiVersion: apiserver.config.k8s.io/v1
+kind: AuthenticationConfiguration
+jwt:
+  - issuer:
+      url: https://authelia.${IP_DASHED}.sslip.io
+      audiences: ["kubernetes", "gangplank"]
+      audienceMatchPolicy: MatchAny
+      certificateAuthority: |   # Authelia/step-ca chain
+        ...
+    claimMappings:
+      username: { claim: email,  prefix: "oidc:" }
+      groups:   { claim: groups, prefix: "oidc:" }
 ```
 
-Constraints for this stack:
-- Dex already issues `groups` claim from `staticPasswords.groups` (confirmed in self-service-research closure).
-- API server needs Dex CA mounted into control-plane node. Kind supports `extraMounts` to bind-mount `dex/tls/ca-chain.pem`.
-- `oidc-issuer-url` must be HTTPS and reachable from inside the Kind control-plane container — same `dex.<TRAEFIK_IP>.sslip.io` URL Vault already uses works.
+Wire-up in `scripts/setup.sh`: render `k8s/kind-cluster.yaml.tpl` with `extraMounts` for the authn
+config + Authelia CA, and set `apiServer.extraArgs.authentication-config`. Authelia + Vault PKI
+already run before Kind create, so the CA exists at cluster-create time. `.kind-cluster.rendered.yaml`
+stays gitignored.
 
-**Trade-off:** Kind apiServer flags require **rebuild** — no live `kubectl edit` of the static control-plane. Adds ~30s to setup time. Acceptable.
-
-**Alternative without OIDC:** use `User` kind subjects on `Tenant.spec.owners` with explicit emails, then rely on Capsule's `users` config rather than groups. Loses dynamic group membership but skips Kind rebuild. Reject — Dex groups already work, the Kind config patch is small.
+**Trade-off:** apiServer config requires a Kind **rebuild** (no live edit). Existing `setup.sh`
+recreates Kind each run → no surprise.
 
 ### R6 — System namespaces
 
-Distinction is automatic: only namespaces with label `capsule.clastix.io/tenant=<name>` belong to a tenant. `vault`, `traefik`, `dex`, `grafana`, `monitoring`, `cert-manager-system`, `metallb-system`, `capsule-system`, `cnpg-system`, `external-secrets` carry no such label → unmanaged.
-Set `manager.options.protectedNamespaceRegex` to block tenant owners from creating namespaces named like system ones.
-
-`GlobalTenantResource` not required for first slice.
+Automatic: only namespaces labelled `capsule.clastix.io/tenant=<name>` belong to a tenant.
+`vault`, `traefik`, `authelia`(wiring), `grafana`, `monitoring`, `cert-manager`, `metallb-system`,
+`capsule-system`, `cnpg-system`, `external-secrets`, `argocd`, `kyverno` carry no such label →
+unmanaged. Set `manager.options.protectedNamespaceRegex` to block tenant owners from creating
+system-like namespaces.
 
 ### R7 — Vault policy boundary
 
-Two independent layers. No mapping needed.
+Two independent layers; Authelia is the common IdP, both verify claims independently.
 
 | Layer | Authority |
 |---|---|
-| K8s API access (`kubectl apply -n rbr-ver-db`) | Capsule + Dex OIDC group claim |
-| DB credential issuance (`vault read database/creds/...`) | Vault userpass / OIDC + Vault policies |
-
-Dex is the common identity provider; both layers verify the email/group claims independently.
+| K8s API access (`kubectl … -n rbr-ver-db`) | Capsule + Authelia `groups` (via apiserver OIDC + capsule-proxy) |
+| DB credential issuance (`vault read database/creds/…`) | Vault OIDC/userpass + Vault policies |
 
 ### R8 — Teardown cascade
 
-Default: deleting a `Tenant` deletes its namespaces (Kubernetes garbage collection via owner reference).
-Existing teardown already deletes namespaces explicitly — keep that, then delete the `Tenant` last (or first; both work since GC is idempotent).
+Deleting a `Tenant` GCs its namespaces (owner reference). Existing teardown deletes namespaces
+explicitly; delete the `Tenant` last (idempotent either way). With ArgoCD owning tenant resources,
+teardown removes the root Application first (see `plan-argocd-gitops.md`).
 
 ---
 
-## 2. Decisions
+## 2. Decisions (revised)
 
 | # | Decision | Rationale |
 |---|---|---|
-| D1 | **One Tenant per constructor+driver pair** (`rbr-ver`) | Matches existing namespace pair (`rbr-ver-db` + `rbr-ver`). Future `rbr-had` is a separate Tenant. Keeps blast radius tight. |
-| D2 | **Owner subject = `Group`** with Dex `rbr-db-admin` claim | Dynamic membership; matches Vault policy naming. |
-| D3 | **`additionalRoleBindings`** for `rbr-ver-db-admin` group | Non-owner group access pattern. Bind a custom ClusterRole for VDE-relevant resources. |
-| D4 | **Skip capsule-proxy** in first slice | Optional UX improvement; adds component without changing demo correctness. |
-| D5 | **NetworkPolicy: keep disabled** in Capsule | Existing self-service decision; out of scope. Leave `spec.networkPolicies` unset. |
-| D6 | **Capsule install in `scripts/setup.sh` Phase 0** | Capsule is base infra (like cert-manager), not self-service-specific. Tenant CR is in Phase 1. |
-| D7 | **OIDC via Kind apiServer extraArgs**, not legacy `User` ACL | Kind rebuild cost is small; dynamic group membership is the right primitive. |
-| D8 | **Pin chart `0.12.4` + Kind node `v1.34.x`** | Matches Capsule's K8s minimum. |
+| D1 | **One Tenant per constructor** (`rbr`) owning `rbr-ver` + `rbr-ver-db` and future driver-group pairs | A constructor-wide product owner (`rbr-po`) needs read across all driver groups → a constructor Tenant gives that for free. **Supersedes** the old "Tenant per constructor+driver pair." |
+| D2 | **Owner = `Group`**: `oidc:capsule-admin`, `oidc:rbr-db-admin` | Dynamic membership via Authelia; matches Vault policy naming. |
+| D3 | **`additionalRoleBindings`**: `oidc:rbr-po` → `view` (tenant-wide) | PO sees every `rbr-*` namespace read-only, no extra work per driver group. |
+| D4 | **Driver-group dev/admin via per-namespace RoleBindings**, not Capsule | Capsule bindings are tenant-wide; `rbr-ver-dev`/`rbr-ver-db-admin` must be scoped to `rbr-ver`+`rbr-ver-db` only. **Generated by Kyverno** on namespace create. |
+| D5 | **capsule-proxy + gangplank in scope** | Tenant-scoped kubectl + self-service OIDC kubeconfig. |
+| D6 | **NetworkPolicy: not via Capsule** | Default-deny generated by Kyverno; keeps Capsule config minimal. |
+| D7 | **OIDC via Kind `AuthenticationConfiguration`** (Authelia, audiences `kubernetes`+`gangplank`) | Multi-audience support gangplank needs. |
+| D8 | **Capsule install in `scripts/setup.sh` Phase 0** | Base infra, like cert-manager. Tenant CR in Phase 1 (ArgoCD-managed). |
 
 ---
 
@@ -154,149 +135,114 @@ Existing teardown already deletes namespaces explicitly — keep that, then dele
 apiVersion: capsule.clastix.io/v1beta2
 kind: Tenant
 metadata:
-  name: rbr-ver
+  name: rbr
 spec:
   owners:
-    - name: oidc:rbr-db-admin       # tenant-admin (full)
+    - name: oidc:capsule-admin     # cluster tenancy admin (also 'admin' super-user)
+      kind: Group
+    - name: oidc:rbr-db-admin      # constructor admin
       kind: Group
   additionalRoleBindings:
-    - clusterRoleName: admin         # group-admin gets admin too, but only in rbr-ver-db / rbr-ver
+    - clusterRoleName: view         # product owner: read-only, all rbr-* namespaces
       subjects:
         - apiGroup: rbac.authorization.k8s.io
           kind: Group
-          name: oidc:rbr-ver-db-admin
+          name: oidc:rbr-po
   ingressOptions:
     hostnameCollisionScope: Tenant
   resourceQuotas:
     scope: Tenant
-  # networkPolicies: intentionally unset
+  # networkPolicies: intentionally unset (Kyverno generates default-deny)
 ```
 
-Namespace patches (existing namespaces gain the label):
+Namespaces opt in (existing namespaces gain the label):
 
 ```yaml
 metadata:
-  name: rbr-ver-db
+  name: rbr-ver-db          # and rbr-ver
   labels:
-    capsule.clastix.io/tenant: rbr-ver
+    capsule.clastix.io/tenant: rbr
+    cnpg.io/driver-group: ver        # consumed by Kyverno generate rules
 ```
 
-(Same pattern for `rbr-ver`.)
+Per-driver-group RoleBindings (rendered by Kyverno from the `cnpg.io/driver-group` label):
+`rbr-ver-db-admin` → `admin`, `rbr-ver-dev` → `edit`, in both `rbr-ver` and `rbr-ver-db`.
 
 ---
 
-## 4. Phase-by-phase delta
+## 4. capsule-proxy + gangplank
+
+- **capsule-proxy** (Helm): tenant-aware reverse proxy for the K8s API; Traefik IngressRoute on
+  `capsule-proxy.<IP_DASHED>.sslip.io`. CA = its own ingress TLS (cert-manager).
+- **gangplank** (`sighupio/gangplank`, Helm `peak-scale/gangplank`): OIDC → kubeconfig web
+  dispenser. An official Capsule ecosystem integration. Key config:
+  - `apiServerURL` → **capsule-proxy** ingress (not the real apiserver).
+  - `clusterCAPath` / mounted secret → capsule-proxy ingress CA.
+  - `GANGPLANK_CONFIG_AUTHORIZE_URL` / `_TOKEN_URL` / `_REDIRECT_URL` → Authelia.
+  - `usernameClaim=email` (must match the apiserver `AuthenticationConfiguration`).
+  - Authelia OIDC client `gangplank` (audience `gangplank`, accepted by apiserver via MatchAny).
+  - Traefik IngressRoute on `gangplank.<IP_DASHED>.sslip.io`.
+
+Flow: user logs into gangplank (Authelia) → downloads kubeconfig pointing at capsule-proxy →
+`kubectl` is scoped by Authelia `groups` (apiserver authn) + tenant visibility (capsule-proxy).
+
+---
+
+## 5. Phase-by-phase delta
 
 ### Phase 0 — `scripts/setup.sh`
+1. Render `k8s/kind-cluster.yaml.tpl` with the `AuthenticationConfiguration` mount + Authelia CA.
+2. After cert-manager/Vault-PKI/Authelia/Traefik: install **Capsule**, **capsule-proxy**,
+   **gangplank**, **Kyverno**, **ArgoCD** (`capsuleUserGroups` = `oidc:capsule-admin`,
+   `oidc:rbr-db-admin`, `oidc:rbr-ver-db-admin`).
+3. Verify `kubectl get crd tenants.capsule.clastix.io`.
 
-1. Patch Kind cluster config to add OIDC apiServer flags + `extraMounts` for Dex CA.
-   Concrete patch lives at `k8s/kind-cluster.yaml.tpl` (new file). Wiring delta in `scripts/setup.sh`:
+### Phase 1 — tenant resources (ArgoCD-managed)
+`Tenant rbr` CR + namespace labels are reconciled by the ArgoCD app-of-apps (not raw kubectl).
+Kyverno generates the per-driver-group RoleBindings + default NetworkPolicy.
 
-   ```diff
-   - kind_config_path="${GIT_REPO_ROOT}/k8s/kind-cluster.yaml"
-   + kind_config_tpl="${GIT_REPO_ROOT}/k8s/kind-cluster.yaml.tpl"
-   + kind_config_path="${GIT_REPO_ROOT}/k8s/.kind-cluster.rendered.yaml"
-   + DEX_TLS_DIR="${DEX_TLS_DIR:-${GIT_REPO_ROOT}/dex/tls}"
-   + DEX_HOST="dex.$(ip_to_dashed "$(hostname -I | awk '{print $1}')").sslip.io"
-   + DEX_TLS_DIR="${DEX_TLS_DIR}" DEX_HOST="${DEX_HOST}" DEX_PORT="${DEX_PORT}" \
-   +   envsubst '${DEX_TLS_DIR} ${DEX_HOST} ${DEX_PORT}' \
-   +   < "${kind_config_tpl}" > "${kind_config_path}"
-   ```
-
-   Constraints:
-   - Dex + Vault PKI already run **before** Kind cluster create in current `setup.sh` (lines 62–65 → 105). `dex/tls/ca-chain.pem` exists at the moment Kind starts. No reorder needed.
-   - `DEX_HOST` resolution: Kind control-plane container needs DNS for `dex.<IP>.sslip.io`. `sslip.io` is a public wildcard resolver — works from inside the container as long as upstream DNS reaches it (already does for Vault OIDC).
-   - `.kind-cluster.rendered.yaml` belongs in `.gitignore`.
-   - `DEX_HOST` must be derived from the same `HOST_IP_DASHED` that `dex-setup.sh` uses (script-internal source of truth) — re-derive identically or export it from `dex-setup.sh`.
-
-2. After cert-manager + Vault PKI + Dex + Traefik phases, add **Capsule install**:
-   ```bash
-   helm upgrade --install capsule oci://ghcr.io/projectcapsule/charts/capsule \
-       --version 0.12.4 \
-       --namespace capsule-system --create-namespace \
-       --set certManager.generateCertificates=true \
-       --set tls.create=false \
-       --set tls.enableController=false \
-       --set 'manager.options.capsuleUserGroups[0]=oidc:rbr-db-admin' \
-       --set 'manager.options.capsuleUserGroups[1]=oidc:rbr-ver-db-admin' \
-       --wait
-   ```
-3. Verify: `kubectl get crd tenants.capsule.clastix.io`.
-
-### Phase 1 — static manifests
-
-- Add `manifests/capsule-tenant-rbr-ver.yaml` with the Tenant CR.
-- Patch `rbr-ver-db` and `rbr-ver` Namespace manifests with the `capsule.clastix.io/tenant=rbr-ver` label.
-
-### Phase 2 — Vault setup
-
-No change. Vault layer unchanged; Capsule does not gate Vault access.
+### Phase 2 — Vault
+No change. Capsule does not gate Vault.
 
 ### Phase 3 — `demo/self-service-setup.sh`
-
 | Verb | Change |
 |---|---|
-| `setup local` | After namespace creation (step 5), `kubectl apply` the Tenant manifest. Already idempotent. |
-| `verify local` | Add `kubectl get tenant rbr-ver -o jsonpath='{.status.state}'` → expect `Active`. |
-| `teardown local` | After namespace delete, `kubectl delete tenant rbr-ver --ignore-not-found`. |
+| `setup local` | bootstrap ArgoCD → apply root Application (Tenant + namespace labels reconcile). |
+| `verify local` | `kubectl get tenant rbr -o jsonpath='{.status.state}'` → `Active`; RoleBindings present. |
+| `teardown local` | delete ArgoCD root app, then namespaces, then `kubectl delete tenant rbr --ignore-not-found`. |
 
 ### Phase 4 — pgAdmin
+No change (`rbr-ver-db` is a tenant namespace; pgAdmin per `plan-self-service-dynamic-creds-pgadmin.md`).
 
-No change. pgAdmin lives in `pgadmin` namespace, not a tenant namespace.
-
-### Phase 5 — Grafana + Dex
-
-Already reuses the same Dex `rbr-db-admin` / `rbr-ver-db-admin` groups — Capsule consumes the **same claim**. No Dex config change. The new Kind OIDC flags simply make the API server consume what Dex already issues.
+### Phase 5 — Grafana
+Reuses the same Authelia groups; no Grafana config change for Capsule. The apiserver OIDC config
+simply consumes what Authelia already issues.
 
 ### Phase 6 — docs
-
-Update `docs/self-service-demo.md` architecture diagram: add a `capsule-system` box with a Tenant CR overlay covering `rbr-ver-db` + `rbr-ver`. Add a "K8s API access via Capsule" row to the personas table.
-
----
-
-## 5. Persona table extension
-
-| Email | Dex groups | Vault DB role | K8s namespaces (via Capsule) | Grafana org/role |
-|---|---|---|---|---|
-| `rbr-admin@example.com` | `rbr-db-admin`, `rbr-ver-db-admin` | `rbr-db-admin` | `rbr-ver-db`, `rbr-ver` (admin) | `rbr` / Admin |
-| `rbr-ver-admin@example.com` | `rbr-ver-db-admin` | `rbr-ver-db-admin` | `rbr-ver-db`, `rbr-ver` (admin via additionalRoleBindings) | `rbr` / Editor |
-| `unrelated@example.com` | — | — | (forbidden) | — |
-
-A tenant user logs into K8s via:
-
-```bash
-kubectl oidc-login setup --oidc-issuer-url=https://dex.<IP>.sslip.io/dex \
-    --oidc-client-id=kubernetes
-kubectl --kubeconfig oidc.kubeconfig get pods -n rbr-ver-db
-```
-
-(or `kubelogin` plugin).
+Update `architecture-overview.md` (capsule-system + proxy/gangplank overlay) and the persona doc.
 
 ---
 
-## 6. Risk + open items
+## 6. Risks + open items
 
-1. **Kind rebuild required** for OIDC flags. Existing setup.sh recreates Kind on each `setup local` already → no surprise.
-2. **OIDC issuer reachability inside Kind:** Dex container runs on host. Kind control-plane container needs to resolve `dex.<TRAEFIK_IP>.sslip.io` and reach it. Already works for Vault OIDC inside the cluster — same path.
-3. **`kubectl` client-side OIDC:** Demo users need `kubelogin` or equivalent to actually exercise tenant-scoped K8s access. Document in self-service-demo.md.
-4. **Capsule version drift vs. Kind node image:** pin both, bump together.
-5. **Future second tenant** (`rbr-had`): copy Tenant CR with new label set; no operator-level work.
+1. **Kind rebuild** for the apiserver authn config — already recreated each `setup local`.
+2. **gangplank ↔ capsule-proxy CA/audience wiring** — validate end-to-end (audiences MatchAny;
+   proxy CA mounted into gangplank).
+3. **Client-side OIDC** — gangplank dispenses the kubeconfig; `kubelogin` is the fallback.
+4. **Version drift** Capsule chart ↔ Kind node image — pin both, bump together.
+5. **Second driver group** (`rbr-had`): add namespaces with the tenant + driver-group labels;
+   Kyverno generates its RoleBindings; no operator-level work.
 
 ---
 
 ## 7. Sources
 
-- [Capsule docs index](https://projectcapsule.dev/docs/)
-- [Permissions / ownership / additionalRoleBindings](https://projectcapsule.dev/docs/tenants/permissions/)
-- [Namespaces / tenant labeling](https://projectcapsule.dev/docs/tenants/namespaces/)
-- [Enforcement / IngressClass / NetworkPolicies](https://projectcapsule.dev/docs/tenants/enforcement/)
-- [Authentication / OIDC + Kind example](https://projectcapsule.dev/docs/operating/authentication/)
-- [Architecture / Capsule Administrators](https://projectcapsule.dev/docs/operating/architecture/)
-- [Configuration / userGroups / protectedNamespaceRegex](https://projectcapsule.dev/docs/operating/setup/configuration/)
-- [Installation / requirements / webhook hooks](https://projectcapsule.dev/docs/operating/setup/installation/)
-- [Replications / TenantResource / GlobalTenantResource](https://projectcapsule.dev/docs/replications/)
-- [Proxy](https://projectcapsule.dev/docs/proxy/)
-- [Releases](https://github.com/projectcapsule/capsule/releases)
-- [Artifact Hub: capsule 0.12.4](https://artifacthub.io/packages/helm/projectcapsule/capsule)
-- [Kind configuration](https://kind.sigs.k8s.io/docs/user/configuration/)
-- [CNPG ESO integration](https://cloudnative-pg.io/docs/1.28/cncf-projects/external-secrets/)
+- Capsule docs: https://projectcapsule.dev/docs/
+- Permissions / additionalRoleBindings: https://projectcapsule.dev/docs/tenants/permissions/
+- Namespaces / tenant labeling: https://projectcapsule.dev/docs/tenants/namespaces/
+- Enforcement / IngressClass / NetworkPolicies: https://projectcapsule.dev/docs/tenants/enforcement/
+- capsule-proxy: https://projectcapsule.dev/docs/proxy/ — https://github.com/projectcapsule/capsule-proxy
+- gangplank (ecosystem): https://projectcapsule.dev/ecosystem/integrations/gangplank/ — https://github.com/sighupio/gangplank
+- Configuration / userGroups / protectedNamespaceRegex: https://projectcapsule.dev/docs/operating/setup/configuration/
+- K8s structured authentication: https://kubernetes.io/docs/reference/access-authn-authz/authentication/#using-authentication-configuration
+- Kind configuration: https://kind.sigs.k8s.io/docs/user/configuration/
