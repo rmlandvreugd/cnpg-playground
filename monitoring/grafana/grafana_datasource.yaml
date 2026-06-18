@@ -16,4 +16,5 @@ spec:
       tlsSkipVerify: true
     name: DS_PROMETHEUS
     type: prometheus
+    isDefault: true
     url: http://prometheus-operated.prometheus-operator.svc.cluster.local:9090

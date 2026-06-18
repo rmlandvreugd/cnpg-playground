@@ -15,9 +15,9 @@ considered **implementation-ready**; execution follows the **phased path in §E*
 ## A. Foundation — kind cluster-creation time
 
 These are baked into `k8s/kind-cluster.yaml` (rendered from `k8s/kind-cluster.yaml.tpl`) **before**
-`kind create cluster`. **Three items mutate the control-plane node spec in this one template** —
-item 1 (Calico `disableDefaultCNI`), item 2 (encryption kubeadm patch), and item 6 (apiserver OIDC
-issuer). Plan their edits together to avoid clobbering.
+`kind create cluster`. **Two items mutate the control-plane node spec in this one template** —
+item 1 (Calico `disableDefaultCNI`) and item 2 (encryption kubeadm patch). Plan their edits
+together to avoid clobbering.
 
 ### 1. Calico CNI — swap + baseline NetworkPolicies
 - **Decision:** Replace kindnet with Calico via the **tigera-operator Helm chart** (version-pinned in
@@ -92,29 +92,16 @@ issuer). Plan their edits together to avoid clobbering.
   `rbr-ver-db-admin`), **SQLite** storage, native TLS (step-ca cert), `filesystem` notifier,
   **`access_control.default_policy: one_factor`** (password-only parity with Dex). Dex container +
   `dex-setup.sh` / `dex-teardown.sh` removed entirely. **No two-IdP period.**
-- **Five OIDC consumers — repoint ALL.** Codebase exploration found Dex is consumed by **five** things, not
-  three; a naive "remove Dex" breaks the last two silently:
+- **Three OIDC consumers — repoint ALL.** Dex is consumed by three things; a naive "remove Dex" breaks them silently:
   1. **Vault** — `vault-oidc-setup.sh` (re-point issuer + client).
   2. **Self-service Grafana** (`grafana-rbr-ver`).
   3. **Monitoring Grafana** (`grafana-monitoring`, new — item 7).
-  4. **kube-apiserver** — `k8s/kind-cluster.yaml.tpl:21` sets `oidc-issuer-url`, `oidc-client-id: kubernetes`,
-     `oidc-username-claim: email`, `oidc-groups-claim: groups`, `oidc-ca-file=/etc/kubernetes/oidc/dex-ca.pem`.
-     Rewrite the issuer URL in the template; rename the mounted CA file to a generic `oidc-ca.pem` (CA stays
-     step-ca, same chain). **Apiserver integration is currently inert** — no kubelogin client is wired and no
-     RBAC binding references `oidc:` subjects, so repointing keeps it correct-but-inert; inventing RBAC
-     bindings is a later pass. Note: kube-apiserver performs OIDC **discovery lazily** (on first token
-     validation, not at boot), so there is **no boot-time ordering dependency** on Authelia being reachable.
-  5. **step-ca** — `scripts/setup.sh:382` adds a `dex` OIDC provisioner. Rename it `authelia` and repoint its
-     `--configuration-endpoint` to Authelia's discovery URL.
-- **Client topology — 5 per-service clients** (retires the accidental Vault↔step-ca client sharing):
-  `vault`, `step-ca`, `grafana-rbr-ver`, `grafana-monitoring` — **confidential**, each with its own
-  **PBKDF2-hashed** secret in `common.sh` — plus `kubernetes` (**public/PKCE loopback**, kubelogin shape,
-  **no secret**). _(The `kubernetes` client is parity-only today since apiserver OIDC is inert; create it now
-  for symmetry, or defer until a kubelogin flow exists — implementation choice, no behavioral impact.)_
+- **Client topology — 3 confidential clients** (retires the accidental Vault↔step-ca client sharing):
+  `vault`, `grafana-rbr-ver`, `grafana-monitoring` — each with its own **PBKDF2-hashed** secret in `common.sh`.
+  k8s→OIDC and the step-ca OIDC provisioner are **out of scope** (see Non-goals §D).
 - **Password hashes reuse as-is** — Dex stores **bcrypt** (`common.sh:97`, `$2a$10$…`); Authelia's `file`
   provider accepts bcrypt directly in `users_database.yml`. No regeneration; 4 users + groups port verbatim.
-- **Vault `user_claim`: `sub` → `email`** (matches apiserver; one canonical human identity across
-  apiserver + Vault + Grafana). Add `oidc_scopes` so Authelia returns `profile email groups`.
+- **Vault `user_claim`: `sub` → `email`** (one canonical human identity across Vault + Grafana). Add `oidc_scopes` so Authelia returns `profile email groups`.
 - **Authelia's own crypto — generate locally (Dex pattern):** JWKS RSA keypair into gitignored
   `authelia/secrets/`; session / storage-encryption / OIDC-HMAC secrets are `common.sh` defaults via
   `envsubst`. **No Vault dependency on Authelia's boot path.** Mirror `dex/.gitignore` (`tls/` + rendered
@@ -210,12 +197,12 @@ issuer). Plan their edits together to avoid clobbering.
 ### Sequencing (`scripts/setup.sh`)
 External bootstrap: step-ca → Vault → vault-pki → vault-eso → **Authelia** (was Dex) → **RustFS (TLS)**
 → **seaweedfs (TLS)** → **revocation-exporter**.
-Per region (local): **gen encryption key** → `kind create` (Calico `disableDefaultCNI` + EncryptionConfig
-+ apiserver OIDC issuer, all in `kind-cluster.yaml.tpl`) → **Calico** → MetalLB → **CNPG operator + Barman**
+Per region (local): **gen encryption key** → `kind create` (Calico `disableDefaultCNI` + EncryptionConfig,
+both in `kind-cluster.yaml.tpl`) → **Calico** → MetalLB → **CNPG operator + Barman**
 → **ESO (HTTPS)** → **NetworkPolicies (ingress default-deny flipped LAST)**.
-Note: **Authelia's issuer must exist before `kind create`** (its URL is baked into the kind template, exactly
-like Dex today), so it belongs in external bootstrap ahead of the per-region loop — which the order above
-already satisfies. Apiserver lazy OIDC discovery means no *runtime* readiness gate on Authelia is needed.
+Note: Authelia no longer has a bake-time dependency on `kind create` (its URL is not in the template).
+Phase 8 (Authelia swap) still runs before Phase 9 as soft ordering — Phase 9 re-validates the full stack
+including live Authelia OIDC consumers.
 
 ### Calico ingress allow-list (under cluster-wide ingress default-deny)
 Every flow below needs an explicit `NetworkPolicy` allow or it breaks **silently**. Most are mechanical
@@ -259,7 +246,7 @@ verbatim** — no new idempotency machinery:
 
 ### Non-goals (explicit)
 - Secretbox key rotation (multi-key) and key backup.
-- RBAC bindings for `oidc:` subjects / a wired kubelogin client (apiserver OIDC stays inert this pass).
+- k8s→OIDC integration (apiserver `oidc-issuer-url`, kubelogin client, RBAC `oidc:` subjects) — out of scope entirely.
 - gRPC mTLS mesh for seaweedfs (single process).
 - EU + US regions.
 
@@ -267,13 +254,13 @@ verbatim** — no new idempotency machinery:
 
 ## E. Phased implementation path
 
-> **Strategy: foundation-late (chosen).** Three items are baked into `kind-cluster.yaml.tpl` and force a
+> **Strategy: foundation-late (chosen).** Two items are baked into `kind-cluster.yaml.tpl` and force a
 > full `teardown → setup` (the **slow loop**, since `setup.sh:43` hard-fails on an existing cluster):
-> item 1 (Calico `disableDefaultCNI`), item 2 (encryption kubeadm patch), item 6's apiserver
-> `oidc-issuer-url`. Everything else is `kubectl apply` onto a running cluster or a host-container restart
-> (the **fast loop**). Foundation-late front-loads all fast-loop work on the current kindnet/Dex baseline,
-> then a **single recreate** (Phase 9) brings Calico + encryption + the Authelia issuer up together, and the
-> ingress default-deny flip is the final in-cluster gate — honoring §A/§D's "flip default-deny **last**".
+> item 1 (Calico `disableDefaultCNI`) and item 2 (encryption kubeadm patch). Everything else is
+> `kubectl apply` onto a running cluster or a host-container restart (the **fast loop**). Foundation-late
+> front-loads all fast-loop work on the current kindnet/Dex baseline, then a **single recreate** (Phase 9)
+> brings Calico + encryption up together, and the ingress default-deny flip is the final in-cluster gate —
+> honoring §A/§D's "flip default-deny **last**".
 
 **Rejected alternative — foundation-early** (Calico + encryption as Phase 1): builds every service on the
 real VXLAN datapath from day one and surfaces WSL2 Calico issues immediately, but debugs the CNI before
@@ -291,12 +278,8 @@ as the full-stack integration test). Iteration speed + CNI-risk isolation won.
 | 6  | ESO → Vault HTTPS | 5b | fast | no |
 | 7  | Revocation exporter + monitoring | 8b | host + in-cluster | no |
 | 8  | Authelia swap (host-side) + monitoring-Grafana HTTPS/OIDC | 6, 7 | host + in-cluster | no* |
-| 9  | **Foundation recreate** — encryption + Calico (allow-all) + apiserver-OIDC→Authelia | 2, 1a, 6-rem | **slow** | **yes — the one** |
+| 9  | **Foundation recreate** — encryption + Calico (allow-all) | 2, 1a | **slow** | **yes — the one** |
 | 10 | NetworkPolicy allow-list + **default-deny flip** | 1b | fast (apply) | no |
-
-\* Phase 8's apiserver-OIDC template edit is **deferred** to Phase 9. Apiserver OIDC is inert (no kubelogin
-client, no `oidc:` RBAC), so the live consumers (Vault, both Grafanas, step-ca) repoint to Authelia with
-zero recreate; the stale Dex issuer string in the template is harmless until the Phase 9 rebuild clears it.
 
 **Per-phase test gates (each phase is "done" only when its gate passes):**
 - **1.** teardown→setup yields an **identical** green cluster (backups run, CNPG `:9187` scrape intact). Also
@@ -311,15 +294,13 @@ zero recreate; the stale Dex issuer string in the template is harmless until the
   takes Loki writes (storage isolation confirmed).
 - **6.** An ExternalSecret re-syncs over HTTPS via the trust-manager bundle. Small, isolated — good filler.
 - **7.** `step ca revoke` on a throwaway cert flips `cert_revoked`; expiry metric present.
-- **8.** Vault, **both** Grafanas, and the step-ca `authelia` provisioner all auth via Authelia; Dex
-  container/scripts gone; local `admin` break-glass still works.
+- **8.** Vault and **both** Grafanas auth via Authelia; Dex container/scripts gone; local `admin` break-glass still works.
 - **9.** Cluster healthy on Calico/VXLAN, all pods Ready, **MetalLB L2 still serves**, `etcdctl` shows
-  secretbox ciphertext, apiserver issuer points at Authelia (inert), and **phases 1–8 re-validate on the
-  target datapath**. This is the riskiest unknown (Calico on WSL2), isolated to one phase.
+  secretbox ciphertext, and **phases 1–8 re-validate on the target datapath**. This is the riskiest unknown (Calico on WSL2), isolated to one phase.
 - **10.** Author the allow-list incl. the two ★ rules (kubelet→pod from node host-CIDR; MetalLB-L2→Traefik
   as a CIDR/`nets` rule), observe green, **then** flip the `GlobalNetworkPolicy` ingress default-deny.
   Fully reversible (delete the deny policy). Everything green under deny; one non-allowed flow confirmed blocked.
 
 **Steer points between phases:** §3 (CDP reissue blast radius — ready?), §5 (did storage isolation actually
-hold?), §8 (the doc's "no two-IdP period" can be relaxed here to de-risk the swap, since apiserver OIDC is
-inert), §9 (Calico-on-WSL2 go/no-go), §10 (don't flip until the allow-list is observed working).
+hold?), §8 (the "no two-IdP period" can be relaxed to de-risk the swap), §9 (Calico-on-WSL2 go/no-go),
+§10 (don't flip until the allow-list is observed working).

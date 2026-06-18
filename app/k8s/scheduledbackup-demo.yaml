@@ -1,0 +1,14 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: demo-backup
+  namespace: demo-db
+spec:
+  method: plugin
+  schedule: '0 0 0 * * *'
+  backupOwnerReference: self
+  cluster:
+    name: demo
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+  immediate: true

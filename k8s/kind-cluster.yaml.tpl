@@ -1,30 +1,20 @@
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: cnpg
+networking:
+  disableDefaultCNI: true
+  podSubnet: "10.244.0.0/16"
 nodes:
 
 # Control Plane node
 - role: control-plane
-  # Dex CA mounted into control-plane so kube-apiserver can verify the OIDC issuer cert.
-  # Path on host is rendered by setup.sh from $DEX_TLS_DIR (dex/tls).
   extraMounts:
-    - hostPath: ${DEX_TLS_DIR}/ca-chain.pem
-      containerPath: /etc/kubernetes/oidc/dex-ca.pem
+    - hostPath: ${GIT_REPO_ROOT}/k8s/encryption/secretbox.key
+      containerPath: /etc/kubernetes/encryption/secretbox.key
       readOnly: true
   kubeadmConfigPatches:
     - |
       kind: ClusterConfiguration
-      apiServer:
-        extraArgs:
-          # Dex issuer URL — must be HTTPS and reachable from the control-plane container.
-          # ${DEX_HOST} = dex.<HOST_IP_DASHED>.sslip.io ; ${DEX_PORT} = 5556 (default).
-          oidc-issuer-url: https://${DEX_HOST}:${DEX_PORT}/dex
-          oidc-ca-file: /etc/kubernetes/oidc/dex-ca.pem
-          oidc-client-id: kubernetes
-          oidc-username-claim: email
-          oidc-username-prefix: "oidc:"
-          oidc-groups-claim: groups
-          oidc-groups-prefix: "oidc:"
       controllerManager:
         extraArgs:
           bind-address: 0.0.0.0
@@ -35,6 +25,17 @@ nodes:
         local:
           extraArgs:
             listen-metrics-urls: http://0.0.0.0:2381
+      apiServer:
+        extraArgs:
+          encryption-provider-config: /etc/kubernetes/encryption/secretbox.key
+          feature-gates: "MutatingAdmissionPolicy=true"
+          runtime-config: "admissionregistration.k8s.io/v1beta1=true"
+        extraVolumes:
+          - name: encryption-config
+            hostPath: /etc/kubernetes/encryption/secretbox.key
+            mountPath: /etc/kubernetes/encryption/secretbox.key
+            readOnly: true
+            pathType: File
     - |
       kind: KubeProxyConfiguration
       metricsBindAddress: 0.0.0.0

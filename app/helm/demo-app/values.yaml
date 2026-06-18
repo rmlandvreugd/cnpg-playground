@@ -1,0 +1,113 @@
+replicaCount: 2
+
+image:
+  repository: demo-app
+  tag: ""  # Defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+# Database connection
+database:
+  host: "pooler-demo-rw.demo-db.svc.cluster.local"
+  # DDL migrations must bypass the PgBouncer pooler (transaction-mode pooling
+  # breaks DDL/session semantics) and talk directly to the CNPG -rw service.
+  # Defaults to host when empty.
+  migrationHost: "demo-rw.demo-db.svc.cluster.local"
+  port: 5432
+  name: "demo"
+  user: "app"
+  passwordSecret: "demo-app"
+  passwordSecretKey: "password"
+  # Only used when credentialsMode=dynamic: the username rotates with the
+  # password, so it is sourced from the same Secret instead of database.user.
+  usernameSecretKey: "username"
+  schema: "public"
+  # Secret rotation
+  credentialsMode: "static"  # "static" or "dynamic"
+  staticSecret:
+    refreshInterval: 5m
+    vaultPath: "cnpg/demo/app"
+  dynamicSecret:
+    refreshInterval: 30m
+    vaultPath: "database/creds/demo-app"
+    ttl: "1h"
+
+# Application settings
+app:
+  version: "0.1.0"
+  debug: false
+  logLevel: "INFO"
+  reload: false
+  # Seed sample tasks on startup (idempotent: skipped if rows exist). Only
+  # honoured with migration.strategy=startup; intended for dev, off for prod.
+  seed: false
+  # Tracing is toggled via observability.tracing.enabled (below), which feeds
+  # DEMO_APP_TRACING_ENABLED in the ConfigMap.
+
+# Observability
+observability:
+  metrics:
+    enabled: true
+    path: /metrics
+  tracing:
+    enabled: false  # Set to true for v2
+    otlpEndpoint: "http://otel-collector.otel.svc.cluster.local:4317"
+
+# Migration strategy
+migration:
+  strategy: "initContainer"  # "initContainer" for v1, "startup" for v2
+
+# TLS
+tls:
+  enabled: true
+  issuerRef:
+    kind: ClusterIssuer
+    name: vault-pki
+  # Hostname prefix: "demo-demo" for prod, "demo-dev-demo" for dev
+  hostnamePrefix: "demo-demo"
+
+# Ingress
+ingress:
+  enabled: true
+  entryPoint: websecure
+  tls: true
+
+# Resources
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Global values (overridden per environment)
+global:
+  traefikIpDashed: ""
+
+# ExternalSecret for DB credentials
+externalSecret:
+  enabled: true
+  refreshInterval: 5m
+  secretStoreRef:
+    name: vault-approle
+    kind: ClusterSecretStore
+  data:
+    - secretKey: password
+      remoteRef:
+        key: cnpg/demo/app
+        property: password
+  # Rotation: annotate deployment for auto-reload
+  reloadOnUpdate: true
+
+# Network policy
+networkPolicy:
+  enabled: false
+  # Namespace the Prometheus instance runs in (it scrapes the pod's :8000
+  # /metrics). The repo deploys Prometheus into "prometheus-operator", not the
+  # generic "monitoring" namespace.
+  monitoringNamespace: "prometheus-operator"
+
+# PodDisruptionBudget
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1

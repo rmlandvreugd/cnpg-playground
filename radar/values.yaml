@@ -1,0 +1,12 @@
+rbac:
+  create: true
+  podLogs: true
+  podExec: true
+  portForward: true
+  secrets: true
+  viewRBAC: true
+  viewWebhooks: true
+  helm: true
+
+traffic:
+  prometheusUrl: "http://caretta-vm.caretta:8428"

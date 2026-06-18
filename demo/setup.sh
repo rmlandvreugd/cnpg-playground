@@ -38,20 +38,9 @@ source ${git_repo_root}/scripts/common.sh
 kube_config_path=${git_repo_root}/k8s/kube-config.yaml
 demo_yaml_path=${git_repo_root}/demo/yaml
 
-check_crd_existence() {
-    # Check if the CRD exists in the cluster
-    kubectl get crd "$1" &> /dev/null
-    return $?
-}
-
 legacy=
 if [ "${LEGACY:-}" = "true" ]; then
    legacy="-legacy"
-fi
-
-trunk=0
-if [ "${TRUNK:-}" = "true" ]; then
-   trunk=1
 fi
 
 # Ensure prerequisites are met
@@ -76,50 +65,6 @@ for region in "${REGIONS[@]}"; do
    CONTEXT_NAME=$(get_cluster_context "${region}")
    
    echo "${info_icon} Deploying in region ${region} with context ${CONTEXT_NAME}"
-   if [ $trunk -eq 1 ]; then
-     echo "${info_icon} Deploying CloudNativePG operator (trunk version)"
-     curl -sSfL \
-       https://raw.githubusercontent.com/cloudnative-pg/artifacts/main/manifests/operator-manifest.yaml | \
-       kubectl --context "${CONTEXT_NAME}" apply -f - --server-side
-     echo "${info_icon} Waiting for CloudNativePG operator to be ready..."
-     kubectl --context "${CONTEXT_NAME}" rollout status deployment \
-       -n cnpg-system cnpg-controller-manager
-   else
-     echo "${info_icon} Deploying CloudNativePG operator (chart ${CNPG_CHART_VERSION})"
-     helm_upgrade_install cnpg-operator cloudnative-pg cnpg-system "${CONTEXT_NAME}" \
-       "${CNPG_CHART_VERSION}" \
-       --repo-url https://cloudnative-pg.github.io/charts
-   fi
-
-   if [ $trunk -eq 1 ]; then
-     echo "${info_icon} Deploying Barman Cloud Plugin (trunk version)"
-     kubectl apply --context "${CONTEXT_NAME}" -f \
-       https://raw.githubusercontent.com/cloudnative-pg/plugin-barman-cloud/refs/heads/main/manifest.yaml
-     echo "${info_icon} Waiting for Barman Cloud Plugin to be ready..."
-     kubectl rollout --context "${CONTEXT_NAME}" status deployment \
-       -n cnpg-system barman-cloud
-   else
-echo "${info_icon} Deploying Barman Cloud Plugin (chart ${BARMAN_CLOUD_PLUGIN_CHART_VERSION})"
-
-      # Issue TLS certificates BEFORE helm install so secrets exist when the
-      # deployment starts.  helm --wait blocks until pods are ready, and the
-      # barman-cloud pod cannot start without the server/client TLS secrets.
-      echo "📜 Issuing barman-cloud TLS certificates via vault-pki..."
-      kubectl apply --context "${CONTEXT_NAME}" -f \
-        ${demo_yaml_path}/barman-cloud/certificate-server.yaml
-      kubectl apply --context "${CONTEXT_NAME}" -f \
-        ${demo_yaml_path}/barman-cloud/certificate-client.yaml
-      kubectl wait --context "${CONTEXT_NAME}" --timeout=60s \
-        --for=condition=Ready certificate/barman-cloud-server -n cnpg-system
-      kubectl wait --context "${CONTEXT_NAME}" --timeout=60s \
-        --for=condition=Ready certificate/barman-cloud-client -n cnpg-system
-
-      helm_upgrade_install barman-cloud plugin-barman-cloud cnpg-system "${CONTEXT_NAME}" \
-        "${BARMAN_CLOUD_PLUGIN_CHART_VERSION}" \
-        --repo-url https://cloudnative-pg.github.io/charts \
-        --set certificate.createClientCertificate=false \
-        --set certificate.createServerCertificate=false
-    fi
 
    # Create Barman object stores
    echo "${info_icon} Creating Barman Cloud object store for region ${region}..."
@@ -137,14 +82,6 @@ echo "${info_icon} Deploying Barman Cloud Plugin (chart ${BARMAN_CLOUD_PLUGIN_CH
    echo "${info_icon} Creating PostgreSQL cluster in region ${region}..."
    kubectl apply --context ${CONTEXT_NAME} -f \
      ${demo_yaml_path}/${region}/pg-${region}${legacy}.yaml
-
-   # Create the PodMonitor if Prometheus has been installed
-   if check_crd_existence podmonitors.monitoring.coreos.com
-   then
-      echo "${info_icon} Creating PodMonitor for PostgreSQL cluster in region ${region}..."
-     kubectl apply --context ${CONTEXT_NAME} -f \
-       ${demo_yaml_path}/${region}/pg-${region}-podmonitor.yaml
-   fi
 
    # Wait for the cluster to be ready
    echo "${info_icon} Waiting for PostgreSQL cluster in region ${region} to be ready..."

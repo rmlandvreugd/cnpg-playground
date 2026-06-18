@@ -69,8 +69,7 @@ kubectl create secret generic vault-approle-creds \
 # --- ClusterSecretStore ---
 echo "📋 Applying ClusterSecretStore (vault-approle)..."
 ESO_NAMESPACE="${ESO_NAMESPACE}" \
-VAULT_HTTP_PORT="${VAULT_HTTP_PORT}" \
-envsubst '${ESO_NAMESPACE} ${VAULT_HTTP_PORT}' \
+envsubst '${ESO_NAMESPACE}' \
     < "${GIT_REPO_ROOT}/vault/eso/clustersecretstore.yaml.tpl" \
     | kubectl --context "${CONTEXT_NAME}" apply -f -
 

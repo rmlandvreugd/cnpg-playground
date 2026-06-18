@@ -5,7 +5,10 @@ metadata:
 spec:
   configuration:
     destinationPath: s3://backups/
-    endpointURL: http://objectstore-local:9000
+    endpointURL: https://objectstore-local:9000
+    endpointCA:
+      name: step-ca-external-bundle
+      key: ca.crt
     s3Credentials:
       accessKeyId:
         name: objectstore-local

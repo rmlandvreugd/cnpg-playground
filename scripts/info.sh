@@ -74,7 +74,7 @@ for region in "${REGIONS[@]}"; do
     if TRAEFIK_LB_IP=$(get_traefik_lb_ip "${CONTEXT_NAME}" 5); then
         TRAEFIK_IP_DASHED=$(ip_to_dashed "${TRAEFIK_LB_IP}")
         echo "  Traefik dashboard: http://traefik.${TRAEFIK_IP_DASHED}.sslip.io"
-        echo "  Grafana:           http://grafana.${TRAEFIK_IP_DASHED}.sslip.io"
+        echo "  Radar:             http://radar.${TRAEFIK_IP_DASHED}.sslip.io"
     else
         echo "  ⚠️  Traefik not found — run setup.sh and monitoring/setup.sh first"
     fi

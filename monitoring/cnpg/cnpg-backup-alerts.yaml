@@ -1,0 +1,48 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cnpg-backup-alerts
+  namespace: cnpg-system
+spec:
+  groups:
+    - name: cnpg.backup
+      interval: 1m
+      rules:
+        - alert: CnpgBackupStaleness
+          expr: >
+            (cnpg_collector_last_available_backup_timestamp > 0)
+            and ((time() - cnpg_collector_last_available_backup_timestamp) > 93600)
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "CNPG backup is stale ({{ $labels.namespace }}/{{ $labels.cluster_name }})"
+            description: >
+              No successful backup available for {{ $value | humanizeDuration }} on cluster
+              {{ $labels.cluster_name }} in {{ $labels.namespace }}.
+              Expected at most once every 26 hours (threshold: 93600 s).
+
+        - alert: CnpgLastBackupFailed
+          expr: >
+            cnpg_collector_last_failed_backup_timestamp > (time() - 14400)
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "CNPG backup failure ({{ $labels.namespace }}/{{ $labels.cluster_name }})"
+            description: >
+              A backup failed at {{ $value | humanizeTimestamp }} for cluster
+              {{ $labels.cluster_name }} in {{ $labels.namespace }}.
+              Investigate ScheduledBackup / object store connectivity.
+
+        - alert: CnpgNoRecoverabilityPoint
+          expr: >
+            cnpg_collector_first_recoverability_point == 0
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "CNPG cluster has no recoverability point ({{ $labels.namespace }}/{{ $labels.cluster_name }})"
+            description: >
+              Cluster {{ $labels.cluster_name }} in {{ $labels.namespace }} has no established
+              first recoverability point. Continuous WAL archiving may not be functioning.

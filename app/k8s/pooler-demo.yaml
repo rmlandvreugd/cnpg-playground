@@ -1,0 +1,2 @@
+# The PgBouncer pooler is defined inline in cluster-demo.yaml.tpl
+# This file is kept for reference if you want to separate them.

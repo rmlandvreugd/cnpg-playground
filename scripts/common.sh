@@ -19,7 +19,17 @@
 # limitations under the License.
 #
 
-set -euo pipefail
+set -Eeuo pipefail
+
+# Centralized failure diagnostics: with `set -E` this ERR trap propagates into
+# functions/subshells and fires for every script that sources common.sh, turning
+# a silent `set -e` abort into a clear "<file> line <N>: <command>" message.
+# Commands guarded with `|| true` (common in teardown scripts) do NOT trigger it.
+_common_on_err() {
+    local rc=$?
+    echo "❌ ${BASH_SOURCE[1]:-script} failed (exit ${rc}) at line ${BASH_LINENO[0]}: ${BASH_COMMAND}" >&2
+}
+trap _common_on_err ERR
 
 # Minimal thresholds to check before calling tuning script
 declare -A thresholds=(
@@ -67,6 +77,28 @@ RUSTFS_BASE_PORT=${RUSTFS_BASE_PORT:-9001}
 RUSTFS_ROOT_USER="${RUSTFS_ROOT_USER:-cnpg}"
 RUSTFS_ROOT_PASSWORD="${RUSTFS_ROOT_PASSWORD:-Cl0udNativePGRocks}"
 
+# SeaweedFS Configuration (Loki-only object store, weed server -filer -s3)
+SEAWEEDFS_IMAGE="${SEAWEEDFS_IMAGE:-chrislusf/seaweedfs:latest}"
+SEAWEEDFS_CONTAINER_NAME="${SEAWEEDFS_CONTAINER_NAME:-seaweedfs}"
+SEAWEEDFS_S3_PORT="${SEAWEEDFS_S3_PORT:-8333}"                   # S3 HTTPS
+SEAWEEDFS_S3_HTTP_PORT="${SEAWEEDFS_S3_HTTP_PORT:-8334}"         # S3 HTTP (8333+1, avoids conflict with HTTPS)
+SEAWEEDFS_MASTER_PORT="${SEAWEEDFS_MASTER_PORT:-9333}"           # Master UI + API
+SEAWEEDFS_VOLUME_PORT="${SEAWEEDFS_VOLUME_PORT:-9340}"           # Volume server (explicit; weed server default is 8080)
+SEAWEEDFS_FILER_PORT="${SEAWEEDFS_FILER_PORT:-8889}"             # Filer UI + API (8889 avoids common 8888 conflicts)
+SEAWEEDFS_ADMIN_PORT="${SEAWEEDFS_ADMIN_PORT:-23646}"            # Admin UI HTTPS (via security.toml [https.admin])
+SEAWEEDFS_ADMIN_CONTAINER_NAME="${SEAWEEDFS_ADMIN_CONTAINER_NAME:-seaweedfs-admin}"
+SEAWEEDFS_WEBDAV_PORT="${SEAWEEDFS_WEBDAV_PORT:-7333}"              # WebDAV HTTPS (-cert.file/-key.file on same port)
+SEAWEEDFS_WEBDAV_CONTAINER_NAME="${SEAWEEDFS_WEBDAV_CONTAINER_NAME:-seaweedfs-webdav}"
+SEAWEEDFS_WORKER_METRICS_PORT="${SEAWEEDFS_WORKER_METRICS_PORT:-9327}"  # Worker Prometheus metrics
+SEAWEEDFS_WORKER_CONTAINER_NAME="${SEAWEEDFS_WORKER_CONTAINER_NAME:-seaweedfs-worker}"
+SEAWEEDFS_ACCESS_KEY="${SEAWEEDFS_ACCESS_KEY:-loki}"
+SEAWEEDFS_SECRET_KEY="${SEAWEEDFS_SECRET_KEY:-lokiS3secret}"
+
+# Revocation Exporter Configuration (host container, --network host)
+REVOCATION_EXPORTER_CONTAINER_NAME="${REVOCATION_EXPORTER_CONTAINER_NAME:-revocation-exporter}"
+REVOCATION_EXPORTER_PORT="${REVOCATION_EXPORTER_PORT:-9105}"
+REVOCATION_EXPORTER_IMAGE="${REVOCATION_EXPORTER_IMAGE:-revocation-exporter:latest}"
+
 # Vault Configuration
 VAULT_IMAGE="${VAULT_IMAGE:-hashicorp/vault:2.0}"
 VAULT_CONTAINER_NAME="${VAULT_CONTAINER_NAME:-vault}"
@@ -88,17 +120,25 @@ STEP_CA_PROVISIONER_NAME="${STEP_CA_PROVISIONER_NAME:-admin}"
 # trust-manager Configuration
 TRUST_MANAGER_CHART_VERSION="${TRUST_MANAGER_CHART_VERSION:-0.17.1}"
 
-# Dex
-DEX_IMAGE="${DEX_IMAGE:-ghcr.io/dexidp/dex:v2.45.1}"
-DEX_CONTAINER_NAME="${DEX_CONTAINER_NAME:-dex}"
-DEX_PORT="${DEX_PORT:-5556}"
-DEX_OIDC_CLIENT_ID="${DEX_OIDC_CLIENT_ID:-vault-client}"
-DEX_OIDC_CLIENT_SECRET="${DEX_OIDC_CLIENT_SECRET:-vault-oidc-secret}"
-DEX_STATIC_PASSWORD_HASH="${DEX_STATIC_PASSWORD_HASH:-\$2a\$10\$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W}"
-DEX_RBR_ADMIN_PASSWORD_HASH="${DEX_RBR_ADMIN_PASSWORD_HASH:-${DEX_STATIC_PASSWORD_HASH}}"
-DEX_RBR_VER_ADMIN_PASSWORD_HASH="${DEX_RBR_VER_ADMIN_PASSWORD_HASH:-${DEX_STATIC_PASSWORD_HASH}}"
-DEX_UNRELATED_PASSWORD_HASH="${DEX_UNRELATED_PASSWORD_HASH:-${DEX_STATIC_PASSWORD_HASH}}"
-DEX_GRAFANA_RBR_VER_CLIENT_SECRET="${DEX_GRAFANA_RBR_VER_CLIENT_SECRET:-grafana-rbr-ver-demo-secret}"
+# Authelia
+AUTHELIA_IMAGE="${AUTHELIA_IMAGE:-ghcr.io/authelia/authelia:4.39.20}"
+AUTHELIA_CONTAINER_NAME="${AUTHELIA_CONTAINER_NAME:-authelia}"
+AUTHELIA_PORT="${AUTHELIA_PORT:-9091}"
+# User password hashes (bcrypt — same values as before, Authelia file provider accepts bcrypt)
+AUTHELIA_STATIC_PASSWORD_HASH="${AUTHELIA_STATIC_PASSWORD_HASH:-\$2a\$10\$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W}"
+AUTHELIA_RBR_ADMIN_PASSWORD_HASH="${AUTHELIA_RBR_ADMIN_PASSWORD_HASH:-${AUTHELIA_STATIC_PASSWORD_HASH}}"
+AUTHELIA_RBR_VER_ADMIN_PASSWORD_HASH="${AUTHELIA_RBR_VER_ADMIN_PASSWORD_HASH:-${AUTHELIA_STATIC_PASSWORD_HASH}}"
+AUTHELIA_UNRELATED_PASSWORD_HASH="${AUTHELIA_UNRELATED_PASSWORD_HASH:-${AUTHELIA_STATIC_PASSWORD_HASH}}"
+# OIDC client secrets (plaintext — hashed to PBKDF2 at setup time by authelia-setup.sh)
+AUTHELIA_VAULT_CLIENT_SECRET="${AUTHELIA_VAULT_CLIENT_SECRET:-vault-oidc-secret}"
+AUTHELIA_STEP_CA_CLIENT_SECRET="${AUTHELIA_STEP_CA_CLIENT_SECRET:-step-ca-demo-secret}"
+AUTHELIA_GRAFANA_RBR_VER_CLIENT_SECRET="${AUTHELIA_GRAFANA_RBR_VER_CLIENT_SECRET:-grafana-rbr-ver-demo-secret}"
+AUTHELIA_GRAFANA_MONITORING_CLIENT_SECRET="${AUTHELIA_GRAFANA_MONITORING_CLIENT_SECRET:-grafana-monitoring-demo-secret}"
+# Authelia internal secrets (session, storage, OIDC HMAC, JWT)
+AUTHELIA_SESSION_SECRET="${AUTHELIA_SESSION_SECRET:-authelia-session-secret-dev}"
+AUTHELIA_STORAGE_ENCRYPTION_KEY="${AUTHELIA_STORAGE_ENCRYPTION_KEY:-authelia-storage-key-dev-32chars!}"
+AUTHELIA_OIDC_HMAC_SECRET="${AUTHELIA_OIDC_HMAC_SECRET:-authelia-oidc-hmac-secret-dev}"
+AUTHELIA_JWT_SECRET="${AUTHELIA_JWT_SECRET:-authelia-jwt-secret-dev}"
 
 # cert-manager
 CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION:-v1.20.2}"
@@ -111,21 +151,25 @@ ESO_NAMESPACE="${ESO_NAMESPACE:-external-secrets}"
 CNPG_DEMO_NAMESPACE="${CNPG_DEMO_NAMESPACE:-demo-local-db}"
 
 # MetalLB Configuration
-METALLB_VERSION="${METALLB_VERSION:-v0.15.3}"
-METALLB_CHART_VERSION="${METALLB_CHART_VERSION:-0.15.3}"
+METALLB_VERSION="${METALLB_VERSION:-v0.16.1}"
+METALLB_CHART_VERSION="${METALLB_CHART_VERSION:-0.16.1}"
 CERT_MANAGER_CHART_VERSION="${CERT_MANAGER_CHART_VERSION:-v1.20.2}"
 ESO_CHART_VERSION="${ESO_CHART_VERSION:-2.4.1}"
 TRAEFIK_CHART_VERSION="${TRAEFIK_CHART_VERSION:-39.0.8}"
 CNPG_CHART_VERSION="${CNPG_CHART_VERSION:-0.28.0}"
 BARMAN_CLOUD_PLUGIN_CHART_VERSION="${BARMAN_CLOUD_PLUGIN_CHART_VERSION:-0.6.0}"
 GRAFANA_OPERATOR_CHART_VERSION="${GRAFANA_OPERATOR_CHART_VERSION:-5.22.2}"
-KUBE_PROMETHEUS_STACK_CHART_VERSION="${KUBE_PROMETHEUS_STACK_CHART_VERSION:-83.6.0}"
+KUBE_PROMETHEUS_STACK_CHART_VERSION="${KUBE_PROMETHEUS_STACK_CHART_VERSION:-86.2.3}"
 LOKI_CHART_VERSION="${LOKI_CHART_VERSION:-13.5.0}"
 ALLOY_CHART_VERSION="${ALLOY_CHART_VERSION:-1.8.0}"
-MIMIR_CHART_VERSION="${MIMIR_CHART_VERSION:-5.7.0}"
-TEMPO_CHART_VERSION="${TEMPO_CHART_VERSION:-2.19.0}"
-OTEL_COLLECTOR_CHART_VERSION="${OTEL_COLLECTOR_CHART_VERSION:-0.153.0}"  # OCI: ghcr.io/open-telemetry/opentelemetry-helm-charts
-OTEL_COLLECTOR_IMAGE_TAG="${OTEL_COLLECTOR_IMAGE_TAG:-0.151.0}"          # otel/opentelemetry-collector-contrib; chart 0.153.0 appVersion is 0.151.0
+MIMIR_CHART_VERSION="${MIMIR_CHART_VERSION:-6.0.6}"
+TEMPO_CHART_VERSION="${TEMPO_CHART_VERSION:-2.25.2}"
+OTEL_COLLECTOR_CHART_VERSION="${OTEL_COLLECTOR_CHART_VERSION:-0.158.2}"  # OCI: ghcr.io/open-telemetry/opentelemetry-helm-charts
+OTEL_COLLECTOR_IMAGE_TAG="${OTEL_COLLECTOR_IMAGE_TAG:-0.153.0}"          # otel/opentelemetry-collector-contrib; chart 0.153.0 appVersion is 0.151.0
+TIGERA_OPERATOR_CHART_VERSION="${TIGERA_OPERATOR_CHART_VERSION:-v3.32.0}"
+CARETTA_CHART_VERSION="${CARETTA_CHART_VERSION:-0.0.16}"
+RADAR_CHART_VERSION="${RADAR_CHART_VERSION:-1.7.9}"
+GRAFANA_IMAGE="${GRAFANA_IMAGE:-docker.io/grafana/grafana:12.4.1}"
 
 # --- Common Prerequisite Checks ---
 REQUIRED_COMMANDS="kind kubectl helm git grep sed envsubst jq"
@@ -201,6 +245,25 @@ get_kind_ipv4_subnet() {
     fi
 }
 
+# retry <tries> <delay_seconds> <command...>
+# Re-runs the command until it succeeds or <tries> is reached. Intended for
+# operations that race with a not-yet-reachable admission webhook (e.g. applying
+# a resource right after its controller's Deployment goes Available, before
+# kube-proxy has programmed the webhook Service endpoint -> "connection refused").
+retry() {
+    local tries="$1" delay="$2"; shift 2
+    local n=1
+    until "$@"; do
+        if (( n >= tries )); then
+            echo "❌ command failed after ${tries} attempts: $*" >&2
+            return 1
+        fi
+        echo "⚠️  attempt ${n}/${tries} failed, retrying in ${delay}s: $*" >&2
+        sleep "${delay}"
+        n=$((n + 1))
+    done
+}
+
 helm_upgrade_install() {
     local release="$1"
     local chart_ref="$2"
@@ -219,15 +282,57 @@ helm_upgrade_install() {
         shift 2
     fi
 
-    helm upgrade --install "${release}" "${chart_ref}" \
-        "${repo_args[@]}" \
-        --namespace "${namespace}" \
-        --create-namespace \
-        --kube-context "${context}" \
-        --version "${version}" \
-        --wait \
-        --timeout 300s \
-        "$@"
+    # `--no-wait` opt-out: some charts (e.g. cert-manager) make `helm --wait`
+    # stall indefinitely even when every resource is already Ready. Callers that
+    # do their own explicit `kubectl wait` afterwards can pass --no-wait to skip it.
+    local wait_args=(--wait)
+    local passthrough=() arg
+    for arg in "$@"; do
+        if [[ "${arg}" == "--no-wait" ]]; then
+            wait_args=()
+        else
+            passthrough+=("${arg}")
+        fi
+    done
+    set -- ${passthrough[@]+"${passthrough[@]}"}
+
+    local attempt retries=3 delay=15
+    for attempt in $(seq 1 $retries); do
+        # Clear a release stuck in a pending/failed state so retries and re-runs
+        # self-heal instead of failing with "another operation in progress".
+        local st
+        st=$(helm status "${release}" -n "${namespace}" --kube-context "${context}" \
+             -o json 2>/dev/null | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+        case "${st}" in
+            pending-install)
+                helm uninstall "${release}" -n "${namespace}" --kube-context "${context}" --wait || true ;;
+            pending-upgrade|pending-rollback|failed)
+                # Roll back to the last good revision; if there is none (e.g. the very
+                # first install failed -> "release has no 0 version"), uninstall so the
+                # next attempt is a clean install.
+                helm rollback "${release}" -n "${namespace}" --kube-context "${context}" 2>/dev/null \
+                    || helm uninstall "${release}" -n "${namespace}" --kube-context "${context}" --wait \
+                    || true ;;
+        esac
+
+        # Wrap in `timeout` so a stuck `helm --wait` (which can blow past its own
+        # --timeout) becomes a failure the retry loop can act on, not a frozen process.
+        timeout --kill-after=30s 360s helm upgrade --install "${release}" "${chart_ref}" \
+            "${repo_args[@]}" \
+            --namespace "${namespace}" \
+            --create-namespace \
+            --kube-context "${context}" \
+            --version "${version}" \
+            ${wait_args[@]+"${wait_args[@]}"} \
+            --timeout 300s \
+            "$@" && return 0
+        if [[ $attempt -lt $retries ]]; then
+            echo "⚠️  helm install attempt $attempt/$retries failed, retrying in ${delay}s..." >&2
+            sleep $delay
+        fi
+    done
+    echo "❌ helm install failed after $retries attempts: ${release}" >&2
+    return 1
 }
 
 wait_deployment() {
@@ -245,5 +350,51 @@ helm_uninstall_if_present() {
     local context="$3"
     if helm status "${release}" --namespace "${namespace}" --kube-context "${context}" &>/dev/null; then
         helm uninstall "${release}" --namespace "${namespace}" --kube-context "${context}"
+    fi
+}
+
+install_cnpg_operator() {
+    local context_name="$1"
+    if [ "${TRUNK:-}" = "true" ]; then
+        echo "🔧 Deploying CloudNativePG operator (trunk version)"
+        curl -sSfL \
+          https://raw.githubusercontent.com/cloudnative-pg/artifacts/main/manifests/operator-manifest.yaml | \
+          kubectl --context "${context_name}" apply -f - --server-side
+        echo "⏳ Waiting for CloudNativePG operator to be ready..."
+        kubectl --context "${context_name}" rollout status deployment \
+          -n cnpg-system cnpg-controller-manager
+    else
+        echo "🔧 Deploying CloudNativePG operator (chart ${CNPG_CHART_VERSION})"
+        helm_upgrade_install cnpg-operator cloudnative-pg cnpg-system "${context_name}" \
+          "${CNPG_CHART_VERSION}" \
+          --repo-url https://cloudnative-pg.github.io/charts
+    fi
+}
+
+install_barman_plugin() {
+    local context_name="$1"
+    if [ "${TRUNK:-}" = "true" ]; then
+        echo "🔧 Deploying Barman Cloud Plugin (trunk version)"
+        kubectl apply --context "${context_name}" -f \
+          https://raw.githubusercontent.com/cloudnative-pg/plugin-barman-cloud/refs/heads/main/manifest.yaml
+        echo "⏳ Waiting for Barman Cloud Plugin to be ready..."
+        kubectl rollout --context "${context_name}" status deployment \
+          -n cnpg-system barman-cloud
+    else
+        echo "🔧 Deploying Barman Cloud Plugin (chart ${BARMAN_CLOUD_PLUGIN_CHART_VERSION})"
+        echo "📜 Issuing barman-cloud TLS certificates via vault-pki..."
+        kubectl apply --context "${context_name}" -f \
+          "${GIT_REPO_ROOT}/demo/yaml/barman-cloud/certificate-server.yaml"
+        kubectl apply --context "${context_name}" -f \
+          "${GIT_REPO_ROOT}/demo/yaml/barman-cloud/certificate-client.yaml"
+        kubectl wait --context "${context_name}" --timeout=60s \
+          --for=condition=Ready certificate/barman-cloud-server -n cnpg-system
+        kubectl wait --context "${context_name}" --timeout=60s \
+          --for=condition=Ready certificate/barman-cloud-client -n cnpg-system
+        helm_upgrade_install barman-cloud plugin-barman-cloud cnpg-system "${context_name}" \
+          "${BARMAN_CLOUD_PLUGIN_CHART_VERSION}" \
+          --repo-url https://cloudnative-pg.github.io/charts \
+          --set certificate.createClientCertificate=false \
+          --set certificate.createServerCertificate=false
     fi
 }

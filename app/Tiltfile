@@ -1,0 +1,29 @@
+# -*- mode: Starlark -*-
+allow_k8s_contexts('kind-k8s-local')
+
+docker_build(
+    'demo-app', context='.', dockerfile='Dockerfile.dev',
+    live_update=[
+        sync('./src/demo_app', '/app/src/demo_app'),
+        run('cd /app && uv sync', trigger=['./pyproject.toml', './uv.lock']),
+    ],
+)
+
+# DB + the traefik-dev LB are owned by scripts/setup.sh. Tilt only creates the
+# dev namespace and the dev app.
+k8s_yaml('./k8s/namespace-demo-dev.yaml')
+
+k8s_yaml(helm(
+    './helm/demo-app',
+    name='demo-app', namespace='demo-dev',
+    values=['./helm/demo-app/values-dev.yaml'],
+    set=['global.traefikIpDashed=' + os.environ['TRAEFIK_IP_DASHED'], 'image.tag=dev'],
+))
+
+local_resource(
+    'db-check',
+    cmd='kubectl get cluster demo -n demo-db >/dev/null 2>&1 '
+        + '|| { echo "demo-db not found — run app/scripts/setup.sh first"; exit 1; }',
+)
+
+k8s_resource('demo-app', port_forwards='8000:8000', resource_deps=['db-check'])

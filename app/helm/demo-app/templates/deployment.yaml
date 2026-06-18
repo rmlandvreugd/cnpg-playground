@@ -1,0 +1,109 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "demo-app.fullname" . }}
+  labels:
+    {{- include "demo-app.labels" . | nindent 4 }}
+  annotations:
+    reloader.stakater.com/auto: {{ .Values.externalSecret.reloadOnUpdate | quote }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "demo-app.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "demo-app.selectorLabels" . | nindent 8 }}
+      annotations:
+        secret-hash: {{ .Values.database.passwordSecret | sha256sum }}
+    spec:
+      enableServiceLinks: false
+      {{- if eq .Values.migration.strategy "initContainer" }}
+      initContainers:
+      - name: db-migrate
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        command: ["litestar", "db", "upgrade"]
+        envFrom:
+        - configMapRef:
+            name: {{ include "demo-app.fullname" . }}
+        env:
+        # Override the pooler host from the ConfigMap: migrations run DDL, which
+        # must hit the CNPG -rw service directly, not PgBouncer.
+        - name: DEMO_APP_DB_HOST
+          value: {{ .Values.database.migrationHost | default .Values.database.host | quote }}
+        - name: DEMO_APP_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.database.passwordSecret }}
+              key: {{ .Values.database.passwordSecretKey }}
+        {{- if eq .Values.database.credentialsMode "dynamic" }}
+        - name: DEMO_APP_DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.database.passwordSecret }}
+              key: {{ .Values.database.usernameSecretKey }}
+        {{- else }}
+        - name: DEMO_APP_DB_USER
+          value: {{ .Values.database.user }}
+        {{- end }}
+      {{- end }}
+      containers:
+      - name: app
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        {{- /* --reload-dir src so the watcher does not scan ~7000 .venv files */}}
+        {{- $reload := ternary " --reload --reload-dir src" "" .Values.app.reload }}
+        {{- $seed := ternary " && python -m demo_app.seed" "" .Values.app.seed }}
+        {{- if eq .Values.migration.strategy "startup" }}
+        command: ["sh", "-c", "litestar db upgrade --no-prompt{{ $seed }} && litestar run --host 0.0.0.0 --port 8000{{ $reload }}"]
+        {{- else if .Values.app.reload }}
+        command: ["litestar", "run", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "src"]
+        {{- else }}
+        command: ["litestar", "run", "--host", "0.0.0.0", "--port", "8000"]
+        {{- end }}
+        envFrom:
+        - configMapRef:
+            name: {{ include "demo-app.fullname" . }}
+        env:
+        # Secrets and the credentialsMode-dependent username stay inline; all
+        # non-secret config is single-sourced from the ConfigMap above.
+        - name: DEMO_APP_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.database.passwordSecret }}
+              key: {{ .Values.database.passwordSecretKey }}
+        {{- if eq .Values.database.credentialsMode "dynamic" }}
+        - name: DEMO_APP_DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.database.passwordSecret }}
+              key: {{ .Values.database.usernameSecretKey }}
+        {{- else }}
+        - name: DEMO_APP_DB_USER
+          value: {{ .Values.database.user | quote }}
+        {{- end }}
+        ports:
+        - containerPort: 8000
+          name: http
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        startupProbe:
+          httpGet:
+            path: /health/startup
+            port: 8000
+          failureThreshold: 30
+          periodSeconds: 2
+        resources:
+          {{- toYaml .Values.resources | nindent 12 }}

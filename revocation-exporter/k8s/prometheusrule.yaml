@@ -1,0 +1,88 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: revocation-exporter-alerts
+  namespace: prometheus-operator
+  labels:
+    role: alert-rules
+spec:
+  groups:
+    - name: pki.cert_expiry
+      rules:
+        - alert: CertExpiringWarning
+          expr: |
+            (cert_not_after_seconds - time()) < (7 * 24 * 3600)
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Certificate expiring soon ({{ $labels.endpoint }})"
+            description: |
+              Certificate {{ $labels.common_name }} on endpoint {{ $labels.endpoint }}
+              expires in less than 7 days ({{ $value | humanizeDuration }} remaining).
+
+        - alert: CertExpiringCritical
+          expr: |
+            (cert_not_after_seconds - time()) < (2 * 24 * 3600)
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Certificate expiring in <2d ({{ $labels.endpoint }})"
+            description: |
+              Certificate {{ $labels.common_name }} on endpoint {{ $labels.endpoint }}
+              expires in less than 2 days. Immediate renewal required.
+
+    - name: pki.revocation
+      rules:
+        - alert: CertRevoked
+          expr: cert_revoked == 1
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Certificate is revoked ({{ $labels.endpoint }})"
+            description: |
+              Certificate {{ $labels.common_name }} on endpoint {{ $labels.endpoint }}
+              appears in the CRL. The service must be reissued immediately.
+
+    - name: pki.crl_freshness
+      rules:
+        - alert: CRLFreshnessWarning
+          # step-ca renewPeriod=16h cacheDuration=24h; warn at <4h headroom
+          expr: |
+            (crl_next_update_seconds - time()) < (4 * 3600)
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "CRL nearing expiry ({{ $labels.crl_url }})"
+            description: |
+              CRL at {{ $labels.crl_url }} NextUpdate is less than 4 hours away.
+              The CA may not have renewed it yet; investigate if this persists.
+
+        - alert: CRLExpired
+          expr: |
+            (crl_next_update_seconds - time()) < 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "CRL has expired ({{ $labels.crl_url }})"
+            description: |
+              CRL at {{ $labels.crl_url }} is past its NextUpdate timestamp.
+              Revocation checks are unreliable until the CA regenerates and
+              publishes a fresh CRL.
+
+    - name: pki.probe
+      rules:
+        - alert: CertProbeDown
+          expr: cert_probe_success == 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "TLS probe failed ({{ $labels.endpoint }})"
+            description: |
+              The revocation exporter cannot reach {{ $labels.endpoint }}.
+              The host container may be down or the port may have changed.

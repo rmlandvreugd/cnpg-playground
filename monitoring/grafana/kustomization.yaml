@@ -2,7 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: grafana
 resources:
-  - grafana_instance.yaml
+  # grafana_instance.yaml is rendered from grafana_instance.yaml.tpl by monitoring/setup.sh
   - grafana_datasource.yaml
   - grafana_datasource_loki.yaml
   - grafana_dashboard.yaml
@@ -17,4 +17,6 @@ resources:
   - grafana_datasource_mimir_tempo.yaml
   - grafana_datasource_tempo.yaml
   - grafana_dashboard_cnpg_custom.yaml
+  - grafana_dashboard_cnpg_backup.yaml
   - grafana_dashboard_traefik_traces.yaml
+  - grafana_dashboard_pki.yaml

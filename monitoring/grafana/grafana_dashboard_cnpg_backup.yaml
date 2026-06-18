@@ -1,0 +1,197 @@
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: cnpg-backup-dashboard
+  namespace: grafana
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: "grafana"
+  json: |
+    {
+      "title": "CNPG Backup Observability",
+      "uid": "cnpg-backup",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "1m",
+      "time": {"from": "now-24h", "to": "now"},
+      "templating": {
+        "list": [
+          {
+            "name": "datasource",
+            "label": "Prometheus",
+            "type": "datasource",
+            "query": "prometheus",
+            "hide": 0
+          },
+          {
+            "name": "namespace",
+            "label": "Namespace",
+            "type": "query",
+            "datasource": {"type": "prometheus", "uid": "${datasource}"},
+            "query": "label_values(cnpg_collector_last_available_backup_timestamp, namespace)",
+            "refresh": 2,
+            "hide": 0,
+            "multi": false,
+            "includeAll": true,
+            "allValue": ".*"
+          },
+          {
+            "name": "cluster",
+            "label": "Cluster",
+            "type": "query",
+            "datasource": {"type": "prometheus", "uid": "${datasource}"},
+            "query": "label_values(cnpg_collector_last_available_backup_timestamp{namespace=~\"$namespace\"}, cluster_name)",
+            "refresh": 2,
+            "hide": 0,
+            "multi": false,
+            "includeAll": true,
+            "allValue": ".*"
+          }
+        ]
+      },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Last Backup Age",
+          "type": "stat",
+          "gridPos": {"x": 0, "y": 0, "w": 8, "h": 6},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "options": {
+            "reduceOptions": {"calcs": ["lastNotNull"]},
+            "orientation": "auto",
+            "textMode": "auto",
+            "colorMode": "background"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "yellow", "value": 86400},
+                  {"color": "red", "value": 93600}
+                ]
+              },
+              "mappings": [
+                {"type": "special", "options": {"match": "null", "result": {"text": "No backup", "color": "red"}}}
+              ]
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "(time() - cnpg_collector_last_available_backup_timestamp{namespace=~\"$namespace\", cluster_name=~\"$cluster\"}) * (cnpg_collector_last_available_backup_timestamp{namespace=~\"$namespace\", cluster_name=~\"$cluster\"} > 0)",
+              "legendFormat": "{{cluster_name}} ({{namespace}})",
+              "datasource": {"type": "prometheus", "uid": "${datasource}"}
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "First Recoverability Point",
+          "type": "stat",
+          "gridPos": {"x": 8, "y": 0, "w": 8, "h": 6},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "options": {
+            "reduceOptions": {"calcs": ["lastNotNull"]},
+            "orientation": "auto",
+            "textMode": "auto",
+            "colorMode": "background"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "dateTimeAsIso",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "red", "value": null},
+                  {"color": "green", "value": 1}
+                ]
+              },
+              "mappings": [
+                {"type": "special", "options": {"match": "null+nan", "result": {"text": "None", "color": "red"}}},
+                {"type": "value", "options": {"0": {"text": "Not established", "color": "red"}}}
+              ]
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "cnpg_collector_first_recoverability_point{namespace=~\"$namespace\", cluster_name=~\"$cluster\"} * 1000",
+              "legendFormat": "{{cluster_name}} ({{namespace}})",
+              "datasource": {"type": "prometheus", "uid": "${datasource}"}
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "Last Failed Backup",
+          "type": "stat",
+          "gridPos": {"x": 16, "y": 0, "w": 8, "h": 6},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "options": {
+            "reduceOptions": {"calcs": ["lastNotNull"]},
+            "orientation": "auto",
+            "textMode": "auto",
+            "colorMode": "background"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "dateTimeAsIso",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "red", "value": 1}
+                ]
+              },
+              "mappings": [
+                {"type": "special", "options": {"match": "null+nan", "result": {"text": "None", "color": "green"}}},
+                {"type": "value", "options": {"0": {"text": "None", "color": "green"}}}
+              ]
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "cnpg_collector_last_failed_backup_timestamp{namespace=~\"$namespace\", cluster_name=~\"$cluster\"} * 1000",
+              "legendFormat": "{{cluster_name}} ({{namespace}})",
+              "datasource": {"type": "prometheus", "uid": "${datasource}"}
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "title": "Backup Age Over Time",
+          "type": "timeseries",
+          "gridPos": {"x": 0, "y": 6, "w": 24, "h": 10},
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "options": {
+            "legend": {"displayMode": "list", "placement": "bottom"}
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "yellow", "value": 86400},
+                  {"color": "red", "value": 93600}
+                ]
+              }
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "(time() - cnpg_collector_last_available_backup_timestamp{namespace=~\"$namespace\", cluster_name=~\"$cluster\"}) * (cnpg_collector_last_available_backup_timestamp{namespace=~\"$namespace\", cluster_name=~\"$cluster\"} > 0)",
+              "legendFormat": "{{cluster_name}} ({{namespace}})",
+              "datasource": {"type": "prometheus", "uid": "${datasource}"}
+            }
+          ]
+        }
+      ]
+    }

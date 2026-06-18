@@ -1,4 +1,5 @@
 [tools]
 "aqua:theseus-rs/postgresql-binaries" = "latest"
 envsubst = "latest"
-kind = "latest"
+kind = "0.31.0"
+tilt = "latest"

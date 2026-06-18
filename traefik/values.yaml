@@ -17,6 +17,7 @@ providers:
   kubernetesCRD:
     enabled: true
     allowCrossNamespace: true
+    allowExternalNameServices: true
 
 ingressRoute:
   dashboard:
@@ -51,6 +52,9 @@ additionalArguments:
   - "--ping=true"
   - "--ping.entrypoint=traefik"
   - "--entrypoints.postgres.address=:5432"
+  - "--entrypoints.web.http.redirections.entrypoint.to=:443"
+  - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+  - "--entrypoints.web.http.redirections.entrypoint.permanent=true"
 
 ports:
   postgres:

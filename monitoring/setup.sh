@@ -71,14 +71,14 @@ for region in "${REGIONS[@]}"; do
             --context "${CONTEXT_NAME}" \
             -n mimir \
             --image=minio/mc:latest \
-            --pod-running-timeout=60s \
-            --command -- sh -c "mc alias set store http://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1 \
-                && mc mb --ignore-existing store/mimir-blocks \
-                && mc mb --ignore-existing store/mimir-alertmanager \
-                && mc mb --ignore-existing store/mimir-ruler \
+            --pod-running-timeout=180s \
+            --command -- sh -c "mc --insecure alias set store https://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1 \
+                && mc --insecure mb --ignore-existing store/mimir-blocks \
+                && mc --insecure mb --ignore-existing store/mimir-alertmanager \
+                && mc --insecure mb --ignore-existing store/mimir-ruler \
                 && echo '✅ Mimir buckets ready'"
         kubectl --context "${CONTEXT_NAME}" -n mimir wait pod/mimir-bucket-init \
-            --for=jsonpath='{.status.phase}'=Succeeded --timeout=60s \
+            --for=jsonpath='{.status.phase}'=Succeeded --timeout=180s \
             && kubectl --context "${CONTEXT_NAME}" -n mimir logs pod/mimir-bucket-init \
             || echo "  ⚠️  Mimir bucket init may have failed — verify manually"
         kubectl --context "${CONTEXT_NAME}" -n mimir delete pod mimir-bucket-init --ignore-not-found
@@ -133,12 +133,12 @@ for region in "${REGIONS[@]}"; do
             --context "${CONTEXT_NAME}" \
             -n tempo \
             --image=minio/mc:latest \
-            --pod-running-timeout=60s \
-            --command -- sh -c "mc alias set store http://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1 \
-                && mc mb --ignore-existing store/tempo \
+            --pod-running-timeout=180s \
+            --command -- sh -c "mc --insecure alias set store https://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1 \
+                && mc --insecure mb --ignore-existing store/tempo \
                 && echo '✅ Bucket tempo ready'"
         kubectl --context "${CONTEXT_NAME}" -n tempo wait pod/tempo-bucket-init \
-            --for=jsonpath='{.status.phase}'=Succeeded --timeout=60s \
+            --for=jsonpath='{.status.phase}'=Succeeded --timeout=180s \
             && kubectl --context "${CONTEXT_NAME}" -n tempo logs pod/tempo-bucket-init \
             || echo "  ⚠️  Tempo bucket init may have failed — verify manually"
         kubectl --context "${CONTEXT_NAME}" -n tempo delete pod tempo-bucket-init --ignore-not-found
@@ -204,62 +204,81 @@ for region in "${REGIONS[@]}"; do
         --set "tolerations[0].operator=Exists" \
         --set "tolerations[0].effect=NoSchedule"
 
+    echo "🔑 Wiring Authelia CA + OAuth secret into grafana namespace..."
+    HOST_IP=$(hostname -I | awk '{print $1}')
+    HOST_IP_DASHED=$(echo "${HOST_IP}" | tr '.' '-')
+    AUTHELIA_HOST="authelia.${HOST_IP_DASHED}.sslip.io"
+    AUTHELIA_TLS_DIR="${GIT_REPO_ROOT}/authelia/tls"
+
+    kubectl create configmap authelia-ca-cert \
+        --namespace grafana \
+        --context "${CONTEXT_NAME}" \
+        --from-file=ca-chain.pem="${AUTHELIA_TLS_DIR}/ca-chain.pem" \
+        --dry-run=client -o yaml \
+        | kubectl apply --context "${CONTEXT_NAME}" -f -
+
+    kubectl create secret generic grafana-monitoring-oauth \
+        --namespace grafana \
+        --context "${CONTEXT_NAME}" \
+        --from-literal=client-secret="${AUTHELIA_GRAFANA_MONITORING_CLIENT_SECRET}" \
+        --dry-run=client -o yaml \
+        | kubectl apply --context "${CONTEXT_NAME}" -f -
+
 # Creating Grafana instance and dashboards
     kubectl kustomize ${GIT_REPO_ROOT}/monitoring/grafana/ | \
       kubectl --context ${CONTEXT_NAME} apply -f -
 
     # --- Loki + Alloy (pgaudit log aggregation) ---
-    echo "📊 Wiring objectstore into grafana namespace for Loki..."
-    RUSTFS_CONTAINER_NAME="${RUSTFS_BASE_NAME}-${region}"
-    OBJECTSTORE_IP=$(${CONTAINER_PROVIDER} inspect "${RUSTFS_CONTAINER_NAME}" \
+    echo "📊 Wiring SeaweedFS into grafana namespace for Loki..."
+    SEAWEEDFS_IP=$(${CONTAINER_PROVIDER} inspect "${SEAWEEDFS_CONTAINER_NAME}" \
         --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
     kubectl --context "${CONTEXT_NAME}" apply -f - <<EOF
 apiVersion: v1
 kind: Service
 metadata:
-  name: objectstore-local
+  name: seaweedfs
   namespace: grafana
 spec:
   ports:
     - name: s3
-      port: 9000
-      targetPort: 9000
+      port: 8333
+      targetPort: 8333
 ---
 apiVersion: v1
 kind: Endpoints
 metadata:
-  name: objectstore-local
+  name: seaweedfs
   namespace: grafana
 subsets:
   - addresses:
-      - ip: ${OBJECTSTORE_IP}
+      - ip: ${SEAWEEDFS_IP}
     ports:
       - name: s3
-        port: 9000
+        port: 8333
 EOF
 
-    echo "🪣 Creating Loki S3 bucket..."
+    echo "🪣 Creating Loki S3 bucket in SeaweedFS..."
     kubectl --context "${CONTEXT_NAME}" -n grafana delete pod loki-bucket-init --ignore-not-found
     kubectl run loki-bucket-init --restart=Never \
         --context "${CONTEXT_NAME}" \
         -n grafana \
         --image=minio/mc:latest \
-        --pod-running-timeout=60s \
-        --command -- sh -c "mc alias set store http://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1 \
-            && mc mb --ignore-existing store/loki \
+        --pod-running-timeout=180s \
+        --command -- sh -c "mc --insecure alias set store https://seaweedfs:8333 '${SEAWEEDFS_ACCESS_KEY}' '${SEAWEEDFS_SECRET_KEY}' 2>&1 \
+            && mc --insecure mb --ignore-existing store/loki \
             && echo '✅ Bucket loki ready'"
     kubectl --context "${CONTEXT_NAME}" -n grafana wait pod/loki-bucket-init \
-        --for=jsonpath='{.status.phase}'=Succeeded --timeout=60s \
+        --for=jsonpath='{.status.phase}'=Succeeded --timeout=180s \
         && kubectl --context "${CONTEXT_NAME}" -n grafana logs pod/loki-bucket-init \
-        || echo "  ⚠️  Bucket init may have failed — verify: kubectl run mc ... mc mb store/loki"
+        || echo "  ⚠️  Bucket init may have failed — verify: kubectl run mc ... mc --insecure mb store/loki"
     kubectl --context "${CONTEXT_NAME}" -n grafana delete pod loki-bucket-init --ignore-not-found
 
     echo "📊 Installing Loki ${LOKI_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
     helm_upgrade_install loki oci://ghcr.io/grafana-community/helm-charts/loki \
         grafana "${CONTEXT_NAME}" "${LOKI_CHART_VERSION}" \
         --values "${GIT_REPO_ROOT}/monitoring/loki/loki-values.yaml" \
-        --set "loki.storage.s3.accessKeyId=${RUSTFS_ROOT_USER}" \
-        --set "loki.storage.s3.secretAccessKey=${RUSTFS_ROOT_PASSWORD}"
+        --set "loki.storage.s3.accessKeyId=${SEAWEEDFS_ACCESS_KEY}" \
+        --set "loki.storage.s3.secretAccessKey=${SEAWEEDFS_SECRET_KEY}"
 
     echo "📊 Installing Alloy ${ALLOY_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
     helm_upgrade_install alloy alloy \
@@ -278,22 +297,52 @@ if kubectl get ns cnpg-system &> /dev/null; then
 fi
 
     if kubectl --context "${CONTEXT_NAME}" get namespace cnpg-system &>/dev/null; then
-        echo "📊 Applying CNPG PodMonitors (operator + cluster/pooler wildcards)..."
+        echo "📊 Applying CNPG monitors and alerting rules..."
         kubectl --context "${CONTEXT_NAME}" apply \
-            -f "${GIT_REPO_ROOT}/monitoring/cnpg/cnpg-operator-podmonitor.yaml" \
+            -f "${GIT_REPO_ROOT}/monitoring/cnpg/cnpg-operator-servicemonitor.yaml" \
             -f "${GIT_REPO_ROOT}/monitoring/cnpg/cnpg-cluster-wildcard-podmonitor.yaml" \
-            -f "${GIT_REPO_ROOT}/monitoring/cnpg/cnpg-pooler-wildcard-podmonitor.yaml"
+            -f "${GIT_REPO_ROOT}/monitoring/cnpg/cnpg-pooler-wildcard-podmonitor.yaml" \
+            -f "${GIT_REPO_ROOT}/monitoring/cnpg/cnpg-backup-alerts.yaml"
+    fi
+
+    # Wire revocation-exporter (host container) into monitoring namespace — hub only
+    if [[ "${region}" == "${HUB_REGION}" ]]; then
+        echo "🔍 Wiring revocation exporter into monitoring namespace..."
+        HOST_IP=$(hostname -I | awk '{print $1}')
+        HOST_IP="${HOST_IP}" envsubst '${HOST_IP}' \
+            < "${GIT_REPO_ROOT}/revocation-exporter/k8s/service.yaml.tpl" \
+            | kubectl --context "${CONTEXT_NAME}" apply -f -
+        kubectl --context "${CONTEXT_NAME}" apply \
+            -f "${GIT_REPO_ROOT}/revocation-exporter/k8s/servicemonitor.yaml" \
+            -f "${GIT_REPO_ROOT}/revocation-exporter/k8s/prometheusrule.yaml"
+        echo "✅ Revocation exporter monitoring wired"
     fi
 
     if TRAEFIK_LB_IP=$(get_traefik_lb_ip "${CONTEXT_NAME}" 30); then
         TRAEFIK_IP_DASHED=$(ip_to_dashed "${TRAEFIK_LB_IP}")
+
+        echo "📜 Issuing TLS certificate for monitoring Grafana..."
+        TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
+        envsubst '${TRAEFIK_IP_DASHED}' \
+            < "${GIT_REPO_ROOT}/monitoring/grafana/certificate-grafana-monitoring.yaml.tpl" \
+            | kubectl --context "${CONTEXT_NAME}" apply -f -
+        kubectl wait --context "${CONTEXT_NAME}" --timeout=60s \
+            --for=condition=Ready certificate/grafana-monitoring-cert -n grafana
+
+        echo "📈 Applying monitoring Grafana instance (OIDC + HTTPS)..."
+        TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
+        AUTHELIA_HOST="${AUTHELIA_HOST}" AUTHELIA_PORT="${AUTHELIA_PORT}" \
+        envsubst '${TRAEFIK_IP_DASHED} ${AUTHELIA_HOST} ${AUTHELIA_PORT}' \
+            < "${GIT_REPO_ROOT}/monitoring/grafana/grafana_instance.yaml.tpl" \
+            | kubectl --context "${CONTEXT_NAME}" apply -f -
+
         TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
             < "${GIT_REPO_ROOT}/monitoring/grafana/ingressroute.yaml.tpl" \
             | kubectl --context "${CONTEXT_NAME}" apply -f -
         echo "-----------------------------------------------------------------------------------------------------------------"
         echo " 📈 Grafana is available at:"
-        echo " http://grafana.${TRAEFIK_IP_DASHED}.sslip.io"
-        echo " The default password for the user admin is 'admin'."
+        echo " https://grafana.${TRAEFIK_IP_DASHED}.sslip.io"
+        echo " Login via Authelia OIDC (rbr-admin@example.com / rbr-ver-admin@example.com)."
         echo "-----------------------------------------------------------------------------------------------------------------"
     else
         echo "⚠️  Traefik not found in ${CONTEXT_NAME} — falling back to port-forward"

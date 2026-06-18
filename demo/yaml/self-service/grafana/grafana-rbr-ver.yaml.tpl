@@ -18,20 +18,20 @@ spec:
       max_connections: "0"
     "auth.generic_oauth":
       enabled: "true"
-      name: "Dex"
+      name: "Authelia"
       allow_sign_up: "true"
       client_id: "grafana-rbr-ver"
       client_secret: ""
       scopes: "openid email profile groups"
-      auth_url: "https://${DEX_HOST}:${DEX_PORT}/dex/auth"
-      token_url: "https://${DEX_HOST}:${DEX_PORT}/dex/token"
-      api_url: "https://${DEX_HOST}:${DEX_PORT}/dex/userinfo"
+      auth_url: "https://${AUTHELIA_HOST}:${AUTHELIA_PORT}/api/oidc/authorization"
+      token_url: "https://${AUTHELIA_HOST}:${AUTHELIA_PORT}/api/oidc/token"
+      api_url: "https://${AUTHELIA_HOST}:${AUTHELIA_PORT}/api/oidc/userinfo"
       groups_attribute_path: "groups"
       org_attribute_path: "groups"
       org_mapping: "rbr-db-admin:rbr:Admin rbr-ver-db-admin:rbr:Editor"
       allowed_groups: "rbr-db-admin,rbr-ver-db-admin"
       role_attribute_strict: "false"
-      tls_client_ca_file: "/etc/ssl/dex-ca/ca-chain.pem"
+      tls_client_ca_file: "/etc/ssl/authelia-ca/ca-chain.pem"
   deployment:
     spec:
       template:
@@ -39,22 +39,22 @@ spec:
           nodeSelector:
             node-role.kubernetes.io/infra: ""
           initContainers:
-            - name: install-dex-ca
+            - name: install-authelia-ca
               image: docker.io/grafana/grafana:12.4.1
               command:
                 - sh
                 - -c
-                - "cp /etc/ssl/certs/ca-certificates.crt /shared-ssl-certs/ca-certificates.crt && cat /etc/ssl/dex-ca/ca-chain.pem >> /shared-ssl-certs/ca-certificates.crt"
+                - "cp /etc/ssl/certs/ca-certificates.crt /shared-ssl-certs/ca-certificates.crt && cat /etc/ssl/authelia-ca/ca-chain.pem >> /shared-ssl-certs/ca-certificates.crt"
               volumeMounts:
-                - name: dex-ca
-                  mountPath: /etc/ssl/dex-ca
+                - name: authelia-ca
+                  mountPath: /etc/ssl/authelia-ca
                   readOnly: true
                 - name: shared-ssl-certs
                   mountPath: /shared-ssl-certs
           volumes:
-            - name: dex-ca
+            - name: authelia-ca
               configMap:
-                name: dex-ca-cert
+                name: authelia-ca-cert
             - name: shared-ssl-certs
               emptyDir: {}
           containers:
@@ -66,8 +66,8 @@ spec:
                       name: grafana-rbr-ver-oauth
                       key: client-secret
               volumeMounts:
-                - name: dex-ca
-                  mountPath: /etc/ssl/dex-ca
+                - name: authelia-ca
+                  mountPath: /etc/ssl/authelia-ca
                   readOnly: true
                 - name: shared-ssl-certs
                   mountPath: /etc/ssl/certs

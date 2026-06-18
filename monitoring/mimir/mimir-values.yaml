@@ -11,13 +11,21 @@ mimir:
   structuredConfig:
     ingest_storage:
       enabled: false
+    ingester:
+      # mimir-distributed 6.x enables ingest storage by default and ships
+      # push_grpc_method_enabled=false. We run the classic architecture
+      # (ingest_storage + kafka disabled), so the Push gRPC method must be
+      # re-enabled or the ingester fails config validation on startup.
+      push_grpc_method_enabled: true
     common:
       storage:
         backend: s3
         s3:
           endpoint: objectstore-local.mimir.svc.cluster.local:9000
           region: us-east-1
-          insecure: true
+          insecure: false
+          http:
+            tls_ca_path: /etc/ssl/step-ca/ca-certificates.crt
     blocks_storage:
       s3:
         bucket_name: mimir-blocks
@@ -57,3 +65,13 @@ tolerations:
   - key: node-role.kubernetes.io/infra
     operator: Exists
     effect: NoSchedule
+
+global:
+  extraVolumes:
+    - name: step-ca-bundle
+      configMap:
+        name: step-ca-external-bundle
+  extraVolumeMounts:
+    - name: step-ca-bundle
+      mountPath: /etc/ssl/step-ca
+      readOnly: true

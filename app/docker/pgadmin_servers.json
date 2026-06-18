@@ -1,0 +1,26 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Demo (via PgBouncer)",
+      "Group": "Demo",
+      "Host": "pgbouncer",
+      "Port": 5432,
+      "MaintenanceDB": "demo",
+      "Username": "app",
+      "SSLMode": "prefer",
+      "PassFile": "/pgadmin4/pgpass",
+      "Comment": "Demo app database via PgBouncer session pooler"
+    },
+    "2": {
+      "Name": "Demo (direct PG)",
+      "Group": "Demo",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "demo",
+      "Username": "postgres",
+      "SSLMode": "prefer",
+      "PassFile": "/pgadmin4/pgpass",
+      "Comment": "Direct PostgreSQL connection (superuser)"
+    }
+  }
+}

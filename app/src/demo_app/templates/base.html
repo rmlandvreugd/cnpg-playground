@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Demo App{% endblock %}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <nav>
+        <div class="nav-brand">Demo App</div>
+        <div class="nav-links">
+            <a href="/">Home</a>
+            <a href="/tasks">Tasks</a>
+            <a href="/api/v1/tasks">API</a>
+            <a href="/health">Health</a>
+            <a href="/metrics">Metrics</a>
+        </div>
+    </nav>
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+    <footer>
+        <p>Demo App v{{ version | default('0.1.0') }} &mdash; Litestar + CNPG</p>
+    </footer>
+</body>
+</html>

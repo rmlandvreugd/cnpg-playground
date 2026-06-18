@@ -60,6 +60,9 @@ for region in "${REGIONS[@]}"; do
 
     echo "🗑️  Removing Grafana CRs, datasources, and dashboards..."
     if kubectl --context "${CONTEXT_NAME}" get crd grafanas.grafana.integreatly.org &>/dev/null; then
+        # Delete Grafana instance CR (both namespaces — default was used before namespace was set in tpl)
+        kubectl --context "${CONTEXT_NAME}" delete grafana grafana -n grafana --ignore-not-found
+        kubectl --context "${CONTEXT_NAME}" delete grafana grafana -n default --ignore-not-found
         kubectl kustomize "${GIT_REPO_ROOT}/monitoring/grafana/" | \
             kubectl --context "${CONTEXT_NAME}" delete --ignore-not-found -f -
     else

@@ -74,12 +74,54 @@ for region in "${REGIONS[@]}"; do
     fi
 done
 
+ENCRYPTION_KEY_FILE="${GIT_REPO_ROOT}/k8s/encryption/secretbox.key"
+if [[ -f "${ENCRYPTION_KEY_FILE}" ]]; then
+    echo "🗑️  Removing encryption key..."
+    rm -f "${ENCRYPTION_KEY_FILE}"
+fi
+RENDERED_CLUSTER_CONFIG="${GIT_REPO_ROOT}/k8s/kind-cluster.yaml"
+if [[ -f "${RENDERED_CLUSTER_CONFIG}" ]]; then
+    rm -f "${RENDERED_CLUSTER_CONFIG}"
+fi
+
 echo "--------------------------------------------------"
 echo "🔥 Tearing down shared services..."
 echo "--------------------------------------------------"
 "${SCRIPT_DIR}/step-ca-teardown.sh"
 "${SCRIPT_DIR}/vault-teardown.sh"
-"${SCRIPT_DIR}/dex-teardown.sh"
+"${SCRIPT_DIR}/authelia-teardown.sh"
+
+# Tear down SeaweedFS sidecar containers (worker → webdav → admin) before main container
+for sidecar in "${SEAWEEDFS_WORKER_CONTAINER_NAME}" "${SEAWEEDFS_WEBDAV_CONTAINER_NAME}" "${SEAWEEDFS_ADMIN_CONTAINER_NAME}"; do
+    if $CONTAINER_PROVIDER ps -a --format '{{.Names}}' | grep -q "^${sidecar}$"; then
+        echo "🗑️  Removing SeaweedFS sidecar container '${sidecar}'..."
+        $CONTAINER_PROVIDER rm -f "${sidecar}" > /dev/null
+    else
+        echo "🔷 SeaweedFS sidecar container '${sidecar}' not found, skipping."
+    fi
+done
+
+# Tear down SeaweedFS (shared Loki object store)
+if $CONTAINER_PROVIDER ps -a --format '{{.Names}}' | grep -q "^${SEAWEEDFS_CONTAINER_NAME}$"; then
+    echo "🗑️  Removing SeaweedFS container '${SEAWEEDFS_CONTAINER_NAME}'..."
+    $CONTAINER_PROVIDER rm -f "${SEAWEEDFS_CONTAINER_NAME}" > /dev/null
+else
+    echo "🔷 SeaweedFS container '${SEAWEEDFS_CONTAINER_NAME}' not found, skipping."
+fi
+if $CONTAINER_PROVIDER volume inspect "${SEAWEEDFS_CONTAINER_NAME}" > /dev/null 2>&1; then
+    echo "🗑️  Removing SeaweedFS data volume '${SEAWEEDFS_CONTAINER_NAME}'..."
+    $CONTAINER_PROVIDER volume rm "${SEAWEEDFS_CONTAINER_NAME}" > /dev/null
+else
+    echo "🔷 SeaweedFS data volume '${SEAWEEDFS_CONTAINER_NAME}' not found, skipping."
+fi
+
+# Tear down revocation exporter (host container, no volume)
+if $CONTAINER_PROVIDER ps -a --format '{{.Names}}' | grep -q "^${REVOCATION_EXPORTER_CONTAINER_NAME}$"; then
+    echo "🗑️  Removing revocation exporter container '${REVOCATION_EXPORTER_CONTAINER_NAME}'..."
+    $CONTAINER_PROVIDER rm -f "${REVOCATION_EXPORTER_CONTAINER_NAME}" > /dev/null
+else
+    echo "🔷 Revocation exporter container '${REVOCATION_EXPORTER_CONTAINER_NAME}' not found, skipping."
+fi
 
 echo ""
 echo "✅ Cleanup complete!"

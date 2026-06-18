@@ -1,0 +1,24 @@
+apiVersion: operator.tigera.io/v1
+kind: Installation
+metadata:
+  name: default
+spec:
+  registry: quay.io/
+  controlPlaneReplicas: 1
+  controlPlaneNodeSelector:
+    kubernetes.io/os: linux
+    node-role.kubernetes.io/control-plane: ""
+  controlPlaneTolerations:
+    - effect: NoExecute
+      operator: Exists
+    - effect: NoSchedule
+      operator: Exists
+  nodeMetricsPort: 9091
+  typhaMetricsPort: 9092
+  calicoNetwork:
+    ipPools:
+      - blockSize: 26
+        cidr: 10.244.0.0/16
+        encapsulation: VXLANCrossSubnet
+        natOutgoing: Enabled
+        nodeSelector: all()

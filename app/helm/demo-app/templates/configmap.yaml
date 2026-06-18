@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "demo-app.fullname" . }}
+  labels:
+    {{- include "demo-app.labels" . | nindent 4 }}
+data:
+  DEMO_APP_DB_HOST: {{ .Values.database.host | quote }}
+  DEMO_APP_DB_PORT: {{ .Values.database.port | quote }}
+  DEMO_APP_DB_NAME: {{ .Values.database.name | quote }}
+  # DEMO_APP_DB_USER is intentionally NOT here: it varies by credentialsMode
+  # (static value vs. rotating Secret), so it is set inline on the containers.
+  DEMO_APP_DB_SCHEMA: {{ .Values.database.schema | quote }}
+  DEMO_APP_APP_VERSION: {{ .Values.app.version | quote }}
+  DEMO_APP_DEBUG: {{ .Values.app.debug | quote }}
+  DEMO_APP_LOG_LEVEL: {{ .Values.app.logLevel | quote }}
+  DEMO_APP_TRACING_ENABLED: {{ .Values.observability.tracing.enabled | quote }}
+  DEMO_APP_OTLP_ENDPOINT: {{ .Values.observability.tracing.otlpEndpoint | quote }}
+  DEMO_APP_METRICS_ENABLED: {{ .Values.observability.metrics.enabled | quote }}
+  LITESTAR_APP: "demo_app.main:create_app"

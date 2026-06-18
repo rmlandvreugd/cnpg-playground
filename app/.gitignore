@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+*.egg-info/
+dist/
+build/
+.uv/
+# uv.lock is intentionally committed: the Dockerfiles COPY it for reproducible,
+# pinned builds, so a clean clone must contain it.
+
+# Docker Compose volumes
+pgdata/

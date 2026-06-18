@@ -5,7 +5,7 @@ metadata:
   namespace: pgadmin
 spec:
   entryPoints:
-    - web
+    - websecure
   routes:
     - kind: Rule
       match: Host(`pgadmin.${TRAEFIK_IP_DASHED}.sslip.io`)
