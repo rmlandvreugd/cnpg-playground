@@ -299,6 +299,17 @@ EOF
         password="${VDE_ADMIN_PASS}"
     echo "✅ VDE admin role created; password stored at cnpg/rbr/ver/vde-admin"
 
+    echo "🔑 Creating Vault DB config PostgreSQL role (rbr_ver_vde_config)..."
+    VDE_CONFIG_PASS=$(openssl rand -hex 32)
+    psql_primary "
+        CREATE ROLE rbr_ver_vde_config WITH LOGIN CREATEROLE PASSWORD '${VDE_CONFIG_PASS}';
+        GRANT CONNECT ON DATABASE max TO rbr_ver_vde_config;
+        GRANT rbr_ver_ddl_owner  TO rbr_ver_vde_config WITH ADMIN OPTION;
+        GRANT rbr_ver_ddl_admin  TO rbr_ver_vde_config WITH ADMIN OPTION;
+        GRANT rbr_ver_ddl_reader TO rbr_ver_vde_config WITH ADMIN OPTION;
+    "
+    echo "✅ Vault DB config role created (password will be rotated by Vault)"
+
     # --- Vault Database Secrets Engine ---
     echo "🗄️  Configuring Vault Database Secrets Engine..."
     _vcmd secrets enable database 2>/dev/null \
@@ -308,26 +319,29 @@ EOF
         plugin_name="postgresql-database-plugin" \
         connection_url="postgresql://{{username}}:{{password}}@verstappen-rbr-ver-db.${POSTGRES_IP_DASHED}.sslip.io:5432/max?sslmode=require" \
         allowed_roles="rbr-db-admin,rbr-ver-db-admin,rbr-ver-db-readonly" \
-        username="rbr_ver_vde_admin" \
-        password="${VDE_ADMIN_PASS}"
+        username="rbr_ver_vde_config" \
+        password="${VDE_CONFIG_PASS}"
+
+    _vcmd write -f database/rotate-root/rbr-ver-max
+    echo "✅ Root credential rotated — config password is now Vault-owned"
 
     _vcmd write database/roles/rbr-db-admin \
         db_name="rbr-ver-max" \
-        creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}' IN ROLE rbr_ver_ddl_admin; GRANT \"{{name}}\" TO rbr_ver_vde_admin;" \
+        creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}' IN ROLE rbr_ver_ddl_admin; GRANT \"{{name}}\" TO rbr_ver_vde_config;" \
         revocation_statements="REASSIGN OWNED BY \"{{name}}\" TO rbr_ver_ddl_owner; DROP OWNED BY \"{{name}}\"; DROP ROLE IF EXISTS \"{{name}}\";" \
         default_ttl="1h" \
         max_ttl="4h"
 
     _vcmd write database/roles/rbr-ver-db-admin \
         db_name="rbr-ver-max" \
-        creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}' IN ROLE rbr_ver_ddl_admin; GRANT \"{{name}}\" TO rbr_ver_vde_admin;" \
+        creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}' IN ROLE rbr_ver_ddl_admin; GRANT \"{{name}}\" TO rbr_ver_vde_config;" \
         revocation_statements="REASSIGN OWNED BY \"{{name}}\" TO rbr_ver_ddl_owner; DROP OWNED BY \"{{name}}\"; DROP ROLE IF EXISTS \"{{name}}\";" \
         default_ttl="1h" \
         max_ttl="4h"
 
     _vcmd write database/roles/rbr-ver-db-readonly \
         db_name="rbr-ver-max" \
-        creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}' IN ROLE rbr_ver_ddl_reader; GRANT \"{{name}}\" TO rbr_ver_vde_admin;" \
+        creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}' IN ROLE rbr_ver_ddl_reader; GRANT \"{{name}}\" TO rbr_ver_vde_config;" \
         revocation_statements="DROP ROLE IF EXISTS \"{{name}}\";" \
         default_ttl="1h" \
         max_ttl="4h"
