@@ -34,12 +34,6 @@ spec:
       owner: app
       secret:
         name: pg-local-app
-      postInitApplicationSQL:
-        - CREATE ROLE readonly LOGIN
-        - GRANT CONNECT ON DATABASE app TO readonly
-        - GRANT USAGE ON SCHEMA public TO readonly
-        - GRANT SELECT ON ALL TABLES IN SCHEMA public TO readonly
-        - ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO readonly
 
   managed:
     roles:
@@ -50,13 +44,6 @@ spec:
       connectionLimit: -1
       passwordSecret:
         name: pg-local-app
-    - name: readonly
-      ensure: present
-      login: true
-      inherit: true
-      connectionLimit: -1
-      passwordSecret:
-        name: pg-local-readonly
 
   certificates:
     serverTLSSecret: pg-local-server-tls

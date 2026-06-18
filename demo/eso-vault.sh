@@ -14,10 +14,10 @@ MODE="${2:-}"
 usage() {
     echo "Usage: $0 <setup|rotate|verify|connect|connect-mtls|teardown> local [target]"
     echo "  setup   local                          — seed Vault + deploy ESO-backed CNPG cluster"
-    echo "  rotate  local <superuser|app|readonly> — rotate a credential in Vault + force ESO sync"
-    echo "  verify  local <superuser|app|readonly> — test psql connectivity with current credentials"
-    echo "  connect      local <superuser|app|readonly> — print external psql for the -t (TLS-term, password) endpoint"
-    echo "  connect-mtls local <superuser|app|readonly> — print external psql for the -p (passthrough, cert-auth) endpoint"
+    echo "  rotate  local <superuser|app> — rotate a credential in Vault + force ESO sync"
+    echo "  verify  local <superuser|app> — test psql connectivity with current credentials"
+    echo "  connect      local <superuser|app> — print external psql for the -t (TLS-term, password) endpoint"
+    echo "  connect-mtls local <superuser|app> — print external psql for the -p (passthrough, cert-auth) endpoint"
     echo "  teardown local                         — remove demo-local-db ns + Vault KV paths"
     exit 1
 }
@@ -131,9 +131,6 @@ setup)
     _vcmd kv put cnpg/pg-local/app \
         username=app \
         password="$(random_password)"
-    _vcmd kv put cnpg/pg-local/readonly \
-        username=readonly \
-        password="$(random_password)"
     echo "✅ Vault credentials written"
 
     echo "📁 Creating namespace ${CNPG_DEMO_NAMESPACE}..."
@@ -143,14 +140,14 @@ setup)
         | kubectl apply --context "${LOCAL_CONTEXT}" -f -
 
     echo "📋 Applying ExternalSecrets..."
-    for es in superuser app readonly; do
+    for es in superuser app; do
         kubectl apply \
             --context "${LOCAL_CONTEXT}" \
             -f "${DEMO_YAML}/local/externalsecret-pg-local-${es}.yaml"
     done
 
     echo "⏳ Waiting for ExternalSecrets to sync..."
-    for es in superuser app readonly; do
+    for es in superuser app; do
         wait_for_external_secret "pg-local-${es}" "${CNPG_DEMO_NAMESPACE}"
     done
 
@@ -227,14 +224,14 @@ setup)
     echo ""
     echo "✅ ESO demo setup complete!"
     echo "   Cluster: pg-local  Namespace: ${CNPG_DEMO_NAMESPACE}"
-    echo "   Credentials managed by Vault at cnpg/pg-local/{superuser,app,readonly}"
+    echo "   Credentials managed by Vault at cnpg/pg-local/{superuser,app}"
     ;;
 
 rotate)
     TARGET="${3:-}"
     case "${TARGET}" in
-        superuser|app|readonly) ;;
-        *) echo "❌ target must be one of: superuser app readonly"; usage ;;
+        superuser|app) ;;
+        *) echo "❌ target must be one of: superuser app"; usage ;;
     esac
 
     echo "🔄 Rotating '${TARGET}' credential in Vault..."
@@ -271,8 +268,8 @@ rotate)
 verify)
     TARGET="${3:-}"
     case "${TARGET}" in
-        superuser|app|readonly) ;;
-        *) echo "❌ target must be one of: superuser app readonly"; usage ;;
+        superuser|app) ;;
+        *) echo "❌ target must be one of: superuser app"; usage ;;
     esac
     verify_connectivity "${TARGET}"
     ;;
@@ -304,7 +301,7 @@ teardown)
         --ignore-not-found
 
     echo "🗑️ Deleting Vault KV paths for pg-local..."
-    for cred in superuser app readonly; do
+    for cred in superuser app; do
         _vcmd kv delete "cnpg/pg-local/${cred}" 2>/dev/null \
             || echo "  cnpg/pg-local/${cred} not found, skipping"
     done
@@ -317,8 +314,8 @@ teardown)
 connect)
     TARGET="${3:-}"
     case "${TARGET}" in
-        superuser|app|readonly) ;;
-        *) echo "❌ target must be one of: superuser app readonly"; usage ;;
+        superuser|app) ;;
+        *) echo "❌ target must be one of: superuser app"; usage ;;
     esac
     DB="app"; [ "${TARGET}" = "superuser" ] && DB="postgres"
 
@@ -343,8 +340,8 @@ connect)
 connect-mtls)
     TARGET="${3:-}"
     case "${TARGET}" in
-        superuser|app|readonly) ;;
-        *) echo "❌ target must be one of: superuser app readonly"; usage ;;
+        superuser|app) ;;
+        *) echo "❌ target must be one of: superuser app"; usage ;;
     esac
     DB="app"; [ "${TARGET}" = "superuser" ] && DB="postgres"
     ROLE="${TARGET}"; [ "${TARGET}" = "superuser" ] && ROLE="postgres"
