@@ -18,7 +18,7 @@ graph TB
         subgraph External["External Services (Docker Containers)"]
             StepCA["🔐 step-ca<br/>Root CA<br/>:8443"]
             Vault["🗝️ Vault<br/>Secrets & PKI<br/>:8200"]
-            Dex["👤 Dex<br/>OIDC Provider<br/>:5556"]
+            Authelia["👤 Authelia<br/>OIDC Provider<br/>:9091"]
             RustFS["📦 RustFS<br/>S3 Object Store<br/>:9000"]
         end
     end
@@ -26,10 +26,13 @@ graph TB
     subgraph K8s["Kind Cluster (local region)"]
         direction TB
         subgraph Infra["Infrastructure Layer"]
+            Calico["🕸️ Calico CNI<br/>(Tigera Operator)"]
             Traefik["🔀 Traefik<br/>Ingress Controller"]
             CertMgr["📜 cert-manager<br/>+ trust-manager"]
             ESO["🔌 External Secrets<br/>Operator"]
             MetalLB["⚖️ MetalLB<br/>Load Balancer"]
+            Caretta["🕸️ Caretta<br/>Network Observability"]
+            Radar["📡 Radar"]
         end
 
         subgraph DBLayer["Database Layer"]
@@ -42,7 +45,7 @@ graph TB
         end
 
         subgraph ObsLayer["Observability Layer"]
-            Prom["📊 Prometheus<br/>v3.10.0"]
+            Prom["📊 Prometheus<br/>v3.11.3"]
             Mimir["📈 Mimir<br/>Long-term Metrics"]
             Loki["📝 Loki<br/>Log Aggregation"]
             Tempo["🔍 Tempo<br/>Distributed Tracing"]
@@ -55,7 +58,7 @@ graph TB
     StepCA -->|TLS certs| Vault
     Vault -->|PKI| CertMgr
     Vault -->|AppRole| ESO
-    Dex -->|OIDC| Vault
+    Authelia -->|OIDC| Vault
     RustFS -->|S3 backups| Barman
     RustFS -->|S3 storage| Mimir
     RustFS -->|S3 storage| Loki
@@ -93,16 +96,18 @@ flowchart TD
     P0 --> P0B["Vault (Secrets + PKI)"]
     P0 --> P0C["Vault PKI Setup"]
     P0 --> P0D["Vault ESO AppRole"]
-    P0 --> P0E["Dex (OIDC)"]
+    P0 --> P0E["Authelia (OIDC)"]
 
     A --> P1["Phase 1: Cluster Provisioning"]
     P1 --> P1A["Kind Cluster Creation<br/>(7 nodes: 1 control-plane + 6 workers)"]
+    P1 --> P1A2["Calico CNI<br/>(Tigera Operator)"]
     P1 --> P1B["RustFS S3 Container"]
     P1 --> P1C["MetalLB (Load Balancer)"]
     P1 --> P1D["cert-manager + trust-manager"]
     P1 --> P1E["External Secrets Operator"]
     P1 --> P1F["Traefik Ingress Controller"]
     P1 --> P1G["Wire step-ca & Vault<br/>into K8s via Services/Endpoints"]
+    P1 --> P1H["Caretta + Radar<br/>(network observability)"]
 
     A --> P2["Phase 2: Secret Distribution"]
     P2 --> P2A["RustFS credentials<br/>to all clusters"]
@@ -120,7 +125,8 @@ flowchart TD
 
 **Key outcomes:**
 - A 7-node Kind cluster with labeled node pools (control-plane, infra, app, postgres)
-- External services (step-ca, Vault, Dex, RustFS) running as Docker containers, wired into K8s via headless Services/Endpoints
+- External services (step-ca, Vault, Authelia, RustFS) running as Docker containers, wired into K8s via headless Services/Endpoints
+- Calico CNI (via Tigera Operator) providing pod networking, with Caretta + Radar for network observability
 - Full 3-tier PKI: step-ca Root → step-ca Intermediate → Vault Intermediate → leaf certs
 - cert-manager ClusterIssuer for Vault PKI, trust-manager distributing CA bundles
 - ESO ClusterSecretStore with Vault AppRole authentication
@@ -180,7 +186,7 @@ flowchart TD
 
 **Key outcomes:**
 - Full observability stack: metrics (Prometheus → Mimir), logs (Alloy → Loki), traces (OTel → Tempo)
-- Grafana with 5 datasources and 10 pre-configured dashboards
+- Grafana with 5 datasources (Prometheus [default], Mimir, Mimir-Tempo, Loki, Tempo) and 12 pre-configured dashboards
 - All long-term storage backed by RustFS S3
 - Hub-and-spoke architecture (hub region runs Mimir + Tempo; spokes push via Traefik IngressRoutes)
 
@@ -188,9 +194,9 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    E["demo/eso-vault.sh setup local"] --> E1["Seed Vault KV paths<br/>cnpg/pg-local/{superuser,app,readonly}"]
+    E["demo/eso-vault.sh setup local"] --> E1["Seed Vault KV paths<br/>cnpg/pg-local/{superuser,app}"]
     E --> E2["Create demo-local-db namespace"]
-    E --> E3["Apply ExternalSecrets<br/>(3 credential types)"]
+    E --> E3["Apply ExternalSecrets<br/>(2 credential types)"]
     E --> E4["Issue mTLS certificates<br/>(server, replication, tls-term,<br/>pooler-client, pooler-server)"]
     E --> E5["Create PgBouncer auth secret"]
     E --> E6["Apply TLSOption (mtls-verify)"]
@@ -205,7 +211,7 @@ flowchart TD
 ```
 
 **Key outcomes:**
-- PostgreSQL credentials (superuser, app, readonly) managed by Vault and synced to K8s via ESO
+- PostgreSQL credentials (superuser, app) managed by Vault and synced to K8s via ESO
 - Full mTLS infrastructure: server, replication, and client certificates issued by cert-manager via Vault PKI
 - Two PostgreSQL access patterns via Traefik:
   - **TLS termination**: `pg-local-demo-local-db-t.<IP>.sslip.io:5432`
@@ -226,7 +232,7 @@ graph TD
     IntCA -->|signs| VaultIntCA
 
     VaultIntCA -->|issues| VaultTLS["Vault TLS cert"]
-    VaultIntCA -->|issues| DexTLS["Dex TLS cert"]
+    VaultIntCA -->|issues| AutheliaTLS["Authelia TLS cert"]
     VaultIntCA -->|issues| TraefikDashTLS["Traefik Dashboard cert"]
     VaultIntCA -->|issues| ClusterCerts["In-cluster TLS certs<br/>(via cert-manager)"]
     VaultIntCA -->|issues| MTLSCerts["mTLS client certs<br/>(via cert-manager)"]
@@ -281,7 +287,6 @@ sequenceDiagram
     Vault->>ESO: AppRole authentication
     ESO->>Vault: Read cnpg/pg-local/superuser
     ESO->>Vault: Read cnpg/pg-local/app
-    ESO->>Vault: Read cnpg/pg-local/readonly
     ESO->>K8s: Create/update Secrets
     K8s->>CNPG: Reference secrets
     CNPG->>PG: Bootstrap cluster with<br/>Vault-managed credentials
@@ -347,20 +352,24 @@ flowchart LR
 | Node | Role | Labels |
 |------|------|--------|
 | k8s-local-control-plane | control-plane | `node-role.kubernetes.io/control-plane` |
-| k8s-local-worker | worker | `node-role.kubernetes.io/infra`, `node-role.kubernetes.io/app` |
-| k8s-local-worker2 | worker | `node-role.kubernetes.io/app` |
+| k8s-local-worker | worker | `node-role.kubernetes.io/infra` |
+| k8s-local-worker2 | worker | `node-role.kubernetes.io/infra` |
 | k8s-local-worker3 | worker | `node-role.kubernetes.io/app` |
 | k8s-local-worker4 | worker | `node-role.kubernetes.io/postgres` |
 | k8s-local-worker5 | worker | `node-role.kubernetes.io/postgres` |
 | k8s-local-worker6 | worker | `node-role.kubernetes.io/postgres` |
 
-### Namespaces (18)
+### Application & Infrastructure Namespaces (18)
+
+> Excludes Kubernetes system namespaces (`kube-system`, `kube-public`, `kube-node-lease`, `local-path-storage`) and the unused `default` namespace.
 
 | Namespace | Purpose |
 |-----------|---------|
+| authelia | Authelia OIDC provider service wiring |
+| calico-system | Calico CNI (node, typha, kube-controllers, apiserver, whisker) |
+| caretta | Caretta network observability |
 | cert-manager | cert-manager + trust-manager (TLS/PKI) |
 | cnpg-system | CNPG operator + Barman Cloud Plugin |
-| default | pg-local cluster (basic demo) |
 | demo-local-db | pg-local cluster (ESO/Vault demo) |
 | external-secrets | External Secrets Operator |
 | grafana | Grafana Operator, Grafana, Loki, Alloy |
@@ -368,17 +377,18 @@ flowchart LR
 | mimir | Mimir (long-term metrics) |
 | otel | OTel Collector |
 | prometheus-operator | Prometheus Operator + kube-prometheus-stack |
+| radar | Radar network observability UI |
 | step-ca | step-ca service wiring |
 | tempo | Tempo (distributed tracing) |
+| tigera-operator | Tigera Operator (manages Calico) |
 | traefik | Traefik v3 ingress controller |
 | vault | Vault service wiring |
 
-### PostgreSQL Clusters (2)
+### PostgreSQL Clusters (1)
 
 | Namespace | Cluster | Instances | Primary | Pooler | Credentials |
 |-----------|---------|-----------|---------|--------|-------------|
-| default | pg-local | 3 (1P + 2R) | pg-local-1 | pooler-local-rw (2 replicas) | CNPG-managed |
-| demo-local-db | pg-local | 3 (1P + 2R) | pg-local-1 | pooler-local-rw (2 replicas) | Vault-managed via ESO |
+| demo-local-db | pg-local | 3 (1P + 2R) | pg-local-1 | pooler-local-rw (1 replica) | Vault-managed via ESO (superuser, app) |
 
 ### Key Services (LoadBalancer)
 
@@ -397,16 +407,19 @@ flowchart LR
 |---------|-----------|-------|-------------|
 | alloy | grafana | alloy-1.8.0 | v1.16.0 |
 | barman-cloud | cnpg-system | plugin-barman-cloud-0.6.0 | v0.12.0 |
+| caretta | caretta | caretta-0.0.16 | v0.0.16 |
 | cert-manager | cert-manager | cert-manager-v1.20.2 | v1.20.2 |
 | cnpg-operator | cnpg-system | cloudnative-pg-0.28.0 | 1.29.0 |
 | external-secrets | external-secrets | external-secrets-2.4.1 | v2.4.1 |
 | grafana-operator | grafana | grafana-operator-5.22.2 | v5.22.2 |
-| kube-prometheus-stack | prometheus-operator | kube-prometheus-stack-83.6.0 | v0.90.1 |
+| kube-prometheus-stack | prometheus-operator | kube-prometheus-stack-86.2.3 | v0.91.0 |
 | loki | grafana | loki-13.5.0 | 3.7.1 |
-| metallb | metallb-system | metallb-0.15.3 | v0.15.3 |
-| mimir | mimir | mimir-distributed-5.7.0 | 2.16.0 |
-| otel-collector | otel | opentelemetry-collector-0.153.0 | 0.151.0 |
-| tempo | tempo | tempo-distributed-2.19.0 | 2.10.5 |
+| metallb | metallb-system | metallb-0.16.1 | v0.16.1 |
+| mimir | mimir | mimir-distributed-6.0.6 | 3.0.4 |
+| otel-collector | otel | opentelemetry-collector-0.158.2 | 0.153.0 |
+| radar | radar | radar-1.7.9 | 1.7.9 |
+| tempo | tempo | tempo-distributed-2.25.2 | 2.10.7 |
+| tigera-operator | tigera-operator | tigera-operator-v3.32.0 | v3.32.0 |
 | traefik | traefik | traefik-39.0.8 | v3.6.13 |
 | trust-manager | cert-manager | trust-manager-v0.17.1 | v0.17.1 |
 
@@ -415,15 +428,17 @@ flowchart LR
 | Container | Port | Purpose |
 |-----------|------|---------|
 | step-ca | 8443 | Root CA + Intermediate CA |
-| Vault | 8200 | Secrets management, PKI, AppRole auth |
-| Dex | 5556 | OIDC identity provider |
-| RustFS | 9000 | S3-compatible object storage |
+| vault | 8200 | Secrets management, PKI, AppRole auth |
+| authelia | 9091 | OIDC identity provider (replaces Dex) |
+| objectstore-local (RustFS) | 9000 | S3-compatible object storage |
+| revocation-exporter | — | step-ca CRL / certificate revocation metrics exporter |
 
 ### Grafana Dashboards
 
 | Dashboard | Purpose |
 |-----------|---------|
 | cloudnativepg-dashboard | CNPG cluster overview |
+| cnpg-backup-dashboard | CNPG backup status |
 | cnpg-custom-pg | Custom PostgreSQL metrics |
 | k8s-events | Kubernetes events |
 | k8s-pod-logs | Pod log viewer |
@@ -432,4 +447,5 @@ flowchart LR
 | k8s-views-pods | Pod detail views |
 | node-exporter-full | Node metrics |
 | pgaudit-dashboard | PGAudit logging |
+| pki-dashboard | PKI / certificate health |
 | traefik-traces | Traefik request tracing |
