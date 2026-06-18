@@ -20,6 +20,12 @@ graph TB
             Vault["🗝️ Vault<br/>Secrets & PKI<br/>:8200"]
             Authelia["👤 Authelia<br/>OIDC Provider<br/>:9091"]
             RustFS["📦 RustFS<br/>S3 Object Store<br/>:9000"]
+            subgraph SeaweedfsEco["📦 SeaweedFS<br/>S3 Object Store"]
+                Seaweed["📦 Data Store<br/>:8333"]
+                SeaweedAdmin["🧭 Admin UI<br/>:23646"]
+                SeaweedWebDav["🌐 WebDAV"]
+                SeawweedWorker["🔧 Maintainance<br/>Worker"]
+            end
         end
     end
 
@@ -32,11 +38,11 @@ graph TB
             ESO["🔌 External Secrets<br/>Operator"]
             MetalLB["⚖️ MetalLB<br/>Load Balancer"]
             Caretta["🕸️ Caretta<br/>Network Observability"]
+            CNPG["🐘 CNPG Operator<br/>v1.29.0"]
             Radar["📡 Radar"]
         end
 
         subgraph DBLayer["Database Layer"]
-            CNPG["🐘 CNPG Operator<br/>v1.29.0"]
             PG1["pg-local-1<br/>(Primary)"]
             PG2["pg-local-2<br/>(Replica)"]
             PG3["pg-local-3<br/>(Replica)"]
@@ -61,8 +67,8 @@ graph TB
     Authelia -->|OIDC| Vault
     RustFS -->|S3 backups| Barman
     RustFS -->|S3 storage| Mimir
-    RustFS -->|S3 storage| Loki
     RustFS -->|S3 storage| Tempo
+    Seaweed -->|S3 storage| Loki
     ESO -->|sync secrets| PG1
     ESO -->|sync secrets| PG2
     ESO -->|sync secrets| PG3
@@ -102,6 +108,7 @@ flowchart TD
     P1 --> P1A["Kind Cluster Creation<br/>(7 nodes: 1 control-plane + 6 workers)"]
     P1 --> P1A2["Calico CNI<br/>(Tigera Operator)"]
     P1 --> P1B["RustFS S3 Container"]
+    P1 --> P1B2["SeaweedFS S3 Container"]
     P1 --> P1C["MetalLB (Load Balancer)"]
     P1 --> P1D["cert-manager + trust-manager"]
     P1 --> P1E["External Secrets Operator"]
@@ -111,6 +118,7 @@ flowchart TD
 
     A --> P2["Phase 2: Secret Distribution"]
     P2 --> P2A["RustFS credentials<br/>to all clusters"]
+    P2 --> P2A2["SeaweedFS credentials<br/>to all clusters"]
 
     A --> P3["Post-Loop Configuration"]
     P3 --> P3A["Vault OIDC auth"]
@@ -170,7 +178,7 @@ flowchart TD
     M --> M8["CNPG PodMonitors"]
 
     M2 --> S3A["RustFS S3<br/>(mimir-blocks,<br/>mimir-alertmanager,<br/>mimir-ruler)"]
-    M3 --> S3B["RustFS S3<br/>(loki)"]
+    M3 --> S3B["SeaweedFS S3<br/>(loki)"]
     M4 --> S3C["RustFS S3<br/>(tempo)"]
 
     M1 -->|remoteWrite| M2
@@ -231,9 +239,12 @@ graph TD
     RootCA -->|signs| IntCA
     IntCA -->|signs| VaultIntCA
 
-    VaultIntCA -->|issues| VaultTLS["Vault TLS cert"]
-    VaultIntCA -->|issues| AutheliaTLS["Authelia TLS cert"]
+    IntCA -->|issues| VaultTLS["Vault TLS cert"]
+    IntCA -->|issues| AutheliaTLS["Authelia TLS cert"]
+    IntCA -->|issues| RustFSTLS["RustFS TLS cert"]
+    IntCA -->|issues| SeaweedFSTLS["SeaweedFS TLS cert"]
     VaultIntCA -->|issues| TraefikDashTLS["Traefik Dashboard cert"]
+    VaultIntCA -->|issues| RadarDashTLS["Radar Dashboard cert"]
     VaultIntCA -->|issues| ClusterCerts["In-cluster TLS certs<br/>(via cert-manager)"]
     VaultIntCA -->|issues| MTLSCerts["mTLS client certs<br/>(via cert-manager)"]
 
@@ -317,6 +328,7 @@ flowchart LR
         Loki["Loki"]
         Tempo["Tempo"]
         S3["RustFS S3"]
+        Seaweed["SeaweedFS S3"]
     end
 
     subgraph Visualization["Visualization"]
@@ -333,8 +345,8 @@ flowchart LR
     Alloy -->|push| Loki
     OTel -->|push| Tempo
 
+    Loki --> Seaweed
     Mimir --> S3
-    Loki --> S3
     Tempo --> S3
 
     Grafana --> Mimir
@@ -431,6 +443,8 @@ flowchart LR
 | vault | 8200 | Secrets management, PKI, AppRole auth |
 | authelia | 9091 | OIDC identity provider (replaces Dex) |
 | objectstore-local (RustFS) | 9000 | S3-compatible object storage |
+| seaweed (SeaweedFS) | 8333 | S3-compatible object storage |
+| seaweed-admin (SeaweedFS Admin) | 23646 | S3-compatible object storage |
 | revocation-exporter | — | step-ca CRL / certificate revocation metrics exporter |
 
 ### Grafana Dashboards
