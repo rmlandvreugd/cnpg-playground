@@ -110,8 +110,9 @@ setup)
     # --- Vault policies ---
     echo "📋 Writing Vault policies..."
     cat <<'EOF' | _vcmd_stdin policy write eso-rbr-ver -
-path "cnpg/data/rbr/ver/*"     { capabilities = ["read"] }
-path "cnpg/metadata/rbr/ver/*" { capabilities = ["read", "list"] }
+path "cnpg/data/rbr/ver/*"       { capabilities = ["read"] }
+path "cnpg/metadata/rbr/ver/*"   { capabilities = ["read", "list"] }
+path "database/static-creds/app" { capabilities = ["read"] }
 EOF
     cat <<'EOF' | _vcmd_stdin policy write rbr-db-admin -
 path "database/creds/rbr-db-admin"     { capabilities = ["read"] }
@@ -174,6 +175,32 @@ spec:
             key: secretId
 EOF
     echo "✅ ClusterSecretStore vault-approle-rbr ready"
+
+    echo "📋 Applying ClusterSecretStore vault-approle-rbr-db (database secrets engine)..."
+    kubectl apply --context "${LOCAL_CONTEXT}" -f - <<EOF
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: vault-approle-rbr-db
+spec:
+  provider:
+    vault:
+      server: "http://vault.vault.svc.cluster.local:${VAULT_HTTP_PORT}"
+      path: "database"
+      version: "v1"
+      auth:
+        appRole:
+          path: "approle"
+          roleRef:
+            name: vault-approle-rbr-creds
+            namespace: ${ESO_NAMESPACE}
+            key: roleId
+          secretRef:
+            name: vault-approle-rbr-creds
+            namespace: ${ESO_NAMESPACE}
+            key: secretId
+EOF
+    echo "✅ ClusterSecretStore vault-approle-rbr-db ready"
 
     # --- Seed KV credentials ---
     echo "📝 Seeding Vault KV at cnpg/rbr/ver/..."
@@ -324,6 +351,20 @@ EOF
 
     _vcmd write -f database/rotate-root/rbr-ver-max
     echo "✅ Root credential rotated — config password is now Vault-owned"
+
+    # Add 'app' to allowed_roles so the static role can be created
+    _vcmd write database/config/rbr-ver-max \
+        allowed_roles="rbr-db-admin,rbr-ver-db-admin,rbr-ver-db-readonly,app"
+
+    # Vault static role: Vault rotates the 'app' PG role password on a 24h schedule.
+    # ESO reads database/static-creds/app → verstappen-app Secret in rbr-ver.
+    # Reloader (reloader.stakater.com/auto annotation) bounces the pod on Secret change.
+    _vcmd write database/static-roles/app \
+        db_name="rbr-ver-max" \
+        username="app" \
+        rotation_period="24h" \
+        rotation_statements="ALTER ROLE \"app\" WITH PASSWORD '{{password}}'"
+    echo "✅ Vault static role 'app' configured (24h auto-rotation)"
 
     _vcmd write database/roles/rbr-db-admin \
         db_name="rbr-ver-max" \
@@ -541,14 +582,28 @@ PYEOF
 
 verify)
     echo "🔍 Verifying superuser connectivity via internal service..."
-    SU_PASS=$(kubectl get secret verstappen-superuser -n rbr-ver-db \
-        --context "${LOCAL_CONTEXT}" -o jsonpath='{.data.password}' | base64 -d)
-    SU_USER=$(kubectl get secret verstappen-superuser -n rbr-ver-db \
-        --context "${LOCAL_CONTEXT}" -o jsonpath='{.data.username}' | base64 -d)
     kubectl exec -n rbr-ver-db --context "${LOCAL_CONTEXT}" \
         "$(primary_pod)" -- \
         psql -U postgres -d max -c "SELECT current_user, version();"
-    echo "✅ Connectivity verified"
+    echo "✅ DB connectivity verified"
+
+    echo "🔍 Verifying demo-app deployment in rbr-ver..."
+    kubectl rollout status deployment/demo-app \
+        -n rbr-ver --context "${LOCAL_CONTEXT}" --timeout=60s
+    APP_PASS=$(kubectl get secret "verstappen-app" -n rbr-ver \
+        --context "${LOCAL_CONTEXT}" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || echo "")
+    if [[ -z "${APP_PASS}" ]]; then
+        echo "⚠️  verstappen-app Secret not yet synced in rbr-ver (ESO/Vault static-role may still be syncing)"
+    else
+        echo "✅ verstappen-app Secret present in rbr-ver"
+    fi
+    echo "✅ demo-app Running in rbr-ver"
+
+    TRAEFIK_IP=$(get_traefik_ip)
+    TRAEFIK_IP_DASHED=$(ip_to_dashed "${TRAEFIK_IP}")
+    echo ""
+    echo "   demo-app URL: https://demo-rbr-ver.${TRAEFIK_IP_DASHED}.sslip.io"
+    echo "   ArgoCD apps:  kubectl get applications -n argocd --context ${LOCAL_CONTEXT}"
     ;;
 
 rotate)
@@ -558,41 +613,71 @@ rotate)
         *) echo "❌ rotate target must be: app | readonly"; exit 1 ;;
     esac
 
-    echo "🔄 Rotating '${TARGET}' in Vault..."
-    _vcmd kv patch "cnpg/rbr/ver/${TARGET}" password="$(random_password)"
+    if [[ "${TARGET}" == "app" ]]; then
+        echo "🔄 Rotating 'app' via Vault static-role (database/rotate-role/app)..."
+        _vcmd write -f database/rotate-role/app
 
-    echo "⚡ Forcing ESO sync for verstappen-${TARGET}..."
-    kubectl annotate externalsecret "verstappen-${TARGET}" \
-        -n rbr-ver-db \
-        --context "${LOCAL_CONTEXT}" \
-        --overwrite \
-        force-sync="$(date +%s)"
+        echo "⚡ Forcing ESO sync for verstappen-app in rbr-ver..."
+        kubectl annotate externalsecret "verstappen-app" \
+            -n rbr-ver \
+            --context "${LOCAL_CONTEXT}" \
+            --overwrite \
+            force-sync="$(date +%s)"
 
-    echo "⏳ Waiting for Secret resourceVersion to change..."
-    OLD_VER=$(kubectl get secret "verstappen-${TARGET}" -n rbr-ver-db \
-        --context "${LOCAL_CONTEXT}" -o jsonpath='{.metadata.resourceVersion}')
-    MAX_WAIT=60; ELAPSED=0
-    while [ "${ELAPSED}" -lt "${MAX_WAIT}" ]; do
-        NEW_VER=$(kubectl get secret "verstappen-${TARGET}" -n rbr-ver-db \
+        echo "⏳ Waiting for verstappen-app Secret (rbr-ver) to update..."
+        OLD_VER=$(kubectl get secret "verstappen-app" -n rbr-ver \
+            --context "${LOCAL_CONTEXT}" -o jsonpath='{.metadata.resourceVersion}' 2>/dev/null || echo "0")
+        MAX_WAIT=60; ELAPSED=0
+        while [ "${ELAPSED}" -lt "${MAX_WAIT}" ]; do
+            NEW_VER=$(kubectl get secret "verstappen-app" -n rbr-ver \
+                --context "${LOCAL_CONTEXT}" -o jsonpath='{.metadata.resourceVersion}' 2>/dev/null || echo "0")
+            [ "${NEW_VER}" != "${OLD_VER}" ] && break
+            sleep 2; ((ELAPSED+=2))
+        done
+        [ "${ELAPSED}" -ge "${MAX_WAIT}" ] && { echo "❌ Secret did not update within ${MAX_WAIT}s"; exit 1; }
+        echo "✅ Secret updated (resourceVersion ${OLD_VER} → ${NEW_VER})"
+
+        echo "⏳ Waiting for demo-app pod restart via Reloader..."
+        kubectl rollout status deployment/demo-app \
+            -n rbr-ver --context "${LOCAL_CONTEXT}" --timeout=120s
+        echo "✅ demo-app restarted with rotated credentials"
+
+        echo "🔍 Verifying rotated credential via psql (internal)..."
+        NEW_PASS=$(kubectl get secret "verstappen-app" -n rbr-ver \
+            --context "${LOCAL_CONTEXT}" -o jsonpath='{.data.password}' | base64 -d)
+        kubectl run psql-rotate-verify --restart=Never --rm --attach \
+            --context "${LOCAL_CONTEXT}" \
+            --image=postgres:18-alpine \
+            -n rbr-ver \
+            --env="PGPASSWORD=${NEW_PASS}" \
+            -- psql -h verstappen-rw.rbr-ver-db -U "app" -d max -c "SELECT current_user;"
+        echo "✅ Rotation verified"
+    else
+        # readonly still uses KV-backed ESO (Workstream E scope: app only)
+        echo "🔄 Rotating '${TARGET}' in Vault KV..."
+        _vcmd kv patch "cnpg/rbr/ver/${TARGET}" password="$(random_password)"
+
+        echo "⚡ Forcing ESO sync for verstappen-${TARGET}..."
+        kubectl annotate externalsecret "verstappen-${TARGET}" \
+            -n rbr-ver-db \
+            --context "${LOCAL_CONTEXT}" \
+            --overwrite \
+            force-sync="$(date +%s)"
+
+        echo "⏳ Waiting for Secret resourceVersion to change..."
+        OLD_VER=$(kubectl get secret "verstappen-${TARGET}" -n rbr-ver-db \
             --context "${LOCAL_CONTEXT}" -o jsonpath='{.metadata.resourceVersion}')
-        [ "${NEW_VER}" != "${OLD_VER}" ] && break
-        sleep 2; ((ELAPSED+=2))
-    done
-    [ "${ELAPSED}" -ge "${MAX_WAIT}" ] && { echo "❌ Secret did not update within ${MAX_WAIT}s"; exit 1; }
-    echo "✅ Secret updated (resourceVersion ${OLD_VER} → ${NEW_VER})"
-
-    echo "🔍 Verifying rotated credential via psql (internal)..."
-    NEW_PASS=$(kubectl get secret "verstappen-${TARGET}" -n rbr-ver-db \
-        --context "${LOCAL_CONTEXT}" -o jsonpath='{.data.password}' | base64 -d)
-    NEW_USER=$(kubectl get secret "verstappen-${TARGET}" -n rbr-ver-db \
-        --context "${LOCAL_CONTEXT}" -o jsonpath='{.data.username}' | base64 -d)
-    kubectl run psql-rotate-verify --restart=Never --rm --attach \
-        --context "${LOCAL_CONTEXT}" \
-        --image=postgres:18-alpine \
-        -n rbr-ver \
-        --env="PGPASSWORD=${NEW_PASS}" \
-        -- psql -h verstappen-rw.rbr-ver-db -U "${NEW_USER}" -d max -c "SELECT current_user;"
-    echo "✅ Rotation verified"
+        MAX_WAIT=60; ELAPSED=0
+        while [ "${ELAPSED}" -lt "${MAX_WAIT}" ]; do
+            NEW_VER=$(kubectl get secret "verstappen-${TARGET}" -n rbr-ver-db \
+                --context "${LOCAL_CONTEXT}" -o jsonpath='{.metadata.resourceVersion}')
+            [ "${NEW_VER}" != "${OLD_VER}" ] && break
+            sleep 2; ((ELAPSED+=2))
+        done
+        [ "${ELAPSED}" -ge "${MAX_WAIT}" ] && { echo "❌ Secret did not update within ${MAX_WAIT}s"; exit 1; }
+        echo "✅ Secret updated (resourceVersion ${OLD_VER} → ${NEW_VER})"
+        echo "✅ Rotation complete"
+    fi
     ;;
 
 backup)
@@ -656,7 +741,7 @@ teardown)
         --context "${LOCAL_CONTEXT}" \
         --ignore-not-found
 
-    kubectl delete clustersecretstore vault-approle-rbr \
+    kubectl delete clustersecretstore vault-approle-rbr vault-approle-rbr-db \
         --context "${LOCAL_CONTEXT}" \
         --ignore-not-found
 
