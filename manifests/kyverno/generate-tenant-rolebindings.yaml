@@ -1,0 +1,75 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: generate-tenant-rolebindings
+  annotations:
+    policies.kyverno.io/title: Generate tenant driver-group RoleBindings
+    policies.kyverno.io/description: >-
+      For every namespace labelled capsule.clastix.io/tenant + cnpg.io/driver-group,
+      generate two scoped RoleBindings: <tenant>-<dg>-db-admin → admin and
+      <tenant>-<dg>-dev → edit. Subjects are Authelia OIDC groups (kind: Group,
+      name: oidc:<group>). Synchronize=true keeps them in sync if deleted.
+spec:
+  generateExisting: true
+  rules:
+    - name: generate-db-admin-rolebinding
+      match:
+        any:
+          - resources:
+              kinds:
+                - Namespace
+              selector:
+                matchExpressions:
+                  - key: capsule.clastix.io/tenant
+                    operator: Exists
+                  - key: cnpg.io/driver-group
+                    operator: Exists
+      generate:
+        synchronize: true
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        name: "{{request.object.metadata.labels.\"capsule.clastix.io/tenant\"}}-{{request.object.metadata.labels.\"cnpg.io/driver-group\"}}-db-admin"
+        namespace: "{{request.object.metadata.name}}"
+        data:
+          metadata:
+            labels:
+              app.kubernetes.io/managed-by: kyverno
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: ClusterRole
+            name: admin
+          subjects:
+            - apiGroup: rbac.authorization.k8s.io
+              kind: Group
+              name: "oidc:{{request.object.metadata.labels.\"capsule.clastix.io/tenant\"}}-{{request.object.metadata.labels.\"cnpg.io/driver-group\"}}-db-admin"
+
+    - name: generate-dev-rolebinding
+      match:
+        any:
+          - resources:
+              kinds:
+                - Namespace
+              selector:
+                matchExpressions:
+                  - key: capsule.clastix.io/tenant
+                    operator: Exists
+                  - key: cnpg.io/driver-group
+                    operator: Exists
+      generate:
+        synchronize: true
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        name: "{{request.object.metadata.labels.\"capsule.clastix.io/tenant\"}}-{{request.object.metadata.labels.\"cnpg.io/driver-group\"}}-dev"
+        namespace: "{{request.object.metadata.name}}"
+        data:
+          metadata:
+            labels:
+              app.kubernetes.io/managed-by: kyverno
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: ClusterRole
+            name: edit
+          subjects:
+            - apiGroup: rbac.authorization.k8s.io
+              kind: Group
+              name: "oidc:{{request.object.metadata.labels.\"capsule.clastix.io/tenant\"}}-{{request.object.metadata.labels.\"cnpg.io/driver-group\"}}-dev"

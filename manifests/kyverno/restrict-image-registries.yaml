@@ -1,0 +1,52 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-image-registries
+  annotations:
+    policies.kyverno.io/title: Restrict image registries in tenant namespaces
+    policies.kyverno.io/description: >-
+      Only allow container images from approved registries: the local Kind registry
+      (localhost:5001), ghcr.io, docker.io/cloudnative-pg, and docker.io/bitnami
+      (for pgbouncer sidecar). Start in Audit; flip to Enforce after validating all
+      workloads are pulling from approved sources. Add new registries here as needed.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: restrict-registries
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaceSelector:
+                matchExpressions:
+                  - key: capsule.clastix.io/tenant
+                    operator: Exists
+      validate:
+        message: >-
+          Images must be from an approved registry: localhost:5001, ghcr.io,
+          docker.io/cloudnative-pg, or docker.io/bitnami.
+        foreach:
+          - list: "request.object.spec.containers + request.object.spec.initContainers"
+            deny:
+              conditions:
+                all:
+                  - key: "{{element.image}}"
+                    operator: NotEquals
+                    value: "localhost:5001/*"
+                  - key: "{{element.image}}"
+                    operator: NotEquals
+                    value: "ghcr.io/*"
+                  - key: "{{element.image}}"
+                    operator: NotEquals
+                    value: "docker.io/cloudnative-pg/*"
+                  - key: "{{element.image}}"
+                    operator: NotEquals
+                    value: "cloudnative-pg/*"
+                  - key: "{{element.image}}"
+                    operator: NotEquals
+                    value: "docker.io/bitnami/*"
+                  - key: "{{element.image}}"
+                    operator: NotEquals
+                    value: "bitnami/*"

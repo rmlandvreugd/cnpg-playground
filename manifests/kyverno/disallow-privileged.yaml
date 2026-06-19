@@ -1,0 +1,63 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-privileged
+  annotations:
+    policies.kyverno.io/title: Disallow privileged containers in tenant namespaces
+    policies.kyverno.io/description: >-
+      Deny containers running as privileged, using host namespaces (hostPID/hostIPC/hostNetwork),
+      or mounting hostPath volumes in tenant namespaces. Implements Pod Security "baseline".
+      Start in Audit; flip to Enforce once cluster is clean.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: deny-privileged-containers
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaceSelector:
+                matchExpressions:
+                  - key: capsule.clastix.io/tenant
+                    operator: Exists
+      validate:
+        message: "Privileged containers are not allowed in tenant namespaces."
+        deny:
+          conditions:
+            any:
+              - key: "{{request.object.spec.containers[].securityContext.privileged | contains(@, true)}}"
+                operator: Equals
+                value: true
+              - key: "{{request.object.spec.initContainers[].securityContext.privileged | contains(@, true)}}"
+                operator: Equals
+                value: true
+              - key: "{{request.object.spec.hostPID}}"
+                operator: Equals
+                value: true
+              - key: "{{request.object.spec.hostIPC}}"
+                operator: Equals
+                value: true
+              - key: "{{request.object.spec.hostNetwork}}"
+                operator: Equals
+                value: true
+
+    - name: deny-hostpath-volumes
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaceSelector:
+                matchExpressions:
+                  - key: capsule.clastix.io/tenant
+                    operator: Exists
+      validate:
+        message: "hostPath volumes are not allowed in tenant namespaces."
+        deny:
+          conditions:
+            any:
+              - key: "{{request.object.spec.volumes[].hostPath | length(@)}}"
+                operator: GreaterThan
+                value: 0

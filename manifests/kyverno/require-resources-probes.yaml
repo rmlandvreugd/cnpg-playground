@@ -1,0 +1,85 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-resources-probes
+  annotations:
+    policies.kyverno.io/title: Require resource requests/limits and liveness/readiness probes
+    policies.kyverno.io/description: >-
+      All containers in tenant namespaces must declare CPU and memory requests+limits,
+      and must have liveness and readiness probes configured. Enforces operational
+      baseline for quota enforcement and health signalling. Start in Audit.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: require-cpu-memory-resources
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaceSelector:
+                matchExpressions:
+                  - key: capsule.clastix.io/tenant
+                    operator: Exists
+      validate:
+        message: "All containers must declare CPU and memory requests and limits."
+        foreach:
+          - list: "request.object.spec.containers"
+            deny:
+              conditions:
+                any:
+                  - key: "{{element.resources.requests.cpu | length(@)}}"
+                    operator: Equals
+                    value: 0
+                  - key: "{{element.resources.requests.memory | length(@)}}"
+                    operator: Equals
+                    value: 0
+                  - key: "{{element.resources.limits.cpu | length(@)}}"
+                    operator: Equals
+                    value: 0
+                  - key: "{{element.resources.limits.memory | length(@)}}"
+                    operator: Equals
+                    value: 0
+
+    - name: require-liveness-probe
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaceSelector:
+                matchExpressions:
+                  - key: capsule.clastix.io/tenant
+                    operator: Exists
+      validate:
+        message: "All containers must have a livenessProbe configured."
+        foreach:
+          - list: "request.object.spec.containers"
+            deny:
+              conditions:
+                all:
+                  - key: "{{element.livenessProbe}}"
+                    operator: Equals
+                    value: null
+
+    - name: require-readiness-probe
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaceSelector:
+                matchExpressions:
+                  - key: capsule.clastix.io/tenant
+                    operator: Exists
+      validate:
+        message: "All containers must have a readinessProbe configured."
+        foreach:
+          - list: "request.object.spec.containers"
+            deny:
+              conditions:
+                all:
+                  - key: "{{element.readinessProbe}}"
+                    operator: Equals
+                    value: null
