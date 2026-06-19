@@ -709,7 +709,7 @@ ${STEP_CA_INT_CERT}" \
     helm_upgrade_install argocd \
         oci://ghcr.io/argoproj/argo-helm/argo-cd \
         argocd "${CONTEXT_NAME}" "${ARGOCD_CHART_VERSION}" \
-        --set "server.service.type=ClusterIP" \
+        --values "${GIT_REPO_ROOT}/argocd/values.yaml" \
         --no-wait
 
     kubectl --context "${CONTEXT_NAME}" wait --for=condition=Available deployment/argocd-server -n argocd --timeout=300s
@@ -850,18 +850,96 @@ helm_upgrade_install gangplank \
 
 echo "✅ gangplank: https://gangplank.${HUB_TRAEFIK_IP_DASHED}.sslip.io"
 
-echo "🏗️  Applying Capsule Tenant 'rbr'..."
-kubectl apply --context "${HUB_CONTEXT}" -f "${GIT_REPO_ROOT}/manifests/capsule-tenant-rbr.yaml"
+echo "=================================================="
+echo "🔐 Configuring ArgoCD SSO + IngressRoute (hub cluster)..."
+echo "=================================================="
 
-echo "🏷️  Labelling tenant namespaces..."
+# Seed OIDC client secret into argocd-secret (key referenced as $oidc.authelia.clientSecret in argocd-cm)
+kubectl patch secret argocd-secret \
+    --namespace argocd \
+    --context "${HUB_CONTEXT}" \
+    --type merge \
+    -p "{\"stringData\":{\"oidc.authelia.clientSecret\":\"${AUTHELIA_ARGOCD_CLIENT_SECRET}\"}}"
+
+# Patch argocd-cm with server URL + Authelia OIDC config
+_argocd_cm_patch=$(mktemp)
+TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" \
+    envsubst '${TRAEFIK_IP_DASHED}' \
+    < "${GIT_REPO_ROOT}/argocd/argocd-cm-patch.yaml.tpl" \
+    > "${_argocd_cm_patch}"
+kubectl patch configmap argocd-cm \
+    --namespace argocd \
+    --context "${HUB_CONTEXT}" \
+    --type merge \
+    --patch-file "${_argocd_cm_patch}"
+rm -f "${_argocd_cm_patch}"
+
+# Issue TLS certificate for ArgoCD
+echo "📜 Issuing ArgoCD TLS certificate..."
+TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
+    < "${GIT_REPO_ROOT}/argocd/certificate.yaml.tpl" \
+    | kubectl --context "${HUB_CONTEXT}" apply -f -
+kubectl wait --for=condition=Ready certificate/argocd-tls-cert \
+    -n argocd --timeout=120s --context "${HUB_CONTEXT}"
+
+# Apply Traefik IngressRoute for ArgoCD
+echo "🌐 Applying ArgoCD IngressRoute (HTTPS)..."
+TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
+    < "${GIT_REPO_ROOT}/argocd/ingressroute.yaml.tpl" \
+    | kubectl --context "${HUB_CONTEXT}" apply -f -
+
+# Restart argocd-server to pick up OIDC config changes
+kubectl rollout restart deployment/argocd-server \
+    -n argocd --context "${HUB_CONTEXT}"
+kubectl rollout status deployment/argocd-server \
+    -n argocd --context "${HUB_CONTEXT}" --timeout=120s
+
+echo "✅ ArgoCD: https://argocd.${HUB_TRAEFIK_IP_DASHED}.sslip.io"
+
+# Create + label tenant namespaces before ArgoCD syncs (demo-app requires rbr-ver to pre-exist)
+echo "🏗️  Creating + labelling tenant namespaces..."
 for ns in rbr-ver rbr-ver-db; do
+    kubectl create namespace "${ns}" \
+        --context "${HUB_CONTEXT}" \
+        --dry-run=client -o yaml | kubectl apply --context "${HUB_CONTEXT}" -f -
     kubectl label namespace "${ns}" \
         capsule.clastix.io/tenant=rbr \
         cnpg.io/driver-group=ver \
         --context "${HUB_CONTEXT}" \
-        --overwrite 2>/dev/null || true
+        --overwrite
 done
-echo "✅ Tenant 'rbr' active"
+echo "✅ Tenant namespaces ready"
+
+# Build and load demo-app image into Kind before ArgoCD syncs
+echo "🐳 Building demo-app image..."
+DEMO_APP_VERSION=$(grep '^appVersion:' "${GIT_REPO_ROOT}/app/helm/demo-app/Chart.yaml" | awk '{print $2}' | tr -d '"')
+docker build -t "demo-app:${DEMO_APP_VERSION}" "${GIT_REPO_ROOT}/app"
+kind load docker-image "demo-app:${DEMO_APP_VERSION}" \
+    --name "$(get_cluster_name "${HUB_REGION}")"
+echo "✅ demo-app:${DEMO_APP_VERSION} loaded into Kind"
+
+# Apply ArgoCD app-of-apps root Application (also creates AppProject rbr)
+echo "🚀 Applying ArgoCD root Application (app-of-apps)..."
+kubectl apply --context "${HUB_CONTEXT}" \
+    -f "${GIT_REPO_ROOT}/manifests/argocd/root-app.yaml"
+
+# Wait for rbr-root to sync (children sync asynchronously after)
+echo "⏳ Waiting for rbr-root Application to sync (up to 5 min)..."
+kubectl wait application/rbr-root \
+    -n argocd \
+    --context "${HUB_CONTEXT}" \
+    --for=jsonpath='{.status.sync.status}'=Synced \
+    --timeout=300s || echo "⚠️  rbr-root sync timeout — check ArgoCD UI for details"
+
+# Inject Traefik IP into demo-app Application so the IngressRoute hostname resolves
+# (ignoreDifferences on root-app prevents selfHeal from reverting this override)
+kubectl patch application demo-app \
+    -n argocd \
+    --context "${HUB_CONTEXT}" \
+    --type merge \
+    -p "{\"spec\":{\"source\":{\"helm\":{\"parameters\":[{\"name\":\"global.traefikIpDashed\",\"value\":\"${HUB_TRAEFIK_IP_DASHED}\"}]}}}}"
+
+echo "✅ Tenant 'rbr' active — ArgoCD now owns Capsule Tenant + child apps"
 
 echo "=================================================="
 echo "🕸️  Installing Caretta network topology on hub cluster..."

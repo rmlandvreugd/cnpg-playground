@@ -1,0 +1,39 @@
+# RBR VER environment overrides for demo-app
+# global.traefikIpDashed is injected by setup.sh after ArgoCD bootstrap
+# (see Workstream E for full IngressRoute wiring)
+global:
+  traefikIpDashed: ""
+
+replicaCount: 1
+
+image:
+  pullPolicy: Never  # image is loaded into Kind by setup.sh via kind load docker-image
+
+database:
+  host: "pooler-rbr-ver-rw.rbr-ver-db.svc.cluster.local"
+  migrationHost: "verstappen-rw.rbr-ver-db.svc.cluster.local"
+  name: "app"
+  passwordSecret: "verstappen-app"
+  credentialsMode: "static"
+  staticSecret:
+    refreshInterval: 5m
+    vaultPath: "database/static-creds/app"
+
+tls:
+  hostnamePrefix: "demo-rbr-ver"
+  issuerRef:
+    kind: ClusterIssuer
+    name: vault-pki
+
+app:
+  seed: true
+
+migration:
+  strategy: "initContainer"
+
+externalSecret:
+  data:
+    - secretKey: password
+      remoteRef:
+        key: database/static-creds/app
+        property: password

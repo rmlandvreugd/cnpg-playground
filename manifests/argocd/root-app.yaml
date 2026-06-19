@@ -1,0 +1,65 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: rbr
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: RBR tenant workloads
+  sourceRepos:
+    - https://github.com/rmlandvreugd/cnpg-playground.git
+  destinations:
+    - namespace: rbr-ver
+      server: https://kubernetes.default.svc
+    - namespace: rbr-ver-db
+      server: https://kubernetes.default.svc
+    - namespace: grafana
+      server: https://kubernetes.default.svc
+    - namespace: kyverno
+      server: https://kubernetes.default.svc
+    - namespace: argocd
+      server: https://kubernetes.default.svc
+    - namespace: '*'
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: capsule.clastix.io
+      kind: Tenant
+    - group: kyverno.io
+      kind: ClusterPolicy
+    - group: kyverno.io
+      kind: ClusterPolicyReport
+    - group: kyverno.io
+      kind: PolicyException
+  namespaceResourceWhitelist:
+    - group: '*'
+      kind: '*'
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rbr-root
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/rmlandvreugd/cnpg-playground.git
+    targetRevision: HEAD
+    path: manifests/argocd/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+  ignoreDifferences:
+    - group: argoproj.io
+      kind: Application
+      name: demo-app
+      jsonPointers:
+        - /spec/source/helm/parameters

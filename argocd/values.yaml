@@ -1,0 +1,17 @@
+configs:
+  params:
+    server.insecure: "true"
+  cm:
+    admin.enabled: "true"
+    application.resourceTrackingMethod: annotation
+  rbac:
+    policy.csv: |
+      g, argocd-admin, role:admin
+      p, role:rbr-ver-sync, applications, sync, rbr/demo-app, allow
+      p, role:rbr-ver-sync, applications, get, rbr/demo-app, allow
+      g, rbr-ver-dev, role:rbr-ver-sync
+    policy.default: role:readonly
+
+server:
+  service:
+    type: ClusterIP

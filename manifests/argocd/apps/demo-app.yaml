@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo-app
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: rbr
+  source:
+    repoURL: https://github.com/rmlandvreugd/cnpg-playground.git
+    targetRevision: HEAD
+    path: app/helm/demo-app
+    helm:
+      valueFiles:
+        - values.yaml
+        - values-rbr-ver.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rbr-ver
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
