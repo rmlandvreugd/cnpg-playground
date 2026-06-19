@@ -2,6 +2,9 @@ configs:
   params:
     server.insecure: "true"
   cm:
+    # admin.enabled bootstraps access before OIDC is verified. Disable after
+    # confirming Authelia login works: set admin.enabled: "false" and rotate the
+    # admin password out of argocd-secret.
     admin.enabled: "true"
     application.resourceTrackingMethod: annotation
   rbac:
@@ -10,7 +13,7 @@ configs:
       p, role:rbr-ver-sync, applications, sync, rbr/demo-app, allow
       p, role:rbr-ver-sync, applications, get, rbr/demo-app, allow
       g, rbr-ver-dev, role:rbr-ver-sync
-    policy.default: role:readonly
+    policy.default: ''
 
 server:
   service:

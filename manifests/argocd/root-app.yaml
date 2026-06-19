@@ -20,8 +20,6 @@ spec:
       server: https://kubernetes.default.svc
     - namespace: argocd
       server: https://kubernetes.default.svc
-    - namespace: '*'
-      server: https://kubernetes.default.svc
   clusterResourceWhitelist:
     - group: capsule.clastix.io
       kind: Tenant
@@ -29,11 +27,29 @@ spec:
       kind: ClusterPolicy
     - group: kyverno.io
       kind: ClusterPolicyReport
-    - group: kyverno.io
-      kind: PolicyException
   namespaceResourceWhitelist:
-    - group: '*'
-      kind: '*'
+    - group: ''
+      kind: ConfigMap
+    - group: ''
+      kind: Service
+    - group: ''
+      kind: ServiceAccount
+    - group: apps
+      kind: Deployment
+    - group: policy
+      kind: PodDisruptionBudget
+    - group: monitoring.coreos.com
+      kind: PodMonitor
+    - group: external-secrets.io
+      kind: ExternalSecret
+    - group: cert-manager.io
+      kind: Certificate
+    - group: traefik.io
+      kind: IngressRoute
+    - group: grafana.integreatly.org
+      kind: GrafanaDatasource
+    - group: grafana.integreatly.org
+      kind: GrafanaDashboard
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: Application
