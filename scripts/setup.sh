@@ -684,7 +684,7 @@ ${STEP_CA_INT_CERT}" \
         capsule-system "${CONTEXT_NAME}" "${CAPSULE_CHART_VERSION}" \
         --values "${GIT_REPO_ROOT}/capsule/values.yaml" \
         --no-wait
-    kubectl --context "${CONTEXT_NAME}" wait --for=condition=Available deployment/capsule-controller-manager -n capsule-system  --timeout=300s
+    kubectl --context "${CONTEXT_NAME}" wait --for=condition=Available deployment/capsule-controller-manager -n capsule-system --timeout=300s
 
     echo "🔗 Installing capsule-proxy ${CAPSULE_PROXY_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
     helm_upgrade_install capsule-proxy \
@@ -698,7 +698,7 @@ ${STEP_CA_INT_CERT}" \
         --set "certManager.certificate.fields.privateKey.size=256" \
         --no-wait
 
-    kubectl --context "${CONTEXT_NAME}" wait --for=condition=Available deployment/capsule-proxy -n capsule-system  --timeout=300s
+    kubectl --context "${CONTEXT_NAME}" wait --for=condition=Available deployment/capsule-proxy -n capsule-system --timeout=300s
 
     echo "🏳️  Installing Kyverno ${KYVERNO_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
     helm_upgrade_install kyverno \
@@ -709,7 +709,12 @@ ${STEP_CA_INT_CERT}" \
     helm_upgrade_install argocd \
         oci://ghcr.io/argoproj/argo-helm/argo-cd \
         argocd "${CONTEXT_NAME}" "${ARGOCD_CHART_VERSION}" \
-        --set "server.service.type=ClusterIP"
+        --set "server.service.type=ClusterIP" \
+        --no-wait
+
+    kubectl --context "${CONTEXT_NAME}" wait --for=condition=Available deployment/argocd-server -n argocd --timeout=300s
+    kubectl --context "${CONTEXT_NAME}" rollout status statefulset/argocd-application-controller -n argocd --timeout=300s
+    kubectl --context "${CONTEXT_NAME}" wait --for=condition=Available deployment/argocd-applicationset-controller -n argocd --timeout=300s
 
     echo "✅ Resource provisioning for '${region}' complete."
 
@@ -817,14 +822,18 @@ TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" \
     "${SCRIPT_DIR}/authelia-setup.sh"
 
 echo "🔑 Installing gangplank (OIDC kubeconfig dispenser)..."
-AUTHELIA_GANGPLANK_CLIENT_SECRET_ENCODED=$(printf '%s' "${AUTHELIA_GANGPLANK_CLIENT_SECRET}" | base64 -w0)
 kubectl create namespace gangplank --context "${HUB_CONTEXT}" \
     --dry-run=client -o yaml | kubectl apply --context "${HUB_CONTEXT}" -f -
+
+# Gangplank loads config.yaml then lets envconfig (prefix GANGPLANK_CONFIG_)
+# override it. The chart injects this secret via envFrom, so the secret KEYS
+# must be the exact env var names — not arbitrary clientID/clientSecret keys.
 kubectl create secret generic gangplank-oidc \
     --namespace gangplank --context "${HUB_CONTEXT}" \
-    --from-literal=client-id=gangplank \
-    --from-literal=client-secret="${AUTHELIA_GANGPLANK_CLIENT_SECRET}" \
+    --from-literal=GANGPLANK_CONFIG_CLIENT_ID=gangplank \
+    --from-literal=GANGPLANK_CONFIG_CLIENT_SECRET="${AUTHELIA_GANGPLANK_CLIENT_SECRET}" \
     --dry-run=client -o yaml | kubectl apply --context "${HUB_CONTEXT}" -f -
+
 helm_upgrade_install gangplank \
     gangplank \
     gangplank "${HUB_CONTEXT}" "${GANGPLANK_CHART_VERSION}" \
@@ -835,16 +844,15 @@ helm_upgrade_install gangplank \
     --set "config.tokenURL=https://authelia.${HUB_TRAEFIK_IP_DASHED}.sslip.io/api/oidc/token" \
     --set "config.redirectURL=https://gangplank.${HUB_TRAEFIK_IP_DASHED}.sslip.io/callback" \
     --set "config.usernameClaim=email" \
-    --set "config.groupsClaim=groups" \
-    --set "config.scopes=openid email profile groups" \
     --set "config.audience=gangplank" \
-    --set "oidc.existingSecret=gangplank-oidc" \
-    --set "oidc.clientIDKey=client-id" \
-    --set "oidc.clientSecretKey=client-secret"
+    --set-json 'config.scopes=["openid","email","profile","groups"]' \
+    --set-json 'envFrom=[{"secretRef":{"name":"gangplank-oidc"}}]'
+
 echo "✅ gangplank: https://gangplank.${HUB_TRAEFIK_IP_DASHED}.sslip.io"
 
 echo "🏗️  Applying Capsule Tenant 'rbr'..."
 kubectl apply --context "${HUB_CONTEXT}" -f "${GIT_REPO_ROOT}/manifests/capsule-tenant-rbr.yaml"
+
 echo "🏷️  Labelling tenant namespaces..."
 for ns in rbr-ver rbr-ver-db; do
     kubectl label namespace "${ns}" \
