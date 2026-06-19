@@ -219,6 +219,48 @@ KUBE_CONFIG_PATH="${GIT_REPO_ROOT}/k8s/kube-config.yaml"
 # source funcs_regions.sh
 source $(git rev-parse --show-toplevel)/scripts/funcs_regions.sh
 
+# --- Mutual-exclusion lock ---
+# Prevents concurrent setup.sh / teardown.sh runs from corrupting the shared
+# kubeconfig (k8s/kube-config.yaml). Call acquire_lock once per top-level script
+# immediately after sourcing common.sh.
+acquire_lock() {
+    local lockfile="${GIT_REPO_ROOT}/.playground.lock"
+    local pidfile="${lockfile}.pid"
+
+    if command -v flock &>/dev/null; then
+        # flock(1) available (Linux / WSL) — atomically grab an exclusive lock on fd 9.
+        exec 9>"${lockfile}"
+        if ! flock -n 9; then
+            local holder
+            holder=$(cat "${pidfile}" 2>/dev/null || echo "unknown")
+            echo "❌ Another playground script is already running (PID ${holder}). Aborting." >&2
+            exit 1
+        fi
+    else
+        # macOS fallback: PID file with staleness check (small TOCTOU window; acceptable for dev tooling).
+        if [[ -f "${pidfile}" ]]; then
+            local holder
+            holder=$(cat "${pidfile}")
+            if kill -0 "${holder}" 2>/dev/null; then
+                echo "❌ Another playground script is already running (PID ${holder}). Aborting." >&2
+                exit 1
+            fi
+            echo "⚠️  Stale lock from PID ${holder} (process gone). Reclaiming." >&2
+        fi
+    fi
+
+    echo $$ > "${pidfile}"
+
+    _release_playground_lock() {
+        flock -u 9 2>/dev/null || true
+        rm -f "${pidfile}"
+    }
+    # EXIT fires on normal exit and signal death when INT/TERM are also trapped.
+    trap '_release_playground_lock' EXIT
+    trap '_release_playground_lock; trap - INT;  kill -INT  $$' INT
+    trap '_release_playground_lock; trap - TERM; kill -TERM $$' TERM
+}
+
 # --- Traefik Configuration ---
 TRAEFIK_VERSION="${TRAEFIK_VERSION:-v3.3.0}"
 TRAEFIK_IMAGE="${TRAEFIK_IMAGE:-traefik:v3.3}"

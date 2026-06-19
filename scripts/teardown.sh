@@ -21,6 +21,7 @@
 # Source the common setup script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
+acquire_lock
 
 # --- Main Logic ---
 # Determine regions from arguments, or auto-detect if none are provided
