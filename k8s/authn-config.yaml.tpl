@@ -8,7 +8,7 @@ jwt:
         - gangplank
       audienceMatchPolicy: MatchAny
       certificateAuthority: |
-        ${STEP_CA_CHAIN_PEM}
+${STEP_CA_CHAIN_PEM}
     claimMappings:
       username:
         claim: email

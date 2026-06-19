@@ -163,8 +163,8 @@ CERT_MANAGER_CHART_VERSION="${CERT_MANAGER_CHART_VERSION:-v1.20.2}"
 TRUST_MANAGER_CHART_VERSION="${TRUST_MANAGER_CHART_VERSION:-v0.12.2}"
 
 # Capsule + capsule-proxy + gangplank
-CAPSULE_CHART_VERSION="${CAPSULE_CHART_VERSION:-0.7.3}"
-CAPSULE_PROXY_CHART_VERSION="${CAPSULE_PROXY_CHART_VERSION:-0.7.3}"
+CAPSULE_CHART_VERSION="${CAPSULE_CHART_VERSION:-0.13.6}"
+CAPSULE_PROXY_CHART_VERSION="${CAPSULE_PROXY_CHART_VERSION:-0.13.5}"
 GANGPLANK_CHART_VERSION="${GANGPLANK_CHART_VERSION:-0.1.4}"
 # Kyverno
 KYVERNO_CHART_VERSION="${KYVERNO_CHART_VERSION:-3.4.2}"
@@ -303,10 +303,13 @@ helm_upgrade_install() {
     # stall indefinitely even when every resource is already Ready. Callers that
     # do their own explicit `kubectl wait` afterwards can pass --no-wait to skip it.
     local wait_args=(--wait)
+    local debug_args=()
     local passthrough=() arg
     for arg in "$@"; do
         if [[ "${arg}" == "--no-wait" ]]; then
             wait_args=()
+        elif [[ "${arg}" == "--debug" ]]; then
+            debug_args=(--debug)
         else
             passthrough+=("${arg}")
         fi
@@ -334,14 +337,15 @@ helm_upgrade_install() {
 
         # Wrap in `timeout` so a stuck `helm --wait` (which can blow past its own
         # --timeout) becomes a failure the retry loop can act on, not a frozen process.
-        timeout --kill-after=30s 360s helm upgrade --install "${release}" "${chart_ref}" \
+        timeout --kill-after=30s 1000s helm upgrade --install "${release}" "${chart_ref}" \
             "${repo_args[@]}" \
             --namespace "${namespace}" \
             --create-namespace \
             --kube-context "${context}" \
             --version "${version}" \
             ${wait_args[@]+"${wait_args[@]}"} \
-            --timeout 300s \
+            ${debug_args[@]+"${debug_args[@]}"} \
+            --timeout 900s \
             "$@" && return 0
         if [[ $attempt -lt $retries ]]; then
             echo "⚠️  helm install attempt $attempt/$retries failed, retrying in ${delay}s..." >&2

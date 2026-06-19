@@ -682,16 +682,23 @@ ${STEP_CA_INT_CERT}" \
     helm_upgrade_install capsule \
         oci://ghcr.io/projectcapsule/charts/capsule \
         capsule-system "${CONTEXT_NAME}" "${CAPSULE_CHART_VERSION}" \
-        --values "${GIT_REPO_ROOT}/capsule/values.yaml"
+        --values "${GIT_REPO_ROOT}/capsule/values.yaml" \
+        --no-wait
+    kubectl --context "${CONTEXT_NAME}" wait --for=condition=Available deployment/capsule-controller-manager -n capsule-system  --timeout=300s
 
     echo "🔗 Installing capsule-proxy ${CAPSULE_PROXY_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
     helm_upgrade_install capsule-proxy \
         oci://ghcr.io/projectcapsule/charts/capsule-proxy \
         capsule-system "${CONTEXT_NAME}" "${CAPSULE_PROXY_CHART_VERSION}" \
         --set "options.enableSSL=true" \
-        --set "certManager.enabled=true" \
-        --set "certManager.issuerRef.name=vault-pki-issuer" \
-        --set "certManager.issuerRef.kind=ClusterIssuer"
+        --set "certManager.generateCertificates=true" \
+        --set "certManager.issuer.name=vault-pki" \
+        --set "certManager.issuer.kind=ClusterIssuer" \
+        --set "certManager.certificate.fields.privateKey.algorithm=ECDSA" \
+        --set "certManager.certificate.fields.privateKey.size=256" \
+        --no-wait
+
+    kubectl --context "${CONTEXT_NAME}" wait --for=condition=Available deployment/capsule-proxy -n capsule-system  --timeout=300s
 
     echo "🏳️  Installing Kyverno ${KYVERNO_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
     helm_upgrade_install kyverno \
