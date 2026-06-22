@@ -99,6 +99,24 @@ setup)
     echo "🚀 Self-service setup: rbr/ver/verstappen"
     echo "=========================================="
 
+    # --- Preflight: platform + monitoring must already exist ---
+    # The platform (Capsule, ArgoCD, …) is installed by scripts/setup.sh; the
+    # tenant's Grafana hard-requires the monitoring stack (monitoring/setup.sh).
+    echo "🔎 Preflight: verifying platform + monitoring are present..."
+    if ! kubectl get crd tenants.capsule.clastix.io --context "${LOCAL_CONTEXT}" &>/dev/null \
+       || ! kubectl get namespace argocd --context "${LOCAL_CONTEXT}" &>/dev/null; then
+        echo "❌ Platform not found (Capsule CRD / argocd namespace missing)."
+        echo "   Run the cluster + platform first:  scripts/setup.sh local"
+        exit 1
+    fi
+    if ! kubectl get namespace grafana --context "${LOCAL_CONTEXT}" &>/dev/null \
+       || ! kubectl get crd grafanas.grafana.integreatly.org --context "${LOCAL_CONTEXT}" &>/dev/null; then
+        echo "❌ Monitoring stack not found (grafana namespace / Grafana operator CRD missing)."
+        echo "   The tenant Grafana hard-requires it. Run:  monitoring/setup.sh local"
+        exit 1
+    fi
+    echo "✅ Platform + monitoring present"
+
     TRAEFIK_IP=$(get_traefik_ip)
     TRAEFIK_IP_DASHED=$(ip_to_dashed "${TRAEFIK_IP}")
     echo "ℹ️  Traefik IP: ${TRAEFIK_IP} (dashed: ${TRAEFIK_IP_DASHED})"
@@ -209,11 +227,45 @@ EOF
     _vcmd kv put cnpg/rbr/ver/readonly   username=readonly password="$(random_password)"
     echo "✅ KV credentials seeded"
 
-    # --- Namespaces ---
-    echo "📁 Applying namespaces..."
+    # --- Capsule Tenant + tenant-owned namespaces ---
+    # The Tenant must exist before its namespaces are created, and the
+    # capsule.clastix.io/tenant label must be present at namespace CREATE time:
+    # Capsule's namespaces.validating.projectcapsule.dev webhook denies patching the
+    # tenant label onto an already-existing namespace ("namespace can not be patched
+    # into a tenant" — CVE-2024-39690 hardening). We apply the Tenant directly here;
+    # ArgoCD's tenant-rbr app (prune=false) adopts the same Tenant object on first sync.
+    echo "🏛️  Pre-seeding Capsule Tenant 'rbr' (ArgoCD adopts it on sync)..."
     kubectl apply --context "${LOCAL_CONTEXT}" \
-        -f "${SELF_SERVICE_YAML}/rbr-ver-db/namespace.yaml" \
-        -f "${SELF_SERVICE_YAML}/rbr-ver/namespace.yaml"
+        -f "${GIT_REPO_ROOT}/manifests/capsule-tenant-rbr.yaml"
+    kubectl wait tenant/rbr --context "${LOCAL_CONTEXT}" \
+        --for=jsonpath='{.status.state}'=Active --timeout=60s || true
+
+    # Capsule only lets a *tenant owner* create a tenant-owned namespace (the webhook
+    # rejects both a plain cluster-admin create and a forged ownerReference: "only
+    # tenant owners can create tenant-owned namespaces"). We run as cluster-admin, so
+    # we impersonate the rbr tenant owner group (oidc:rbr-db-admin) — which Capsule
+    # binds to the capsule-namespace-provisioner ClusterRole (create/patch namespaces).
+    # Capsule's mutating webhook then injects the Tenant ownerReference automatically.
+    # Use `create` not `apply`: the provisioner role lacks `get`, which apply needs.
+    echo "🏗️  Creating tenant namespaces as tenant owner (Capsule injects ownerReference)..."
+    for ns in rbr-ver rbr-ver-db; do
+        if kubectl get namespace "${ns}" --context "${LOCAL_CONTEXT}" &>/dev/null; then
+            echo "   namespace ${ns} already exists, skipping"
+            continue
+        fi
+        kubectl --context "${LOCAL_CONTEXT}" \
+            --as=capsule-bot --as-group=oidc:rbr-db-admin --as-group=system:authenticated \
+            create -f - <<EOF
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${ns}
+  labels:
+    capsule.clastix.io/tenant: rbr
+    cnpg.io/driver-group: ver
+EOF
+    done
+    echo "✅ Tenant namespaces ready"
 
     # --- ExternalSecrets ---
     echo "📋 Applying ExternalSecrets..."
@@ -388,6 +440,38 @@ EOF
         max_ttl="4h"
 
     echo "✅ Vault Database Secrets Engine configured"
+
+    # --- demo-app image + ArgoCD app-of-apps (GitOps) ---
+    # Sequenced AFTER the verstappen DB and the Vault DB engine exist: the demo-app
+    # ExternalSecret reads database/static-creds/app via the vault-approle-rbr-db store,
+    # so the static role 'app' (above) and the store (earlier) must already be in place —
+    # otherwise demo-app crash-loops. Build + load the image before ArgoCD syncs it.
+    echo "🐳 Building demo-app image..."
+    DEMO_APP_VERSION=$(grep '^appVersion:' "${GIT_REPO_ROOT}/app/helm/demo-app/Chart.yaml" | awk '{print $2}' | tr -d '"')
+    docker build -t "demo-app:${DEMO_APP_VERSION}" "${GIT_REPO_ROOT}/app"
+    kind load docker-image "demo-app:${DEMO_APP_VERSION}" \
+        --name "$(get_cluster_name "${MODE}")"
+    echo "✅ demo-app:${DEMO_APP_VERSION} loaded into Kind"
+
+    echo "🚀 Applying ArgoCD root Application (app-of-apps)..."
+    kubectl apply --context "${LOCAL_CONTEXT}" \
+        -f "${GIT_REPO_ROOT}/manifests/argocd/root-app.yaml"
+
+    echo "⏳ Waiting for rbr-root Application to sync (up to 5 min)..."
+    kubectl wait application/rbr-root \
+        -n argocd \
+        --context "${LOCAL_CONTEXT}" \
+        --for=jsonpath='{.status.sync.status}'=Synced \
+        --timeout=300s || echo "⚠️  rbr-root sync timeout — check ArgoCD UI for details"
+
+    # Inject Traefik IP into demo-app Application so the IngressRoute hostname resolves
+    # (ignoreDifferences on root-app prevents selfHeal from reverting this override)
+    kubectl patch application demo-app \
+        -n argocd \
+        --context "${LOCAL_CONTEXT}" \
+        --type merge \
+        -p "{\"spec\":{\"source\":{\"helm\":{\"parameters\":[{\"name\":\"global.traefikIpDashed\",\"value\":\"${TRAEFIK_IP_DASHED}\"}]}}}}"
+    echo "✅ ArgoCD app-of-apps applied — demo-app deploys via GitOps"
 
     # --- pgAdmin (self-service) ---
     echo "🔧 Deploying pgAdmin for rbr-ver..."
@@ -726,6 +810,15 @@ creds)
 teardown)
     echo "🔥 Teardown: rbr-ver-db + rbr-ver (local)"
 
+    # Delete the ArgoCD app-of-apps FIRST so it stops reconciling/re-creating tenant
+    # resources while we tear them down. Cascade-delete removes the child Applications
+    # (demo-app, grafana-rbr-ver, kyverno-policies, tenant-rbr) and their managed objects.
+    echo "🚢 Deleting ArgoCD app-of-apps (rbr-root) + AppProject rbr..."
+    kubectl delete application rbr-root \
+        -n argocd --context "${LOCAL_CONTEXT}" --ignore-not-found --wait
+    kubectl delete appproject rbr \
+        -n argocd --context "${LOCAL_CONTEXT}" --ignore-not-found
+
     # Delete CRs first so operators can process finalizers before namespace termination
     echo "🐘 Deleting CNPG Cluster and ObjectStore (waits for finalizer cleanup)..."
     kubectl delete cluster verstappen \
@@ -779,6 +872,13 @@ teardown)
         -n grafana --context "${LOCAL_CONTEXT}" --ignore-not-found
     kubectl delete configmap authelia-ca-cert \
         -n grafana --context "${LOCAL_CONTEXT}" --ignore-not-found
+
+    # Delete the Capsule Tenant LAST — after all tenant-owned namespaces and resources
+    # are gone — so Capsule's webhook never blocks namespace cleanup. Idempotent: the
+    # tenant-rbr ArgoCD app may already have cascade-removed it above.
+    echo "🏛️  Deleting Capsule Tenant rbr..."
+    kubectl delete tenant rbr \
+        --context "${LOCAL_CONTEXT}" --ignore-not-found
 
     echo "ℹ️  Vault VDE config, policies, and KV paths retained for post-demo inspection."
     echo "   Remove with: vault delete database/config/rbr-ver-max"

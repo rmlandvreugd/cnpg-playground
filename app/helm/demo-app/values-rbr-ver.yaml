@@ -27,6 +27,10 @@ tls:
 app:
   seed: true
 
+# Pin the demo-app to the (untainted) app node pool.
+nodeSelector:
+  node-role.kubernetes.io/app: ""
+
 migration:
   strategy: "initContainer"
 

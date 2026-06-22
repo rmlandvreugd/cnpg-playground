@@ -80,6 +80,12 @@ resources:
     cpu: 500m
     memory: 256Mi
 
+# Pod scheduling. Empty by default so the generic chart stays schedulable anywhere;
+# environment overlays (e.g. values-rbr-ver.yaml) pin the app to the app node pool.
+nodeSelector: {}
+affinity: {}
+tolerations: []
+
 # Global values (overridden per environment)
 global:
   traefikIpDashed: ""

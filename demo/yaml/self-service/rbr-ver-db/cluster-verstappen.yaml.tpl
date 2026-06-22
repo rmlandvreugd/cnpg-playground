@@ -97,6 +97,21 @@ spec:
     name: verstappen
   instances: 2
   type: rw
+  template:
+    spec:
+      # Pin PgBouncer to the (untainted) app node pool, alongside the demo-app.
+      nodeSelector:
+        node-role.kubernetes.io/app: ""
+      # Prefer spreading the 2 replicas across the 2 app nodes.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  cnpg.io/poolerName: pooler-verstappen-rw
+              topologyKey: kubernetes.io/hostname
   pgbouncer:
     poolMode: session
     parameters:

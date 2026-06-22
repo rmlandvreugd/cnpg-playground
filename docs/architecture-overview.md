@@ -105,7 +105,7 @@ flowchart TD
     P0 --> P0E["Authelia (OIDC)"]
 
     A --> P1["Phase 1: Cluster Provisioning"]
-    P1 --> P1A["Kind Cluster Creation<br/>(7 nodes: 1 control-plane + 6 workers)"]
+    P1 --> P1A["Kind Cluster Creation<br/>(8 nodes: 1 control-plane + 7 workers:<br/>2 infra + 2 app + 3 postgres)"]
     P1 --> P1A2["Calico CNI<br/>(Tigera Operator)"]
     P1 --> P1B["RustFS S3 Container"]
     P1 --> P1B2["SeaweedFS S3 Container"]
@@ -124,21 +124,30 @@ flowchart TD
     P3 --> P3A["Vault OIDC auth"]
     P3 --> P3B["step-ca OIDC provisioner"]
 
+    A --> P4["Phase 4: Platform Governance Layer"]
+    P4 --> P4A["Capsule + capsule-proxy<br/>(multi-tenancy)"]
+    P4 --> P4B["Kyverno (policy engine)"]
+    P4 --> P4C["ArgoCD (GitOps)"]
+    P4 --> P4D["gangplank (OIDC→kubeconfig)"]
+
     style A fill:#4CAF50,color:white
     style P0 fill:#2196F3,color:white
     style P1 fill:#FF9800,color:white
     style P2 fill:#9C27B0,color:white
     style P3 fill:#F44336,color:white
+    style P4 fill:#607D8B,color:white
 ```
 
 **Key outcomes:**
-- A 7-node Kind cluster with labeled node pools (control-plane, infra, app, postgres)
+- An 8-node Kind cluster with labeled node pools: control-plane, **2 infra**, **2 app** (untainted, nodeSelector-only), **3 postgres** (tainted `NoSchedule`)
 - External services (step-ca, Vault, Authelia, RustFS) running as Docker containers, wired into K8s via headless Services/Endpoints
 - Calico CNI (via Tigera Operator) providing pod networking, with Caretta + Radar for network observability
 - Full 3-tier PKI: step-ca Root → step-ca Intermediate → Vault Intermediate → leaf certs
 - cert-manager ClusterIssuer for Vault PKI, trust-manager distributing CA bundles
 - ESO ClusterSecretStore with Vault AppRole authentication
 - Traefik with MetalLB LoadBalancer, TLS dashboard, and PostgreSQL TCP routing
+- **Platform governance layer:** Capsule + capsule-proxy (multi-tenancy), Kyverno (policy), ArgoCD (GitOps), gangplank (OIDC→kubeconfig) — the cluster is **ready for tenant onboarding but fully usable without any tenant**. No concrete tenant (`rbr`/`ver`) is created here; that lives in `demo/self-service-setup.sh` (see §8).
+- **Opt-in one-shot:** `scripts/setup.sh local --with-tenant` chains `monitoring/setup.sh local` then `demo/self-service-setup.sh setup local` for the full demo.
 
 ### 3.2 `demo/setup.sh local` — Database Deployment
 
@@ -359,17 +368,18 @@ flowchart LR
 
 ## 6. Current Cluster State (Live)
 
-### Nodes (7 total)
+### Nodes (8 total)
 
 | Node | Role | Labels |
 |------|------|--------|
 | k8s-local-control-plane | control-plane | `node-role.kubernetes.io/control-plane` |
 | k8s-local-worker | worker | `node-role.kubernetes.io/infra` |
 | k8s-local-worker2 | worker | `node-role.kubernetes.io/infra` |
-| k8s-local-worker3 | worker | `node-role.kubernetes.io/app` |
-| k8s-local-worker4 | worker | `node-role.kubernetes.io/postgres` |
-| k8s-local-worker5 | worker | `node-role.kubernetes.io/postgres` |
-| k8s-local-worker6 | worker | `node-role.kubernetes.io/postgres` |
+| k8s-local-worker3 | worker | `node-role.kubernetes.io/app` (untainted) |
+| k8s-local-worker4 | worker | `node-role.kubernetes.io/app` (untainted) |
+| k8s-local-worker5 | worker | `node-role.kubernetes.io/postgres` (taint `NoSchedule`) |
+| k8s-local-worker6 | worker | `node-role.kubernetes.io/postgres` (taint `NoSchedule`) |
+| k8s-local-worker7 | worker | `node-role.kubernetes.io/postgres` (taint `NoSchedule`) |
 
 ### Application & Infrastructure Namespaces (18)
 
@@ -481,6 +491,35 @@ governed by Capsule, Kyverno, and ArgoCD, with Authelia OIDC across every surfac
 Tenant model: constructor `rbr` (= Capsule Tenant) → driver group `ver` → namespaces `rbr-ver-db`
 (database) + `rbr-ver` (app). Future driver groups (`rbr-had`, …) join the same Tenant.
 
+### Onboarding boundary & run order
+
+The **platform governance layer** (Capsule, capsule-proxy, Kyverno, ArgoCD, gangplank) is installed
+by `scripts/setup.sh` (§3.1) and is always present on a fresh cluster. The **concrete tenant instance**
+(`Tenant rbr`, namespaces `rbr-ver`/`rbr-ver-db`, the `verstappen` CNPG cluster, the ArgoCD app-of-apps,
+`demo-app`, pgAdmin, and the tenant Grafana) is owned exclusively by `demo/self-service-setup.sh`. A
+default `scripts/setup.sh local` leaves **zero** tenant resources behind.
+
+Canonical run order:
+
+1. `scripts/setup.sh local` — cluster + platform (no tenant).
+2. `monitoring/setup.sh local` — observability stack. **Hard requirement:** `demo/self-service-setup.sh`
+   preflights for the `grafana` namespace and the Grafana operator CRD and **fails fast** if monitoring
+   is absent, because the tenant Grafana depends on it.
+3. `demo/self-service-setup.sh setup local` — tenant onboarding, in dependency order: Tenant pre-seed →
+   tenant namespaces (Capsule-impersonated create) → Vault DB engine + static role → `verstappen`
+   cluster → **demo-app build + ArgoCD app-of-apps (last, after the DB + `verstappen-app` secret exist,
+   so `demo-app` comes up healthy instead of crash-looping)** → pgAdmin → tenant Grafana.
+
+One-shot equivalent: `scripts/setup.sh local --with-tenant` chains steps 1–3.
+
+App-tier workloads (`demo-app` + the `pooler-verstappen-rw` PgBouncer replicas) are pinned via
+`nodeSelector: node-role.kubernetes.io/app: ""` to the 2 untainted **app** nodes; postgres instances
+stay on the tainted **postgres** nodes.
+
+Teardown: `demo/self-service-setup.sh teardown local` removes the tenant instance (app-of-apps +
+AppProject first, `Tenant rbr` last) but **leaves the platform intact**. Only `scripts/teardown.sh`
+nukes the whole cluster.
+
 ```mermaid
 flowchart TB
     subgraph IdP["Authelia (OIDC, host)"]
@@ -514,17 +553,21 @@ flowchart TB
     G --> SW["SeaweedFS<br/>admin-UI + S3 OIDC"]
 ```
 
-### New components (planned)
+### Components
 
-| Component | Namespace / Host | Role |
-|---|---|---|
-| Capsule | `capsule-system` | multi-tenancy (`Tenant rbr`) |
-| capsule-proxy | `capsule-system` | tenant-scoped K8s API gateway |
-| gangplank (`sighupio/gangplank`) | `capsule-system` | OIDC → kubeconfig dispenser (fronts capsule-proxy) |
-| Kyverno | `kyverno` | generate per-driver-group RoleBindings + default NetworkPolicy; validate baseline |
-| ArgoCD | `argocd` | GitOps engine (app-of-apps for tenant resources) |
-| demo-app | `rbr-ver` | Litestar sample app (ArgoCD-deployed, static Vault-rotated DB creds) |
-| SeaweedFS OIDC | host | admin-UI + S3 human OIDC (machine keys stay static) |
+Platform components are installed by `scripts/setup.sh` (present on every cluster); tenant
+components are created by `demo/self-service-setup.sh` (only when onboarding runs).
+
+| Component | Namespace / Host | Installed by | Role |
+|---|---|---|---|
+| Capsule | `capsule-system` | `scripts/setup.sh` | multi-tenancy engine (the `Tenant rbr` *instance* is created by self-service) |
+| capsule-proxy | `capsule-system` | `scripts/setup.sh` | tenant-scoped K8s API gateway |
+| gangplank (`sighupio/gangplank`) | `capsule-system` | `scripts/setup.sh` | OIDC → kubeconfig dispenser (fronts capsule-proxy) |
+| Kyverno | `kyverno` | `scripts/setup.sh` | generate per-driver-group RoleBindings + default NetworkPolicy; validate baseline |
+| ArgoCD | `argocd` | `scripts/setup.sh` | GitOps engine (the app-of-apps *instance* is applied by self-service) |
+| `Tenant rbr` + namespaces | `rbr-ver`, `rbr-ver-db` | `demo/self-service-setup.sh` | tenant instance + driver-group namespaces |
+| demo-app | `rbr-ver` | `demo/self-service-setup.sh` | Litestar sample app (ArgoCD-deployed, static Vault-rotated DB creds; pinned to app nodes) |
+| SeaweedFS OIDC | host | `scripts/setup.sh` | admin-UI + S3 human OIDC (machine keys stay static) |
 
 ### Identity → access (summary)
 

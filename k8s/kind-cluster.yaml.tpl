@@ -49,13 +49,18 @@ nodes:
       kind: KubeProxyConfiguration
       metricsBindAddress: 0.0.0.0
 
-# Infrastructure/Application nodes (3)
+# Infrastructure (2) / Application (2) nodes
 - role: worker
   labels:
     infra.node.kubernetes.io:
 - role: worker
   labels:
     infra.node.kubernetes.io:
+# App nodes stay untainted (nodeSelector-only pinning) so platform/monitoring
+# overflow can still schedule here; demo-app + connection poolers select them.
+- role: worker
+  labels:
+    app.node.kubernetes.io:
 - role: worker
   labels:
     app.node.kubernetes.io:

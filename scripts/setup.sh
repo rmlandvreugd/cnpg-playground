@@ -54,6 +54,20 @@ echo "✅ No existing clusters found. Proceeding with setup."
 echo
 
 # --- Script Setup ---
+# Parse flags out of the positional args before region parsing.
+#   --with-tenant : after the cluster + platform are up, chain monitoring and the
+#                   self-service tenant onboarding (one-shot full demo). Default off,
+#                   so a plain run yields a clean, tenant-free cluster.
+WITH_TENANT=false
+_args=()
+for arg in "$@"; do
+    case "${arg}" in
+        --with-tenant) WITH_TENANT=true ;;
+        *) _args+=("${arg}") ;;
+    esac
+done
+set -- "${_args[@]+"${_args[@]}"}"
+
 # Determine regions from arguments, or use defaults
 set_regions "$@"
 HUB_REGION="${REGIONS[0]}"
@@ -897,79 +911,12 @@ kubectl rollout status deployment/argocd-server \
 
 echo "✅ ArgoCD: https://argocd.${HUB_TRAEFIK_IP_DASHED}.sslip.io"
 
-# The Capsule Tenant must exist before its namespaces are created, and the
-# capsule.clastix.io/tenant label must be present at namespace CREATE time:
-# Capsule's namespaces.validating.projectcapsule.dev webhook denies patching the
-# tenant label onto an already-existing namespace ("namespace can not be patched
-# into a tenant" — CVE-2024-39690 hardening). setup.sh runs as cluster-admin,
-# which Capsule excludes from tenant enforcement, so it may create namespaces
-# directly into the tenant by setting the label in the create request.
-# We apply the Tenant directly here so the namespaces can be created; ArgoCD's
-# tenant-rbr app (prune=false) adopts the same Tenant object on first sync.
-echo "🏛️  Pre-seeding Capsule Tenant 'rbr' (ArgoCD adopts it on sync)..."
-kubectl apply --context "${HUB_CONTEXT}" \
-    -f "${GIT_REPO_ROOT}/manifests/capsule-tenant-rbr.yaml"
-kubectl wait tenant/rbr --context "${HUB_CONTEXT}" \
-    --for=jsonpath='{.status.state}'=Active --timeout=60s || true
-
-# demo-app requires rbr-ver to pre-exist before ArgoCD syncs. Capsule only lets a
-# *tenant owner* create a tenant-owned namespace (the webhook rejects both a plain
-# cluster-admin create and a forged ownerReference: "only tenant owners can create
-# tenant-owned namespaces"). setup.sh runs as cluster-admin, so we impersonate the
-# rbr tenant owner group (oidc:rbr-db-admin) — which Capsule binds to the
-# capsule-namespace-provisioner ClusterRole (create/patch namespaces). Capsule's
-# mutating webhook then injects the Tenant ownerReference automatically.
-# Use `create` not `apply`: the provisioner role lacks `get`, which apply needs.
-echo "🏗️  Creating tenant namespaces as tenant owner (Capsule injects ownerReference)..."
-for ns in rbr-ver rbr-ver-db; do
-    if kubectl get namespace "${ns}" --context "${HUB_CONTEXT}" &>/dev/null; then
-        echo "   namespace ${ns} already exists, skipping"
-        continue
-    fi
-    kubectl --context "${HUB_CONTEXT}" \
-        --as=capsule-bot --as-group=oidc:rbr-db-admin --as-group=system:authenticated \
-        create -f - <<EOF
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: ${ns}
-  labels:
-    capsule.clastix.io/tenant: rbr
-    cnpg.io/driver-group: ver
-EOF
-done
-echo "✅ Tenant namespaces ready"
-
-# Build and load demo-app image into Kind before ArgoCD syncs
-echo "🐳 Building demo-app image..."
-DEMO_APP_VERSION=$(grep '^appVersion:' "${GIT_REPO_ROOT}/app/helm/demo-app/Chart.yaml" | awk '{print $2}' | tr -d '"')
-docker build -t "demo-app:${DEMO_APP_VERSION}" "${GIT_REPO_ROOT}/app"
-kind load docker-image "demo-app:${DEMO_APP_VERSION}" \
-    --name "$(get_cluster_name "${HUB_REGION}")"
-echo "✅ demo-app:${DEMO_APP_VERSION} loaded into Kind"
-
-# Apply ArgoCD app-of-apps root Application (also creates AppProject rbr)
-echo "🚀 Applying ArgoCD root Application (app-of-apps)..."
-kubectl apply --context "${HUB_CONTEXT}" \
-    -f "${GIT_REPO_ROOT}/manifests/argocd/root-app.yaml"
-
-# Wait for rbr-root to sync (children sync asynchronously after)
-echo "⏳ Waiting for rbr-root Application to sync (up to 5 min)..."
-kubectl wait application/rbr-root \
-    -n argocd \
-    --context "${HUB_CONTEXT}" \
-    --for=jsonpath='{.status.sync.status}'=Synced \
-    --timeout=300s || echo "⚠️  rbr-root sync timeout — check ArgoCD UI for details"
-
-# Inject Traefik IP into demo-app Application so the IngressRoute hostname resolves
-# (ignoreDifferences on root-app prevents selfHeal from reverting this override)
-kubectl patch application demo-app \
-    -n argocd \
-    --context "${HUB_CONTEXT}" \
-    --type merge \
-    -p "{\"spec\":{\"source\":{\"helm\":{\"parameters\":[{\"name\":\"global.traefikIpDashed\",\"value\":\"${HUB_TRAEFIK_IP_DASHED}\"}]}}}}"
-
-echo "✅ Tenant 'rbr' active — ArgoCD now owns Capsule Tenant + child apps"
+# NOTE: Tenant onboarding (Capsule Tenant 'rbr', tenant namespaces, demo-app image
+# build, and the ArgoCD app-of-apps root) lives in demo/self-service-setup.sh so the
+# cluster + platform come up clean and tenant-free. It is resequenced there to apply
+# the app-of-apps AFTER the verstappen DB + verstappen-app secret exist (otherwise
+# demo-app crash-loops). Run it via `demo/self-service-setup.sh setup local`, or use
+# `scripts/setup.sh local --with-tenant` for the one-shot full demo (chained below).
 
 echo "=================================================="
 echo "🕸️  Installing Caretta network topology on hub cluster..."
@@ -1018,3 +965,23 @@ echo "✅ Radar: https://radar.${HUB_TRAEFIK_IP_DASHED}.sslip.io"
 echo
 # Display information using the info script
 source "$(dirname "$0")/info.sh"
+
+# --- Optional: one-shot self-service tenant onboarding (--with-tenant) ---
+# The cluster + platform are now up and tenant-free. With --with-tenant we chain
+# monitoring (a hard requirement of the tenant's Grafana) and the self-service
+# onboarding. These child scripts do NOT call acquire_lock, so the lock held by
+# this script is not contended.
+if [ "${WITH_TENANT}" = true ]; then
+    echo
+    echo "=================================================="
+    echo "🧩 --with-tenant: chaining monitoring + self-service onboarding"
+    echo "=================================================="
+    "${GIT_REPO_ROOT}/monitoring/setup.sh" "${HUB_REGION}"
+    "${GIT_REPO_ROOT}/demo/self-service-setup.sh" setup "${HUB_REGION}"
+else
+    echo
+    echo "ℹ️  Cluster + platform ready (tenant-free). To onboard the self-service demo:"
+    echo "     ${GIT_REPO_ROOT}/monitoring/setup.sh ${HUB_REGION}"
+    echo "     ${GIT_REPO_ROOT}/demo/self-service-setup.sh setup ${HUB_REGION}"
+    echo "   …or re-run with --with-tenant for the one-shot full demo."
+fi
