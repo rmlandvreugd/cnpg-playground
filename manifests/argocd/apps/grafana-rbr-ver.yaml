@@ -11,7 +11,7 @@ spec:
   project: rbr
   source:
     repoURL: https://github.com/rmlandvreugd/cnpg-playground.git
-    targetRevision: HEAD
+    targetRevision: feature/self-service
     path: demo/yaml/self-service/grafana
     directory:
       exclude: '*.yaml.tpl'

@@ -62,7 +62,7 @@ spec:
   project: default
   source:
     repoURL: https://github.com/rmlandvreugd/cnpg-playground.git
-    targetRevision: HEAD
+    targetRevision: feature/self-service
     path: manifests/argocd/apps
   destination:
     server: https://kubernetes.default.svc
