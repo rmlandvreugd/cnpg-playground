@@ -223,24 +223,31 @@ source $(git rev-parse --show-toplevel)/scripts/funcs_regions.sh
 # Prevents concurrent setup.sh / teardown.sh runs from corrupting the shared
 # kubeconfig (k8s/kube-config.yaml). Call acquire_lock once per top-level script
 # immediately after sourcing common.sh.
-acquire_lock() {
-    local lockfile="${GIT_REPO_ROOT}/.playground.lock"
-    local pidfile="${lockfile}.pid"
+# Globals so the EXIT/INT/TERM trap handler can resolve paths after acquire_lock
+# returns (its locals would be out of scope, tripping `set -u`).
+_PLAYGROUND_LOCKFILE="${GIT_REPO_ROOT}/.playground.lock"
+_PLAYGROUND_PIDFILE="${_PLAYGROUND_LOCKFILE}.pid"
 
+_release_playground_lock() {
+    flock -u 9 2>/dev/null || true
+    rm -f "${_PLAYGROUND_PIDFILE}"
+}
+
+acquire_lock() {
     if command -v flock &>/dev/null; then
         # flock(1) available (Linux / WSL) — atomically grab an exclusive lock on fd 9.
-        exec 9>"${lockfile}"
+        exec 9>"${_PLAYGROUND_LOCKFILE}"
         if ! flock -n 9; then
             local holder
-            holder=$(cat "${pidfile}" 2>/dev/null || echo "unknown")
+            holder=$(cat "${_PLAYGROUND_PIDFILE}" 2>/dev/null || echo "unknown")
             echo "❌ Another playground script is already running (PID ${holder}). Aborting." >&2
             exit 1
         fi
     else
         # macOS fallback: PID file with staleness check (small TOCTOU window; acceptable for dev tooling).
-        if [[ -f "${pidfile}" ]]; then
+        if [[ -f "${_PLAYGROUND_PIDFILE}" ]]; then
             local holder
-            holder=$(cat "${pidfile}")
+            holder=$(cat "${_PLAYGROUND_PIDFILE}")
             if kill -0 "${holder}" 2>/dev/null; then
                 echo "❌ Another playground script is already running (PID ${holder}). Aborting." >&2
                 exit 1
@@ -249,12 +256,8 @@ acquire_lock() {
         fi
     fi
 
-    echo $$ > "${pidfile}"
+    echo $$ > "${_PLAYGROUND_PIDFILE}"
 
-    _release_playground_lock() {
-        flock -u 9 2>/dev/null || true
-        rm -f "${pidfile}"
-    }
     # EXIT fires on normal exit and signal death when INT/TERM are also trapped.
     trap '_release_playground_lock' EXIT
     trap '_release_playground_lock; trap - INT;  kill -INT  $$' INT

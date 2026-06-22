@@ -897,17 +897,46 @@ kubectl rollout status deployment/argocd-server \
 
 echo "✅ ArgoCD: https://argocd.${HUB_TRAEFIK_IP_DASHED}.sslip.io"
 
-# Create + label tenant namespaces before ArgoCD syncs (demo-app requires rbr-ver to pre-exist)
-echo "🏗️  Creating + labelling tenant namespaces..."
+# The Capsule Tenant must exist before its namespaces are created, and the
+# capsule.clastix.io/tenant label must be present at namespace CREATE time:
+# Capsule's namespaces.validating.projectcapsule.dev webhook denies patching the
+# tenant label onto an already-existing namespace ("namespace can not be patched
+# into a tenant" — CVE-2024-39690 hardening). setup.sh runs as cluster-admin,
+# which Capsule excludes from tenant enforcement, so it may create namespaces
+# directly into the tenant by setting the label in the create request.
+# We apply the Tenant directly here so the namespaces can be created; ArgoCD's
+# tenant-rbr app (prune=false) adopts the same Tenant object on first sync.
+echo "🏛️  Pre-seeding Capsule Tenant 'rbr' (ArgoCD adopts it on sync)..."
+kubectl apply --context "${HUB_CONTEXT}" \
+    -f "${GIT_REPO_ROOT}/manifests/capsule-tenant-rbr.yaml"
+kubectl wait tenant/rbr --context "${HUB_CONTEXT}" \
+    --for=jsonpath='{.status.state}'=Active --timeout=60s || true
+
+# demo-app requires rbr-ver to pre-exist before ArgoCD syncs. Capsule only lets a
+# *tenant owner* create a tenant-owned namespace (the webhook rejects both a plain
+# cluster-admin create and a forged ownerReference: "only tenant owners can create
+# tenant-owned namespaces"). setup.sh runs as cluster-admin, so we impersonate the
+# rbr tenant owner group (oidc:rbr-db-admin) — which Capsule binds to the
+# capsule-namespace-provisioner ClusterRole (create/patch namespaces). Capsule's
+# mutating webhook then injects the Tenant ownerReference automatically.
+# Use `create` not `apply`: the provisioner role lacks `get`, which apply needs.
+echo "🏗️  Creating tenant namespaces as tenant owner (Capsule injects ownerReference)..."
 for ns in rbr-ver rbr-ver-db; do
-    kubectl create namespace "${ns}" \
-        --context "${HUB_CONTEXT}" \
-        --dry-run=client -o yaml | kubectl apply --context "${HUB_CONTEXT}" -f -
-    kubectl label namespace "${ns}" \
-        capsule.clastix.io/tenant=rbr \
-        cnpg.io/driver-group=ver \
-        --context "${HUB_CONTEXT}" \
-        --overwrite
+    if kubectl get namespace "${ns}" --context "${HUB_CONTEXT}" &>/dev/null; then
+        echo "   namespace ${ns} already exists, skipping"
+        continue
+    fi
+    kubectl --context "${HUB_CONTEXT}" \
+        --as=capsule-bot --as-group=oidc:rbr-db-admin --as-group=system:authenticated \
+        create -f - <<EOF
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${ns}
+  labels:
+    capsule.clastix.io/tenant: rbr
+    cnpg.io/driver-group: ver
+EOF
 done
 echo "✅ Tenant namespaces ready"
 
