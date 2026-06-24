@@ -12,6 +12,9 @@ configs:
       g, argocd-admin, role:admin
       p, role:rbr-ver-sync, applications, sync, rbr/demo-app, allow
       p, role:rbr-ver-sync, applications, get, rbr/demo-app, allow
+      # ArgoCD v3 enforces fine-grained logs RBAC; applications,get no longer
+      # implies pod-log access, so grant it explicitly.
+      p, role:rbr-ver-sync, logs, get, rbr/demo-app, allow
       g, rbr-ver-dev, role:rbr-ver-sync
     policy.default: ''
 
