@@ -484,7 +484,10 @@ EOF
     # --- pgAdmin (self-service) ---
     echo "🔧 Deploying pgAdmin for rbr-ver..."
     PGADMIN_RBR_VER_EMAIL="${PGADMIN_RBR_VER_EMAIL:-admin@example.com}"
-    PGADMIN_RBR_VER_PASSWORD="$(openssl rand -base64 32 | tr -d '/+=' | head -c 32)"
+    # Deterministic default (overridable via env) so the login is predictable and
+    # consistent with the rest of the demo's admin/password convention. The random
+    # value was only ever echoed to stdout, making it easy to lose on a redeploy.
+    PGADMIN_RBR_VER_PASSWORD="${PGADMIN_RBR_VER_PASSWORD:-password}"
 
     kubectl apply --context "${LOCAL_CONTEXT}" \
         -f "${GIT_REPO_ROOT}/pgadmin/namespace.yaml"

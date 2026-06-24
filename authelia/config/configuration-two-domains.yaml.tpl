@@ -95,6 +95,9 @@ identity_providers:
       - client_id: grafana-rbr-ver
         client_name: Grafana RBR VER
         client_secret: '${AUTHELIA_GRAFANA_RBR_VER_CLIENT_SECRET_HASH}'
+        # Without this, Authelia defaults the client to two_factor and strands
+        # the browser on the second-factor page (no 2FA device registered).
+        authorization_policy: one_factor
         redirect_uris:
           - 'https://grafana-rbr-ver.${TRAEFIK_IP_DASHED}.sslip.io/login/generic_oauth'
         scopes:
@@ -107,6 +110,9 @@ identity_providers:
       - client_id: grafana-monitoring
         client_name: Grafana Monitoring
         client_secret: '${AUTHELIA_GRAFANA_MONITORING_CLIENT_SECRET_HASH}'
+        # Without this, Authelia defaults the client to two_factor and strands
+        # the browser on the second-factor page (no 2FA device registered).
+        authorization_policy: one_factor
         redirect_uris:
           - 'https://grafana.${TRAEFIK_IP_DASHED}.sslip.io/login/generic_oauth'
         scopes:

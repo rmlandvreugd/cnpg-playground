@@ -16,6 +16,12 @@ configs:
       # implies pod-log access, so grant it explicitly.
       p, role:rbr-ver-sync, logs, get, rbr/demo-app, allow
       g, rbr-ver-dev, role:rbr-ver-sync
+      # rbr tenant admin: full control over everything in the rbr project.
+      # rbr-admin user carries both groups; bind each so either grants access.
+      p, role:rbr-admin, applications, *, rbr/*, allow
+      p, role:rbr-admin, logs, *, rbr/*, allow
+      g, rbr-db-admin, role:rbr-admin
+      g, rbr-ver-db-admin, role:rbr-admin
     policy.default: ''
 
 server:
