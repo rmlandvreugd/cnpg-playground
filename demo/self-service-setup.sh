@@ -507,6 +507,14 @@ EOF
     kubectl rollout status deployment/pgadmin-rbr-ver \
         -n pgadmin --context "${LOCAL_CONTEXT}" --timeout=120s
 
+    # cert-manager Certificate for the websecure route (vault-pki, ECDSA).
+    # Traefik forces web->websecure, so the route must terminate TLS or the
+    # redirected HTTPS request 404s.
+    TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
+    envsubst '${TRAEFIK_IP_DASHED}' \
+        < "${SELF_SERVICE_YAML}/pgadmin/certificate-pgadmin-rbr-ver.yaml.tpl" \
+        | kubectl apply --context "${LOCAL_CONTEXT}" -f -
+
     TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
     envsubst '${TRAEFIK_IP_DASHED}' \
         < "${SELF_SERVICE_YAML}/pgadmin/ingressroute-pgadmin-rbr-ver.yaml.tpl" \
