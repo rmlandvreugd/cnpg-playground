@@ -16,6 +16,11 @@ spec:
       admin_password: admin
     live:
       max_connections: "0"
+    # Note: no signout_redirect_url -> Grafana's logout returns to its own login
+    # page instead of stranding the browser on Authelia. RP-initiated SSO logout
+    # (Authelia end_session + post_logout_redirect_uris) needs Authelia >= 4.40;
+    # this deployment runs 4.39.x which neither advertises end_session nor
+    # accepts the post_logout_redirect_uris client key.
     "auth.generic_oauth":
       enabled: "true"
       name: "Authelia"
@@ -23,9 +28,12 @@ spec:
       client_id: "grafana-rbr-ver"
       client_secret: ""
       scopes: "openid email profile groups"
-      auth_url: "https://${AUTHELIA_HOST}:${AUTHELIA_PORT}/api/oidc/authorization"
-      token_url: "https://${AUTHELIA_HOST}:${AUTHELIA_PORT}/api/oidc/token"
-      api_url: "https://${AUTHELIA_HOST}:${AUTHELIA_PORT}/api/oidc/userinfo"
+      # Browser-facing + backend OIDC endpoints must use the Traefik-domain
+      # Authelia (same domain as the user's SSO session), not the host-IP
+      # :9091 endpoint, or the two-domain session split strands login.
+      auth_url: "https://authelia.${TRAEFIK_IP_DASHED}.sslip.io/api/oidc/authorization"
+      token_url: "https://authelia.${TRAEFIK_IP_DASHED}.sslip.io/api/oidc/token"
+      api_url: "https://authelia.${TRAEFIK_IP_DASHED}.sslip.io/api/oidc/userinfo"
       groups_attribute_path: "groups"
       org_attribute_path: "groups"
       org_mapping: "rbr-db-admin:rbr:Admin rbr-ver-db-admin:rbr:Editor"
