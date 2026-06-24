@@ -904,12 +904,20 @@ kubectl patch secret argocd-secret \
     --type merge \
     -p "{\"stringData\":{\"oidc.authelia.clientSecret\":\"${AUTHELIA_ARGOCD_CLIENT_SECRET}\"}}"
 
-# Patch argocd-cm with server URL + Authelia OIDC config
+# Patch argocd-cm with server URL + Authelia OIDC config.
+# rootCA (indented 6 spaces to sit inside the oidc.config literal block) lets
+# argocd-server verify Authelia's step-ca-signed TLS cert. $oidc.* stays literal
+# because envsubst only substitutes the names in the allow-list below.
+STEP_CA_CHAIN_PEM_ARGOCD=$(sudo cat "${GIT_REPO_ROOT}/step-ca/pki/root_ca.crt" \
+    "${GIT_REPO_ROOT}/step-ca/pki/intermediate_ca.crt" | sed 's/^/      /')
 _argocd_cm_patch=$(mktemp)
 TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" \
-    envsubst '${TRAEFIK_IP_DASHED}' \
+STEP_CA_CHAIN_PEM_ARGOCD="${STEP_CA_CHAIN_PEM_ARGOCD}" \
+    envsubst '${TRAEFIK_IP_DASHED} ${STEP_CA_CHAIN_PEM_ARGOCD}' \
     < "${GIT_REPO_ROOT}/argocd/argocd-cm-patch.yaml.tpl" \
     > "${_argocd_cm_patch}"
+# Restore the ArgoCD secret reference that envsubst would otherwise mangle.
+sed -i 's|__OIDC_CLIENT_SECRET_REF__|$oidc.authelia.clientSecret|' "${_argocd_cm_patch}"
 kubectl patch configmap argocd-cm \
     --namespace argocd \
     --context "${HUB_CONTEXT}" \
