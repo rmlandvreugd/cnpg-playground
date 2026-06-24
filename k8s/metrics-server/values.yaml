@@ -1,0 +1,41 @@
+# metrics-server → kubelet (:10250): verify the kubelet serving cert against the
+# cluster CA instead of skipping verification. Requires serverTLSBootstrap=true on
+# the kubelets (k8s/kind-cluster.yaml) and the kubernetes.io/kubelet-serving CSRs to
+# be approved by kubelet-csr-approver. kube-root-ca.crt is the in-cluster copy of the
+# cluster CA (/etc/kubernetes/pki/ca.crt) that signs those serving certs.
+#
+# `args` is appended to the chart defaultArgs, so the defaults are preserved
+# (--kubelet-preferred-address-types=InternalIP,... → metrics-server connects by the
+# node InternalIP, which the serving cert now lists as a SAN). Do NOT add
+# --kubelet-insecure-tls: it is mutually exclusive with --kubelet-certificate-authority.
+args:
+  - --kubelet-certificate-authority=/run/kube-root-ca/ca.crt
+
+extraVolumes:
+  - name: kube-root-ca
+    configMap:
+      name: kube-root-ca.crt
+
+extraVolumeMounts:
+  - name: kube-root-ca
+    mountPath: /run/kube-root-ca
+    readOnly: true
+
+# APIService → metrics-server: cert-manager-issued serving cert with the CA bundle
+# auto-injected into the APIService by cert-manager's ca-injector
+# (tls.certManager.addInjectorAnnotations defaults to true), so it stays correct
+# across cert renewals.
+#
+# NOTE: we deliberately do NOT use the step-ca-rooted vault-pki ClusterIssuer here.
+# The chart hard-codes the Certificate privateKey to RSA, but the vault-pki Vault role
+# only signs EC keys (key_type=ec) -> issuance fails. The `existingSecret` workaround
+# (pre-issuing an EC cert ourselves) would pin apiService.caBundle to a one-time Helm
+# lookup of the leaf cert, which goes stale on every renewal (~30d max_ttl) and
+# silently breaks metrics. This internal kube-aggregator -> metrics-server channel
+# does not benefit from step-ca rooting, so we use the chart's default self-signed
+# cert-manager issuer, which ca-injector keeps in sync automatically.
+apiService:
+  insecureSkipTLSVerify: false
+
+tls:
+  type: cert-manager

@@ -4,6 +4,15 @@ name: cnpg
 networking:
   disableDefaultCNI: true
   podSubnet: "10.244.0.0/16"
+# Kubelets request serving certs from the cluster CA (with IP SANs) instead of
+# self-signing, so metrics-server can verify kubelet TLS on :10250. The resulting
+# kubernetes.io/kubelet-serving CSRs are auto-approved by kubelet-csr-approver
+# (the in-tree approver deliberately never approves serving CSRs).
+kubeadmConfigPatches:
+  - |
+    kind: KubeletConfiguration
+    apiVersion: kubelet.config.k8s.io/v1beta1
+    serverTLSBootstrap: true
 nodes:
 
 # Control Plane node

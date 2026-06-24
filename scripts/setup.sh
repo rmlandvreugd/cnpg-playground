@@ -207,6 +207,24 @@ for region in "${REGIONS[@]}"; do
     retry 30 10 kubectl wait --for=condition=Available tigerastatus --all \
         --timeout=900s --context "$(get_cluster_context "${region}")"
 
+    # Auto-approve the kubernetes.io/kubelet-serving CSRs created by serverTLSBootstrap
+    # (see k8s/kind-cluster.yaml.tpl). The in-tree approver never approves serving CSRs,
+    # so without this metrics-server cannot verify kubelet TLS. kubelet-csr-approver only
+    # approves — the cluster CA signer still issues the cert. Installed after Calico so
+    # its pods can schedule, and before metrics-server which depends on the result.
+    echo "🔏 Installing kubelet-csr-approver ${KUBELET_CSR_APPROVER_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
+    KIND_NODE_SUBNET=$(get_kind_ipv4_subnet kind)
+    helm_upgrade_install kubelet-csr-approver \
+        kubelet-csr-approver \
+        kube-system "${CONTEXT_NAME}" "${KUBELET_CSR_APPROVER_CHART_VERSION}" \
+        --repo-url https://postfinance.github.io/kubelet-csr-approver \
+        --set "providerRegex=^${K8S_CLUSTER_NAME}-[a-z0-9-]+\$" \
+        --set "bypassDnsResolution=true" \
+        --set-string "providerIpPrefixes=${KIND_NODE_SUBNET}" \
+        --set "maxExpirationSeconds=2592000"
+    kubectl --context "${CONTEXT_NAME}" -n kube-system rollout status \
+        deploy/kubelet-csr-approver --timeout=120s
+
     echo "🛠️  Installing MetalLB ${METALLB_CHART_VERSION} (chart) in '${K8S_CLUSTER_NAME}'..."
     # Enable strict ARP for kube-proxy
     kubectl get configmap kube-proxy -n kube-system -o yaml --context "$(get_cluster_context "${region}")" | \
@@ -677,6 +695,16 @@ ${STEP_CA_INT_CERT}" \
         < "${GIT_REPO_ROOT}/traefik/ingressroute-dashboard.yaml.tpl" \
         | kubectl --context "${CONTEXT_NAME}" apply -f -
     echo "✅ Traefik dashboard: https://traefik.${TRAEFIK_IP_DASHED}.sslip.io"
+
+    # Install metrics server
+    echo "🕸️  Installing metrics server on '${K8S_CLUSTER_NAME}'..."
+    helm_upgrade_install metrics-server \
+        metrics-server \
+        metrics-server "${CONTEXT_NAME}" "${METRICS_SERVER_CHART_VERSION}" \
+        --repo-url https://kubernetes-sigs.github.io/metrics-server/ \
+        --values "${GIT_REPO_ROOT}/k8s/metrics-server/values.yaml"
+
+    kubectl --context "${CONTEXT_NAME}" wait --for=condition=Available deployment/metrics-server -n metrics-server --timeout=300s
 
     # Traefik postgres LoadBalancer Service (separate IP from HTTP/HTTPS)
     # The postgres entrypoint is not exposed on the main Traefik LB (expose.default: false),
