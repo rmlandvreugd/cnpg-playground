@@ -386,6 +386,14 @@ EOF
         GRANT rbr_ver_ddl_owner  TO rbr_ver_vde_config WITH ADMIN OPTION;
         GRANT rbr_ver_ddl_admin  TO rbr_ver_vde_config WITH ADMIN OPTION;
         GRANT rbr_ver_ddl_reader TO rbr_ver_vde_config WITH ADMIN OPTION;
+        -- PostgreSQL 16+ (this cluster is PG 18): a CREATEROLE role may only
+        -- ALTER roles it holds ADMIN OPTION on. The 'app'/'readonly' login roles
+        -- are created by CNPG (superuser), so without these grants Vault's static
+        -- role rotation ('ALTER ROLE \"app\" WITH PASSWORD ...') fails with
+        -- 'permission denied to alter role' (SQLSTATE 42501). These run after the
+        -- cluster is ready, so the managed roles already exist.
+        GRANT \"app\"      TO rbr_ver_vde_config WITH ADMIN OPTION;
+        GRANT \"readonly\" TO rbr_ver_vde_config WITH ADMIN OPTION;
     "
     echo "✅ Vault DB config role created (password will be rotated by Vault)"
 
