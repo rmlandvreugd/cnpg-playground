@@ -743,6 +743,27 @@ ${STEP_CA_INT_CERT}" \
 
     kubectl --context "${CONTEXT_NAME}" wait --for=condition=Available deployment/capsule-proxy -n capsule-system --timeout=300s
 
+    # Expose capsule-proxy externally so the kubeconfig gangplank dispenses
+    # (config.apiServerURL=https://capsule-proxy.<ip>.sslip.io) is reachable from a
+    # tenant's kubectl. Traefik terminates TLS with a vault-pki cert whose SAN is the
+    # external host, then re-encrypts to capsule-proxy:9001 (HTTPS, enableSSL=true) via
+    # the insecureSkipVerify ServersTransport. Tenant auth (OIDC bearer token) is
+    # preserved end to end, so no TCP passthrough is needed.
+    echo "📜 Issuing capsule-proxy ingress TLS certificate in '${K8S_CLUSTER_NAME}'..."
+    TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
+        < "${GIT_REPO_ROOT}/capsule-proxy/certificate.yaml.tpl" \
+        | kubectl --context "${CONTEXT_NAME}" apply -f -
+    kubectl --context "${CONTEXT_NAME}" wait --for=condition=Ready \
+        certificate/capsule-proxy-ingress-tls-cert -n capsule-system --timeout=120s
+
+    echo "🌐 Applying capsule-proxy IngressRoute (HTTPS re-encrypt) in '${K8S_CLUSTER_NAME}'..."
+    kubectl --context "${CONTEXT_NAME}" apply \
+        -f "${GIT_REPO_ROOT}/capsule-proxy/serverstransport.yaml"
+    TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
+        < "${GIT_REPO_ROOT}/capsule-proxy/ingressroute.yaml.tpl" \
+        | kubectl --context "${CONTEXT_NAME}" apply -f -
+    echo "✅ capsule-proxy: https://capsule-proxy.${TRAEFIK_IP_DASHED}.sslip.io"
+
     echo "🏳️  Installing Kyverno ${KYVERNO_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
     helm_upgrade_install kyverno \
         oci://ghcr.io/kyverno/charts/kyverno \
@@ -889,7 +910,29 @@ helm_upgrade_install gangplank \
     --set "config.usernameClaim=email" \
     --set "config.audience=gangplank" \
     --set-json 'config.scopes=["openid","email","profile","groups"]' \
-    --set-json 'envFrom=[{"secretRef":{"name":"gangplank-oidc"}}]'
+    --set-json 'envFrom=[{"secretRef":{"name":"gangplank-oidc"}}]' \
+    --set "config.clusterCAPath=/etc/step-ca/ca-certificates.crt" \
+    --set "config.trustedCAPath=/etc/step-ca/ca-certificates.crt" \
+    --set-json 'volumes=[{"name":"step-ca-bundle","configMap":{"name":"step-ca-bundle"}}]' \
+    --set-json 'volumeMounts=[{"name":"step-ca-bundle","mountPath":"/etc/step-ca","readOnly":true}]'
+
+# Issue gangplank's TLS cert and route it through Traefik (HTTP backend on :80,
+# Traefik-terminated — same pattern as ArgoCD). The trust-manager-synced step-ca-bundle
+# configMap (key ca-certificates.crt, present in every namespace) is mounted at
+# /etc/step-ca: config.clusterCAPath points the dispensed kubeconfig's CA at it so kubectl
+# trusts the capsule-proxy ingress cert, and config.trustedCAPath lets gangplank trust
+# Authelia's step-ca-signed TLS during the server-side OIDC token exchange.
+echo "📜 Issuing gangplank TLS certificate..."
+TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
+    < "${GIT_REPO_ROOT}/gangplank/certificate.yaml.tpl" \
+    | kubectl --context "${HUB_CONTEXT}" apply -f -
+kubectl --context "${HUB_CONTEXT}" wait --for=condition=Ready \
+    certificate/gangplank-tls-cert -n gangplank --timeout=120s
+
+echo "🌐 Applying gangplank IngressRoute (HTTPS)..."
+TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
+    < "${GIT_REPO_ROOT}/gangplank/ingressroute.yaml.tpl" \
+    | kubectl --context "${HUB_CONTEXT}" apply -f -
 
 echo "✅ gangplank: https://gangplank.${HUB_TRAEFIK_IP_DASHED}.sslip.io"
 

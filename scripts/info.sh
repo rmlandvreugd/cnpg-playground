@@ -24,9 +24,8 @@ source "$(dirname "$0")/common.sh"
 # Prints the ingress endpoints that ACTUALLY exist in the given cluster context by
 # reading the live Traefik route objects, rather than hardcoding a list. This keeps
 # info.sh self-maintaining: whatever setup.sh / monitoring/setup.sh / pgadmin-setup.sh /
-# eso-vault.sh / self-service-setup.sh have published shows up, and nothing else (e.g.
-# gangplank/capsule-proxy, which print success URLs but create no IngressRoute, are
-# correctly omitted). The applied routes already carry the fully-rendered sslip.io host.
+# eso-vault.sh / self-service-setup.sh have published shows up, and nothing else.
+# The applied routes already carry the fully-rendered sslip.io host.
 print_ingress_urls() {
     local context="$1"
     local http_rows tcp_rows
