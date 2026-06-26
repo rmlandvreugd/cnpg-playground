@@ -419,13 +419,30 @@ EOF
         rm -f "${SW_INT_CERT_TMP}" "${SW_INT_KEY_TMP}" "${SW_EXT_TMP}" \
               "${SW_CSR_TMP}" "${SW_KEY_TMP}" "${SW_CERT_TMP}"
 
+        # Static S3 identities (-s3.config). Machine creds only; humans use OIDC/STS (-s3.iam.config, wired post-Traefik).
+        #   admin  — full Admin, used only to bootstrap buckets during setup (not handed to any workload)
+        #   loki   — RW on the 'loki' bucket only (blanket Admin removed)
+        #   barman — RW/List on the backup buckets (CNPG/Barman, migrated off RustFS)
         sudo tee "${SEAWEEDFS_CFG_DIR}/identities.json" > /dev/null <<JSON
 {
   "identities": [
     {
+      "name": "admin",
+      "credentials": [{"accessKey": "${SEAWEEDFS_ADMIN_ACCESS_KEY}", "secretKey": "${SEAWEEDFS_ADMIN_SECRET_KEY}"}],
+      "actions": ["Admin"]
+    },
+    {
       "name": "loki",
       "credentials": [{"accessKey": "${SEAWEEDFS_ACCESS_KEY}", "secretKey": "${SEAWEEDFS_SECRET_KEY}"}],
-      "actions": ["Admin", "Read:loki", "Write:loki", "List:loki", "Tagging:loki"]
+      "actions": ["Read:loki", "Write:loki", "List:loki", "Tagging:loki"]
+    },
+    {
+      "name": "barman",
+      "credentials": [{"accessKey": "${SEAWEEDFS_BARMAN_ACCESS_KEY}", "secretKey": "${SEAWEEDFS_BARMAN_SECRET_KEY}"}],
+      "actions": [
+        "Read:${SEAWEEDFS_BACKUP_BUCKET}", "Write:${SEAWEEDFS_BACKUP_BUCKET}", "List:${SEAWEEDFS_BACKUP_BUCKET}", "Tagging:${SEAWEEDFS_BACKUP_BUCKET}",
+        "Read:${SEAWEEDFS_VER_BACKUP_BUCKET}", "Write:${SEAWEEDFS_VER_BACKUP_BUCKET}", "List:${SEAWEEDFS_VER_BACKUP_BUCKET}", "Tagging:${SEAWEEDFS_VER_BACKUP_BUCKET}"
+      ]
     }
   ]
 }
@@ -459,6 +476,16 @@ JSON
                 -s3.key.file=/etc/seaweedfs/tls/seaweedfs_key.pem \
                 -s3.config=/etc/seaweedfs/identities.json
         ${CONTAINER_PROVIDER} network connect kind "${SEAWEEDFS_CONTAINER_NAME}"
+
+        # Pre-create Barman backup buckets (CNPG backups migrated off RustFS onto SeaweedFS).
+        # Uses the bootstrap 'admin' identity (CreateBucket needs Admin); barman/loki stay least-privilege.
+        echo "🪣 Creating SeaweedFS backup buckets (${SEAWEEDFS_BACKUP_BUCKET}, ${SEAWEEDFS_VER_BACKUP_BUCKET})..."
+        # NB: minio/mc has ENTRYPOINT [mc], so override with --entrypoint sh to run a shell.
+        retry 12 5 ${CONTAINER_PROVIDER} run --rm --network kind --entrypoint sh "${MC_IMAGE:-minio/mc:latest}" -c "
+            mc --insecure alias set sw https://${SEAWEEDFS_IP}:8333 '${SEAWEEDFS_ADMIN_ACCESS_KEY}' '${SEAWEEDFS_ADMIN_SECRET_KEY}' \
+            && mc --insecure mb --ignore-existing sw/${SEAWEEDFS_BACKUP_BUCKET} sw/${SEAWEEDFS_VER_BACKUP_BUCKET} \
+            && echo '✅ SeaweedFS backup buckets ready'" \
+            || echo "  ⚠️  Backup bucket init failed — verify SeaweedFS S3 gateway is up and 'admin' identity is valid"
 
         echo "🔒 Starting SeaweedFS admin UI with TLS..."
         sudo tee "${SEAWEEDFS_CFG_DIR}/security.toml" > /dev/null <<TOML
@@ -884,6 +911,171 @@ echo "✅ Authelia proxied at https://authelia.${HUB_TRAEFIK_IP_DASHED}.sslip.io
 echo "🔄 Reconfiguring Authelia with two-domain session cookie..."
 TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" \
     "${SCRIPT_DIR}/authelia-setup.sh"
+
+echo "=================================================="
+echo "🔐 Wiring SeaweedFS S3 OIDC/STS (humans via Authelia)..."
+echo "=================================================="
+# Admin UI OIDC is NOT available in the OSS weed binary (admin UI = local password only),
+# so this only covers the S3 API: humans call AssumeRoleWithWebIdentity with an Authelia JWT
+# and get temporary S3 creds scoped by their 'groups' claim. Machine identities (loki, barman)
+# keep using static keys via -s3.config. Both configs run together. See cnpg-playground-yt4
+# for the deferred admin-UI access-control follow-up.
+SEAWEEDFS_CFG_DIR="${GIT_REPO_ROOT}/seaweedfs/config"
+SEAWEEDFS_TLS_DIR="${GIT_REPO_ROOT}/seaweedfs/tls"
+SEAWEEDFS_IP=$(${CONTAINER_PROVIDER} inspect "${SEAWEEDFS_CONTAINER_NAME}" \
+    --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
+AUTHELIA_ISSUER="https://authelia.${HUB_TRAEFIK_IP_DASHED}.sslip.io"
+
+# CA bundle so the S3 gateway can verify Authelia's vault-pki-issued Traefik cert.
+# Chain: leaf(authelia) <- vault pki_int <- step-ca intermediate <- step-ca root.
+echo "📜 Building Authelia CA trust bundle for SeaweedFS..."
+sudo bash -c "cat \
+    '${GIT_REPO_ROOT}/vault/pki/intermediate.crt' \
+    '${GIT_REPO_ROOT}/step-ca/pki/intermediate_ca.crt' \
+    '${GIT_REPO_ROOT}/step-ca/pki/root_ca.crt' \
+    > '${SEAWEEDFS_CFG_DIR}/authelia-ca.pem'"
+
+# IAM config (-s3.iam.config): STS + Authelia OIDC provider + role-per-group mapping.
+#   group 'admin'            -> S3AdminRole    (full s3:*)
+#   group 'rbr-ver-db-admin' -> S3BackupRWRole (RW on the tenant backup bucket)
+#   group 'rbr-po'           -> S3BackupRORole (RO on the tenant backup bucket)
+# No defaultRole: users in no mapped group cannot assume any role (deny by default).
+echo "📝 Rendering SeaweedFS iam.json (issuer ${AUTHELIA_ISSUER})..."
+sudo tee "${SEAWEEDFS_CFG_DIR}/iam.json" > /dev/null <<JSON
+{
+  "sts": {
+    "tokenDuration": "1h",
+    "maxSessionLength": "12h",
+    "issuer": "seaweedfs-sts",
+    "signingKey": "${SEAWEEDFS_STS_SIGNING_KEY}"
+  },
+  "providers": [
+    {
+      "name": "authelia",
+      "type": "oidc",
+      "enabled": true,
+      "config": {
+        "issuer": "${AUTHELIA_ISSUER}",
+        "clientId": "seaweedfs-s3",
+        "clientSecret": "${AUTHELIA_SEAWEEDFS_S3_CLIENT_SECRET}",
+        "jwksUri": "${AUTHELIA_ISSUER}/jwks.json",
+        "userInfoUri": "${AUTHELIA_ISSUER}/api/oidc/userinfo",
+        "scopes": ["openid", "profile", "email", "groups"],
+        "tlsCaCert": "/etc/seaweedfs/authelia-ca.pem",
+        "roleMapping": {
+          "rules": [
+            { "claim": "groups", "value": "admin",            "role": "arn:aws:iam::role/S3AdminRole" },
+            { "claim": "groups", "value": "rbr-ver-db-admin", "role": "arn:aws:iam::role/S3BackupRWRole" },
+            { "claim": "groups", "value": "rbr-po",           "role": "arn:aws:iam::role/S3BackupRORole" }
+          ]
+        }
+      }
+    }
+  ],
+  "policies": [
+    {
+      "name": "S3AdminPolicy",
+      "document": {
+        "Version": "2012-10-17",
+        "Statement": [
+          { "Effect": "Allow", "Action": ["s3:*"], "Resource": ["*"] }
+        ]
+      }
+    },
+    {
+      "name": "S3BackupRWPolicy",
+      "document": {
+        "Version": "2012-10-17",
+        "Statement": [
+          { "Effect": "Allow", "Action": ["s3:Get*", "s3:List*", "s3:Put*", "s3:DeleteObject"],
+            "Resource": ["arn:aws:s3:::${SEAWEEDFS_VER_BACKUP_BUCKET}", "arn:aws:s3:::${SEAWEEDFS_VER_BACKUP_BUCKET}/*"] }
+        ]
+      }
+    },
+    {
+      "name": "S3BackupROPolicy",
+      "document": {
+        "Version": "2012-10-17",
+        "Statement": [
+          { "Effect": "Allow", "Action": ["s3:Get*", "s3:List*"],
+            "Resource": ["arn:aws:s3:::${SEAWEEDFS_VER_BACKUP_BUCKET}", "arn:aws:s3:::${SEAWEEDFS_VER_BACKUP_BUCKET}/*"] }
+        ]
+      }
+    }
+  ],
+  "roles": [
+    {
+      "roleName": "S3AdminRole",
+      "roleArn": "arn:aws:iam::role/S3AdminRole",
+      "attachedPolicies": ["S3AdminPolicy"],
+      "trustPolicy": {
+        "Version": "2012-10-17",
+        "Statement": [
+          { "Effect": "Allow", "Principal": { "Federated": "*" }, "Action": ["sts:AssumeRoleWithWebIdentity"],
+            "Condition": { "StringEquals": { "oidc:iss": "${AUTHELIA_ISSUER}" } } }
+        ]
+      }
+    },
+    {
+      "roleName": "S3BackupRWRole",
+      "roleArn": "arn:aws:iam::role/S3BackupRWRole",
+      "attachedPolicies": ["S3BackupRWPolicy"],
+      "trustPolicy": {
+        "Version": "2012-10-17",
+        "Statement": [
+          { "Effect": "Allow", "Principal": { "Federated": "*" }, "Action": ["sts:AssumeRoleWithWebIdentity"],
+            "Condition": { "StringEquals": { "oidc:iss": "${AUTHELIA_ISSUER}" } } }
+        ]
+      }
+    },
+    {
+      "roleName": "S3BackupRORole",
+      "roleArn": "arn:aws:iam::role/S3BackupRORole",
+      "attachedPolicies": ["S3BackupROPolicy"],
+      "trustPolicy": {
+        "Version": "2012-10-17",
+        "Statement": [
+          { "Effect": "Allow", "Principal": { "Federated": "*" }, "Action": ["sts:AssumeRoleWithWebIdentity"],
+            "Condition": { "StringEquals": { "oidc:iss": "${AUTHELIA_ISSUER}" } } }
+        ]
+      }
+    }
+  ]
+}
+JSON
+
+echo "🔁 Restarting SeaweedFS S3 gateway with -s3.iam.config..."
+${CONTAINER_PROVIDER} stop "${SEAWEEDFS_CONTAINER_NAME}"
+${CONTAINER_PROVIDER} rm   "${SEAWEEDFS_CONTAINER_NAME}"
+${CONTAINER_PROVIDER} run \
+    --name "${SEAWEEDFS_CONTAINER_NAME}" -d \
+    --network bridge \
+    -p "${SEAWEEDFS_S3_PORT}:8333" \
+    -p "${SEAWEEDFS_S3_HTTP_PORT}:${SEAWEEDFS_S3_HTTP_PORT}" \
+    -p "${SEAWEEDFS_MASTER_PORT}:9333" \
+    -p "${SEAWEEDFS_VOLUME_PORT}:9340" \
+    -p "${SEAWEEDFS_FILER_PORT}:8889" \
+    -v "${SEAWEEDFS_CONTAINER_NAME}:/data" \
+    -v "${SEAWEEDFS_TLS_DIR}:/etc/seaweedfs/tls:ro" \
+    -v "${SEAWEEDFS_CFG_DIR}/identities.json:/etc/seaweedfs/identities.json:ro" \
+    -v "${SEAWEEDFS_CFG_DIR}/iam.json:/etc/seaweedfs/iam.json:ro" \
+    -v "${SEAWEEDFS_CFG_DIR}/authelia-ca.pem:/etc/seaweedfs/authelia-ca.pem:ro" \
+    --restart unless-stopped \
+    "${SEAWEEDFS_IMAGE}" \
+    server -dir=/data \
+        -ip.bind=0.0.0.0 \
+        -filer \
+        -s3 \
+        -filer.port=8889 \
+        -volume.port=9340 \
+        -s3.port="${SEAWEEDFS_S3_HTTP_PORT}" \
+        -s3.port.https=8333 \
+        -s3.cert.file=/etc/seaweedfs/tls/seaweedfs_cert.pem \
+        -s3.key.file=/etc/seaweedfs/tls/seaweedfs_key.pem \
+        -s3.config=/etc/seaweedfs/identities.json \
+        -s3.iam.config=/etc/seaweedfs/iam.json
+${CONTAINER_PROVIDER} network connect kind "${SEAWEEDFS_CONTAINER_NAME}"
+echo "✅ SeaweedFS S3 OIDC/STS wired (clientId seaweedfs-s3, issuer ${AUTHELIA_ISSUER})"
 
 echo "🔑 Installing gangplank (OIDC kubeconfig dispenser)..."
 kubectl create namespace gangplank --context "${HUB_CONTEXT}" \

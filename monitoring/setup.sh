@@ -264,7 +264,7 @@ EOF
         -n grafana \
         --image=minio/mc:latest \
         --pod-running-timeout=180s \
-        --command -- sh -c "mc --insecure alias set store https://seaweedfs:8333 '${SEAWEEDFS_ACCESS_KEY}' '${SEAWEEDFS_SECRET_KEY}' 2>&1 \
+        --command -- sh -c "mc --insecure alias set store https://seaweedfs:8333 '${SEAWEEDFS_ADMIN_ACCESS_KEY}' '${SEAWEEDFS_ADMIN_SECRET_KEY}' 2>&1 \
             && mc --insecure mb --ignore-existing store/loki \
             && echo '✅ Bucket loki ready'"
     kubectl --context "${CONTEXT_NAME}" -n grafana wait pod/loki-bucket-init \

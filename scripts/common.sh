@@ -91,8 +91,21 @@ SEAWEEDFS_WEBDAV_PORT="${SEAWEEDFS_WEBDAV_PORT:-7333}"              # WebDAV HTT
 SEAWEEDFS_WEBDAV_CONTAINER_NAME="${SEAWEEDFS_WEBDAV_CONTAINER_NAME:-seaweedfs-webdav}"
 SEAWEEDFS_WORKER_METRICS_PORT="${SEAWEEDFS_WORKER_METRICS_PORT:-9327}"  # Worker Prometheus metrics
 SEAWEEDFS_WORKER_CONTAINER_NAME="${SEAWEEDFS_WORKER_CONTAINER_NAME:-seaweedfs-worker}"
+# Static S3 identities (-s3.config / identities.json). Machine creds — humans use OIDC/STS (-s3.iam.config).
+# loki: RW on the 'loki' bucket only (keeps Loki working; blanket Admin dropped — see SEAWEEDFS_ADMIN_* for bootstrap).
 SEAWEEDFS_ACCESS_KEY="${SEAWEEDFS_ACCESS_KEY:-loki}"
 SEAWEEDFS_SECRET_KEY="${SEAWEEDFS_SECRET_KEY:-lokiS3secret}"
+# admin: full Admin — used only to bootstrap buckets (mc mb) during setup, not handed to any workload.
+SEAWEEDFS_ADMIN_ACCESS_KEY="${SEAWEEDFS_ADMIN_ACCESS_KEY:-swadmin}"
+SEAWEEDFS_ADMIN_SECRET_KEY="${SEAWEEDFS_ADMIN_SECRET_KEY:-swadminS3secret}"
+# barman: RW/List on the backup buckets — used by CNPG/Barman ObjectStores (migrated off RustFS).
+SEAWEEDFS_BARMAN_ACCESS_KEY="${SEAWEEDFS_BARMAN_ACCESS_KEY:-barman}"
+SEAWEEDFS_BARMAN_SECRET_KEY="${SEAWEEDFS_BARMAN_SECRET_KEY:-barmanS3secret}"
+# Backup buckets (Barman). 'backups' = pg-local; per-tenant buckets carved out per cluster.
+SEAWEEDFS_BACKUP_BUCKET="${SEAWEEDFS_BACKUP_BUCKET:-backups}"
+SEAWEEDFS_VER_BACKUP_BUCKET="${SEAWEEDFS_VER_BACKUP_BUCKET:-verstappen-backups}"
+# STS signing key for -s3.iam.config (base64, 32+ bytes). Demo value — override in real deployments.
+SEAWEEDFS_STS_SIGNING_KEY="${SEAWEEDFS_STS_SIGNING_KEY:-Y25wZy1wbGF5Z3JvdW5kLXNlYXdlZWRmcy1zdHMtMzI=}"
 
 # Revocation Exporter Configuration (host container, --network host)
 REVOCATION_EXPORTER_CONTAINER_NAME="${REVOCATION_EXPORTER_CONTAINER_NAME:-revocation-exporter}"

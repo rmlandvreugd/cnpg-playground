@@ -277,44 +277,44 @@ EOF
         wait_for_external_secret "verstappen-${es}" "rbr-ver-db"
     done
 
-    # --- Wire objectstore-local into rbr-ver-db ---
-    echo "🔧 Wiring objectstore-local Service+Endpoints in rbr-ver-db..."
-    OBJECTSTORE_IP=$(${CONTAINER_PROVIDER} inspect "${RUSTFS_BASE_NAME}-local" \
+    # --- Wire SeaweedFS into rbr-ver-db (tenant backups migrated off RustFS) ---
+    echo "🔧 Wiring SeaweedFS Service+Endpoints in rbr-ver-db..."
+    OBJECTSTORE_IP=$(${CONTAINER_PROVIDER} inspect "${SEAWEEDFS_CONTAINER_NAME}" \
         --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
     kubectl apply --context "${LOCAL_CONTEXT}" -f - <<EOF
 apiVersion: v1
 kind: Service
 metadata:
-  name: objectstore-local
+  name: seaweedfs
   namespace: rbr-ver-db
 spec:
   ports:
     - name: s3
-      port: 9000
-      targetPort: 9000
+      port: 8333
+      targetPort: 8333
 ---
 apiVersion: v1
 kind: Endpoints
 metadata:
-  name: objectstore-local
+  name: seaweedfs
   namespace: rbr-ver-db
 subsets:
   - addresses:
       - ip: ${OBJECTSTORE_IP}
     ports:
       - name: s3
-        port: 9000
+        port: 8333
 EOF
 
-    echo "🔑 Creating objectstore-local credentials Secret in rbr-ver-db..."
-    kubectl create secret generic objectstore-local \
+    echo "🔑 Creating seaweedfs-barman credentials Secret in rbr-ver-db..."
+    kubectl create secret generic seaweedfs-barman \
         --namespace rbr-ver-db \
         --context "${LOCAL_CONTEXT}" \
-        --from-literal=ACCESS_KEY_ID="${RUSTFS_ROOT_USER}" \
-        --from-literal=ACCESS_SECRET_KEY="${RUSTFS_ROOT_PASSWORD}" \
+        --from-literal=ACCESS_KEY_ID="${SEAWEEDFS_BARMAN_ACCESS_KEY}" \
+        --from-literal=ACCESS_SECRET_KEY="${SEAWEEDFS_BARMAN_SECRET_KEY}" \
         --dry-run=client -o yaml \
         | kubectl apply --context "${LOCAL_CONTEXT}" -f -
-    echo "✅ Objectstore wired (IP: ${OBJECTSTORE_IP}; bucket verstappen-backups/ auto-created on first WAL)"
+    echo "✅ SeaweedFS wired (IP: ${OBJECTSTORE_IP}; bucket ${SEAWEEDFS_VER_BACKUP_BUCKET}/ pre-created in setup.sh)"
 
     # --- ObjectStore CR + CNPG Cluster ---
     echo "🐘 Applying ObjectStore CR..."
