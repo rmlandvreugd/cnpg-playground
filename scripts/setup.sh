@@ -940,6 +940,11 @@ sudo bash -c "cat \
 #   group 'rbr-ver-db-admin' -> S3BackupRWRole (RW on the tenant backup bucket)
 #   group 'rbr-po'           -> S3BackupRORole (RO on the tenant backup bucket)
 # No defaultRole: users in no mapped group cannot assume any role (deny by default).
+# SECURITY: AssumeRoleWithWebIdentity lets the caller name the RoleArn directly, and the
+# role trustPolicy — NOT the provider roleMapping — is the gate. So each trustPolicy must
+# condition on BOTH oidc:iss AND oidc:groups (the required group); conditioning on issuer
+# alone would let any Authelia user assume any role (e.g. rbr-po -> S3AdminRole). SeaweedFS
+# evaluates StringEquals on an array claim as "any element matches".
 echo "📝 Rendering SeaweedFS iam.json (issuer ${AUTHELIA_ISSUER})..."
 sudo tee "${SEAWEEDFS_CFG_DIR}/iam.json" > /dev/null <<JSON
 {
@@ -1012,7 +1017,7 @@ sudo tee "${SEAWEEDFS_CFG_DIR}/iam.json" > /dev/null <<JSON
         "Version": "2012-10-17",
         "Statement": [
           { "Effect": "Allow", "Principal": { "Federated": "*" }, "Action": ["sts:AssumeRoleWithWebIdentity"],
-            "Condition": { "StringEquals": { "oidc:iss": "${AUTHELIA_ISSUER}" } } }
+            "Condition": { "StringEquals": { "oidc:iss": "${AUTHELIA_ISSUER}", "oidc:groups": "admin" } } }
         ]
       }
     },
@@ -1024,7 +1029,7 @@ sudo tee "${SEAWEEDFS_CFG_DIR}/iam.json" > /dev/null <<JSON
         "Version": "2012-10-17",
         "Statement": [
           { "Effect": "Allow", "Principal": { "Federated": "*" }, "Action": ["sts:AssumeRoleWithWebIdentity"],
-            "Condition": { "StringEquals": { "oidc:iss": "${AUTHELIA_ISSUER}" } } }
+            "Condition": { "StringEquals": { "oidc:iss": "${AUTHELIA_ISSUER}", "oidc:groups": "rbr-ver-db-admin" } } }
         ]
       }
     },
@@ -1036,7 +1041,7 @@ sudo tee "${SEAWEEDFS_CFG_DIR}/iam.json" > /dev/null <<JSON
         "Version": "2012-10-17",
         "Statement": [
           { "Effect": "Allow", "Principal": { "Federated": "*" }, "Action": ["sts:AssumeRoleWithWebIdentity"],
-            "Condition": { "StringEquals": { "oidc:iss": "${AUTHELIA_ISSUER}" } } }
+            "Condition": { "StringEquals": { "oidc:iss": "${AUTHELIA_ISSUER}", "oidc:groups": "rbr-po" } } }
         ]
       }
     }
