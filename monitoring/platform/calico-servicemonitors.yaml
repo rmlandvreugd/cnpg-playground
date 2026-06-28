@@ -1,0 +1,47 @@
+# ServiceMonitors for the Calico data plane. Applied after the Prometheus Operator
+# CRDs exist (Calico is installed by scripts/setup.sh, before monitoring).
+#
+# - calico-felix selects the calico-felix-metrics Service from calico-metrics-services.yaml.
+# - calico-typha / calico-kube-controllers select the Services the Tigera operator creates
+#   itself; their selector labels and port names mirror those operator-managed Services.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: calico-felix
+  namespace: calico-system
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: calico-felix-metrics
+  endpoints:
+    - port: metrics
+      path: /metrics
+      scheme: http
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: calico-typha
+  namespace: calico-system
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: calico-typha-metrics
+  endpoints:
+    - port: calico-typha-metrics
+      path: /metrics
+      scheme: http
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: calico-kube-controllers
+  namespace: calico-system
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: calico-kube-controllers
+  endpoints:
+    - port: metrics-port
+      path: /metrics
+      scheme: http

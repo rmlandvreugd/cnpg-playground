@@ -1,0 +1,24 @@
+# Metrics Service for Calico Felix.
+#
+# The Tigera operator already creates Services for Typha (calico-typha-metrics) and
+# kube-controllers (calico-kube-controllers-metrics), but NOT for Felix. Felix metrics
+# are enabled via k8s/calico/installation.yaml (spec.nodeMetricsPort=9091); this headless
+# Service exposes that port so the calico-felix ServiceMonitor can scrape the calico-node
+# pods. (Typha/kube-controllers are scraped via the operator-managed Services — see
+# calico-servicemonitors.yaml.)
+apiVersion: v1
+kind: Service
+metadata:
+  name: calico-felix-metrics
+  namespace: calico-system
+  labels:
+    app.kubernetes.io/name: calico-felix-metrics
+spec:
+  clusterIP: None
+  selector:
+    k8s-app: calico-node
+  ports:
+    - name: metrics
+      port: 9091
+      targetPort: 9091
+      protocol: TCP

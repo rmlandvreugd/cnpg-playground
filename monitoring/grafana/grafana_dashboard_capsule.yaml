@@ -1,0 +1,13 @@
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: capsule-resourcepools
+  namespace: grafana
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: "grafana"
+  # Upstream "Capsule / ResourcePools" dashboard. Uses capsule_* metrics scraped via
+  # the capsule-controller-manager ServiceMonitor and a ${datasource} template variable
+  # that binds to the default Prometheus datasource (DS_PROMETHEUS).
+  url: "https://raw.githubusercontent.com/projectcapsule/capsule/v0.13.6/charts/capsule/dashboards/resourcepools-dashboard.json"

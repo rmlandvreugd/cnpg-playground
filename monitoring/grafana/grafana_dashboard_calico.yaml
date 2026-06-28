@@ -1,0 +1,17 @@
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: calico-felix
+  namespace: grafana
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: "grafana"
+  # grafana.com dashboard 3244 "Kubernetes Calico" — Felix metrics (felix_*) scraped via
+  # the calico-felix ServiceMonitor. It declares a DS_PROMETHEUS input, remapped to the
+  # Mimir datasource like the node-exporter dashboard.
+  grafanaCom:
+    id: 3244
+  datasources:
+    - inputName: "DS_PROMETHEUS"
+      datasourceName: "DS_MIMIR"

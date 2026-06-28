@@ -1,0 +1,38 @@
+# ServiceMonitors for the Capsule control plane.
+#
+# Capsule and capsule-proxy are installed by scripts/setup.sh BEFORE the Prometheus
+# Operator CRDs exist (kube-prometheus-stack is installed later by monitoring/setup.sh),
+# so the charts' built-in `serviceMonitor.enabled` cannot be used at install time.
+# Instead the charts' metrics Services are always created, and these standalone
+# ServiceMonitors are applied here, after the CRDs exist.
+#
+# - capsule-controller-manager-metrics-service: port "metrics" (8080), labels app.kubernetes.io/name=capsule
+# - capsule-proxy-metrics-service:               port "metrics" (8080), labels app.kubernetes.io/name=capsule-proxy, component=proxy
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: capsule-controller-manager
+  namespace: capsule-system
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: capsule
+  endpoints:
+    - port: metrics
+      path: /metrics
+      scheme: http
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: capsule-proxy
+  namespace: capsule-system
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: capsule-proxy
+      app.kubernetes.io/component: proxy
+  endpoints:
+    - port: metrics
+      path: /metrics
+      scheme: http

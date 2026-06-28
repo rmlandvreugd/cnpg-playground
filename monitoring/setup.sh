@@ -305,6 +305,23 @@ fi
             -f "${GIT_REPO_ROOT}/monitoring/cnpg/cnpg-backup-alerts.yaml"
     fi
 
+    # Platform monitors (Capsule + Calico). These components are installed before the
+    # Prometheus Operator CRDs exist, so their ServiceMonitors are applied here instead
+    # of via the charts' built-in serviceMonitor option.
+    if kubectl --context "${CONTEXT_NAME}" get namespace capsule-system &>/dev/null; then
+        echo "📊 Applying Capsule monitors..."
+        kubectl --context "${CONTEXT_NAME}" apply \
+            -f "${GIT_REPO_ROOT}/monitoring/platform/capsule-servicemonitor.yaml"
+    fi
+
+    if kubectl --context "${CONTEXT_NAME}" get namespace calico-system &>/dev/null; then
+        echo "📊 Applying Calico metrics services and monitors..."
+        kubectl --context "${CONTEXT_NAME}" apply \
+            -f "${GIT_REPO_ROOT}/monitoring/platform/calico-metrics-services.yaml" \
+            -f "${GIT_REPO_ROOT}/monitoring/platform/calico-servicemonitors.yaml" \
+            -f "${GIT_REPO_ROOT}/monitoring/platform/calico-kube-controllers-metrics-policy.yaml"
+    fi
+
     # Wire revocation-exporter (host container) into monitoring namespace — hub only
     if [[ "${region}" == "${HUB_REGION}" ]]; then
         echo "🔍 Wiring revocation exporter into monitoring namespace..."
