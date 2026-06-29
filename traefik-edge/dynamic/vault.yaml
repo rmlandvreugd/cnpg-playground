@@ -1,0 +1,15 @@
+http:
+  routers:
+    vault:
+      rule: "Host(`vault.172-18-0-250.sslip.io`)"
+      entryPoints:
+        - websecure
+      service: vault
+      tls: {}
+
+  services:
+    vault:
+      loadBalancer:
+        serversTransport: insecure-backend
+        servers:
+          - url: "https://vault:8200"

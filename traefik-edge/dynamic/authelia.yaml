@@ -1,0 +1,15 @@
+http:
+  routers:
+    authelia:
+      rule: "Host(`authelia.172-18-0-250.sslip.io`)"
+      entryPoints:
+        - websecure
+      service: authelia
+      tls: {}
+
+  services:
+    authelia:
+      loadBalancer:
+        serversTransport: insecure-backend
+        servers:
+          - url: "https://authelia:9091"

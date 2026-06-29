@@ -551,13 +551,12 @@ TOML
     $CONTAINER_PROVIDER network connect kind "${AUTHELIA_CONTAINER_NAME}" 2>/dev/null || true
     $CONTAINER_PROVIDER network connect kind "${SEAWEEDFS_ADMIN_CONTAINER_NAME}" 2>/dev/null || true
 
-    # Start external edge Traefik (host container, static IP 172.18.0.250 on kind network).
-    # Per-service TLS certs must be in traefik-edge/certs/ before this step — provisioned by
-    # scripts/traefik-edge-setup.sh (added in cnpg-playground-5sq.2).
+    # Provision per-service TLS certs for the edge Traefik, then start the container.
+    "${SCRIPT_DIR}/traefik-edge-setup.sh"
+
     echo "🔄 Starting external edge Traefik (${TRAEFIK_EDGE_CONTAINER_NAME} @ ${TRAEFIK_EDGE_IP})..."
     TRAEFIK_EDGE_DIR="${GIT_REPO_ROOT}/traefik-edge"
     TRAEFIK_EDGE_CERTS_DIR="${TRAEFIK_EDGE_DIR}/certs"
-    sudo mkdir -p "${TRAEFIK_EDGE_CERTS_DIR}"
     $CONTAINER_PROVIDER stop  "${TRAEFIK_EDGE_CONTAINER_NAME}" 2>/dev/null || true
     $CONTAINER_PROVIDER rm    "${TRAEFIK_EDGE_CONTAINER_NAME}" 2>/dev/null || true
     $CONTAINER_PROVIDER run \
@@ -906,31 +905,9 @@ HUB_TRAEFIK_IP_DASHED=$(ip_to_dashed "${HUB_TRAEFIK_IP}")
 echo "=================================================="
 echo "🔐 Exposing Authelia via Traefik (hub cluster)..."
 echo "=================================================="
-# Radar runs at radar.TRAEFIK_IP.sslip.io but Authelia is a host container
-# at HOST_IP. Authelia requires authelia_url to share the cookie domain.
-# We proxy Authelia through Traefik so both endpoints share the Traefik domain.
-kubectl create namespace authelia --context "${HUB_CONTEXT}" \
-    --dry-run=client -o yaml | kubectl apply --context "${HUB_CONTEXT}" -f -
-
-HOST_IP_DASHED="${HOST_IP_DASHED}" \
-AUTHELIA_PORT="${AUTHELIA_PORT}" \
-envsubst '${HOST_IP_DASHED} ${AUTHELIA_PORT}' \
-    < "${GIT_REPO_ROOT}/authelia/backend-service.yaml.tpl" \
-    | kubectl --context "${HUB_CONTEXT}" apply -f -
-
-echo "📜 Issuing Authelia Traefik TLS certificate..."
-TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
-    < "${GIT_REPO_ROOT}/authelia/certificate.yaml.tpl" \
-    | kubectl --context "${HUB_CONTEXT}" apply -f -
-kubectl wait --for=condition=Ready certificate/authelia-tls-cert \
-    -n authelia --timeout=120s --context "${HUB_CONTEXT}"
-
-TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" \
-AUTHELIA_PORT="${AUTHELIA_PORT}" \
-envsubst '${TRAEFIK_IP_DASHED} ${AUTHELIA_PORT}' \
-    < "${GIT_REPO_ROOT}/authelia/ingressroute.yaml.tpl" \
-    | kubectl --context "${HUB_CONTEXT}" apply -f -
-echo "✅ Authelia proxied at https://authelia.${HUB_TRAEFIK_IP_DASHED}.sslip.io"
+# Authelia is fronted by the external edge Traefik (not in-cluster Traefik).
+# In-cluster routing (ExternalName Service, cert-manager Certificate, IngressRoute)
+# has been retired. Authelia's OIDC issuer is now authelia.172-18-0-250.sslip.io.
 
 echo "🔄 Reconfiguring Authelia with two-domain session cookie..."
 TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" \
