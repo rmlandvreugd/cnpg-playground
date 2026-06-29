@@ -1,0 +1,43 @@
+# PodMonitor for the Argo CD control plane.
+#
+# This Argo CD install does NOT ship the usual "argocd-*-metrics" Services, so there is
+# nothing for a ServiceMonitor to select. The component pods do expose metrics on a named
+# container port "metrics", however:
+#
+#   application-controller      8082
+#   server                      8083
+#   repo-server                 8084
+#   applicationset-controller   8080
+#   notifications-controller    9001
+#   dex-server                  5558
+#
+# All Argo CD pods carry app.kubernetes.io/part-of=argocd, so a single PodMonitor selecting
+# that label and the "metrics" port covers every component (pods without a "metrics" port
+# are skipped). The cluster Prometheus has podMonitorSelector={} / podMonitorNamespaceSelector={},
+# so this is discovered without extra labels.
+#
+# argocd-dex-server is excluded: it declares a "metrics" port (5558) but the bundled
+# `argocd-dex rundex` wrapper does not start a metrics server there (scrapes get connection
+# refused), so it would be a permanently-down target. Dex metrics require enabling telemetry
+# in the Argo CD dex config — out of scope here.
+#
+# Applied by monitoring/setup.sh after the Prometheus Operator CRDs exist (Argo CD is
+# installed earlier by scripts/setup.sh).
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: argocd
+  namespace: argocd
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: argocd
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: NotIn
+        values:
+          - argocd-dex-server
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      scheme: http

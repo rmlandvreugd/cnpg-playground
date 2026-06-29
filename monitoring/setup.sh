@@ -305,9 +305,9 @@ fi
             -f "${GIT_REPO_ROOT}/monitoring/cnpg/cnpg-backup-alerts.yaml"
     fi
 
-    # Platform monitors (Capsule + Calico). These components are installed before the
-    # Prometheus Operator CRDs exist, so their ServiceMonitors are applied here instead
-    # of via the charts' built-in serviceMonitor option.
+    # Platform monitors (Capsule + Calico + Kyverno + ArgoCD). These components are
+    # installed before the Prometheus Operator CRDs exist, so their ServiceMonitors /
+    # PodMonitors are applied here instead of via the charts' built-in serviceMonitor option.
     if kubectl --context "${CONTEXT_NAME}" get namespace capsule-system &>/dev/null; then
         echo "📊 Applying Capsule monitors..."
         kubectl --context "${CONTEXT_NAME}" apply \
@@ -320,6 +320,16 @@ fi
             -f "${GIT_REPO_ROOT}/monitoring/platform/calico-metrics-services.yaml" \
             -f "${GIT_REPO_ROOT}/monitoring/platform/calico-servicemonitors.yaml" \
             -f "${GIT_REPO_ROOT}/monitoring/platform/calico-kube-controllers-metrics-policy.yaml"
+    fi
+    if kubectl --context "${CONTEXT_NAME}" get namespace kyverno &>/dev/null; then
+        echo "📊 Applying Kyverno monitors..."
+        kubectl --context "${CONTEXT_NAME}" apply \
+            -f "${GIT_REPO_ROOT}/monitoring/platform/kyverno-servicemonitor.yaml"
+    fi
+    if kubectl --context "${CONTEXT_NAME}" get namespace argocd &>/dev/null; then
+        echo "📊 Applying ArgoCD monitors..."
+        kubectl --context "${CONTEXT_NAME}" apply \
+            -f "${GIT_REPO_ROOT}/monitoring/platform/argocd-podmonitors.yaml"
     fi
 
     # Wire revocation-exporter (host container) into monitoring namespace — hub only

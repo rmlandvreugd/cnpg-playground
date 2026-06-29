@@ -1,0 +1,17 @@
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: argocd
+  namespace: grafana
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: "grafana"
+  # grafana.com dashboard 14584 "Argo CD" — argocd_* metrics scraped via the argocd
+  # PodMonitor. It declares a DS_PROMETHEUS input, remapped to the Mimir datasource
+  # like the calico / node-exporter dashboards.
+  grafanaCom:
+    id: 14584
+  datasources:
+    - inputName: "DS_PROMETHEUS"
+      datasourceName: "DS_MIMIR"

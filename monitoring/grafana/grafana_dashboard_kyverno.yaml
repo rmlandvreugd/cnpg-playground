@@ -1,0 +1,17 @@
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: kyverno
+  namespace: grafana
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: "grafana"
+  # grafana.com dashboard 15987 "Kyverno" — kyverno_* metrics scraped via the kyverno
+  # ServiceMonitor. It declares a DS_PROMETHEUS input, remapped to the Mimir datasource
+  # like the calico / node-exporter dashboards.
+  grafanaCom:
+    id: 15987
+  datasources:
+    - inputName: "DS_PROMETHEUS"
+      datasourceName: "DS_MIMIR"

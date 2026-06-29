@@ -22,3 +22,5 @@ resources:
   - grafana_dashboard_pki.yaml
   - grafana_dashboard_capsule.yaml
   - grafana_dashboard_calico.yaml
+  - grafana_dashboard_kyverno.yaml
+  - grafana_dashboard_argocd.yaml

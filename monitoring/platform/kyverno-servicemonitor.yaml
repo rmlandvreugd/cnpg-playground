@@ -1,0 +1,38 @@
+# ServiceMonitor for the Kyverno control plane.
+#
+# Kyverno is installed by scripts/setup.sh BEFORE the Prometheus Operator CRDs exist
+# (kube-prometheus-stack is installed later by monitoring/setup.sh), so the chart's
+# built-in serviceMonitor option cannot be used at install time. The chart always
+# creates the per-controller "*-metrics" Services; this standalone ServiceMonitor is
+# applied here, after the CRDs exist.
+#
+# All four metrics Services (admission / background / cleanup / reports controllers)
+# share the label app.kubernetes.io/part-of=kyverno and expose port "metrics-port"
+# (8000). Non-metrics Services that share the label have no "metrics-port" endpoint and
+# are simply skipped by the Operator.
+#
+# The cleanup-controller is excluded: although it is started with metrics enabled
+# (--disableMetrics=false --metricsPort=8000) and its metrics Service/endpoints are
+# correct, the endpoint accepts the TCP connection but never answers the HTTP scrape
+# (context deadline exceeded — not a NetworkPolicy; none exist in this namespace), so it
+# would be a permanently-down target. Tracked as a follow-up; re-include once the
+# upstream cleanup-controller metrics endpoint responds. The other three controllers
+# provide the bulk of kyverno_* policy/admission metrics.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kyverno
+  namespace: kyverno
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: kyverno
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: NotIn
+        values:
+          - cleanup-controller
+  endpoints:
+    - port: metrics-port
+      path: /metrics
+      scheme: http

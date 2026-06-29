@@ -429,8 +429,10 @@ flowchart LR
 |---------|-----------|-------|-------------|
 | alloy | grafana | alloy-1.8.0 | v1.16.0 |
 | barman-cloud | cnpg-system | plugin-barman-cloud-0.6.0 | v0.12.0 |
+| argocd | argocd | argo-cd-9.7.0 | v3.4.4 |
 | capsule | capsule-system | capsule-0.13.6 | 0.13.6 |
 | capsule-proxy | capsule-system | capsule-proxy-0.13.5 | 0.13.5 |
+| kyverno | kyverno | kyverno-3.4.2 | v1.14.2 |
 | caretta | caretta | caretta-0.0.16 | v0.0.16 |
 | cert-manager | cert-manager | cert-manager-v1.20.2 | v1.20.2 |
 | cnpg-operator | cnpg-system | cloudnative-pg-0.28.0 | 1.29.0 |
@@ -463,8 +465,10 @@ flowchart LR
 
 | Dashboard | Purpose |
 |-----------|---------|
+| argocd | Argo CD controllers / sync metrics |
 | calico-felix | Calico data-plane (Felix) metrics |
 | capsule-resourcepools | Capsule tenant resource pool usage |
+| kyverno | Kyverno policy / admission metrics |
 | cloudnativepg-dashboard | CNPG cluster overview |
 | cnpg-backup-dashboard | CNPG backup status |
 | cnpg-custom-pg | Custom PostgreSQL metrics |
