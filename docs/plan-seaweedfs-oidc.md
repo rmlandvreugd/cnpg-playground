@@ -7,9 +7,12 @@ Status: in progress 2026-06-25. Identity per `plan-tenant-personas-authelia.md`.
 - **Admin UI OIDC — NOT available in OSS.** The OSS `weed admin` binary has no OIDC code
   path at all (`auth_middleware.go` only checks `-adminUser`/`-adminPassword`); OIDC admin
   login is not even Enterprise-gated, it simply does not exist in the OSS image. Section 1
-  is **deferred** → follow-up `cnpg-playground-yt4` (front the admin UI with Traefik +
-  Authelia forward-auth + a local password). The scaffolded `seaweedfs-admin` Authelia
-  client / `/login/callback` redirect are unused for now.
+  is therefore handled at the **edge**: front the admin UI with Traefik + Authelia
+  forward-auth + the local password backstop. As of 2026-06-29 this is folded into the
+  broader external edge-Traefik effort — see `docs/plan-external-edge-traefik.md`;
+  `cnpg-playground-yt4` becomes a child of that epic. The scaffolded `seaweedfs-admin`
+  Authelia OIDC client is already removed (only a NOTE remains in
+  `authelia/config/configuration.yaml`).
 - **S3 OIDC/STS — open source.** `-s3.iam.config` (sts/providers/policies/roles) works on
   the OSS image, and `-s3.config` (static keys) + `-s3.iam.config` run **together**. Static
   machine identities stay in `identities.json`; humans assume roles via STS.
@@ -39,16 +42,22 @@ identity `loki`/`lokiS3secret` with Admin on the `loki` bucket; no auth on admin
 
 `admin` super-user gets full access via `seaweedfs-admin` group.
 
-## 1. Admin UI — authentication + OIDC
+## 1. Admin UI — authentication (edge forward-auth, not in-app OIDC)
 
-Per the SeaweedFS wiki (Admin-UI, Admin-UI-OIDC):
-- Enable admin UI authentication (no more anonymous access).
-- Configure OIDC against Authelia: issuer `https://authelia.<IP_DASHED>.sslip.io`, client
-  `seaweedfs-admin`, scopes `openid email profile groups`, redirect to the admin UI callback.
-- Map `groups` → admin role: `seaweedfs-admin` (and `admin`) → full admin; deny others.
-- Admin UI served over TLS (existing step-ca cert).
+OSS `weed admin` has no OIDC code path, so SSO is enforced at the edge rather than in the
+admin binary. The admin UI (host container, HTTPS on :23646, local
+`-adminUser`/`-adminPassword`) is fronted by the external edge Traefik with an Authelia
+**forward-auth** middleware:
+- Edge router `seaweedfs-admin.<EDGE_IP_DASHED>.sslip.io` → admin container `:23646`
+  (`scheme: https`, `insecureSkipVerify`), with the forward-auth middleware attached.
+- Authelia `access_control` rule: `policy: one_factor`, `subject:
+  ["group:seaweedfs-admin","group:admin"]` (deny others). Browser is redirected to
+  Authelia, then proxied to the UI on success.
+- `-adminUser`/`-adminPassword` stays as a behind-proxy backstop.
 
-New Authelia OIDC client `seaweedfs-admin` (redirect URI = admin UI `…/callback`).
+This work is part of `docs/plan-external-edge-traefik.md` (epic), tracked as
+`cnpg-playground-yt4`. The previously scaffolded Authelia `seaweedfs-admin` OIDC client is
+removed (no in-app OIDC).
 
 ## 2. S3 API — OIDC via IAM/STS
 
