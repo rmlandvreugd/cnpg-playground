@@ -1,0 +1,62 @@
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+experimental:
+  otlpLogs: true
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+  websecure:
+    address: ":443"
+  metrics:
+    address: ":9102"
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+metrics:
+  prometheus:
+    entryPoint: metrics
+    addEntryPointsLabels: true
+    addServicesLabels: true
+    addRoutersLabels: true
+
+tracing:
+  serviceName: traefik-edge
+  otlp:
+    grpc:
+      endpoint: "172.18.255.240:4317"
+      tls:
+        ca: /etc/traefik/certs/step-ca-chain.pem
+        cert: /etc/traefik/certs/otlp-client.crt
+        key: /etc/traefik/certs/otlp-client.key
+
+log:
+  level: INFO
+  otlp:
+    grpc:
+      endpoint: "172.18.255.240:4317"
+      tls:
+        ca: /etc/traefik/certs/step-ca-chain.pem
+        cert: /etc/traefik/certs/otlp-client.crt
+        key: /etc/traefik/certs/otlp-client.key
+
+accessLog:
+  otlp:
+    grpc:
+      endpoint: "172.18.255.240:4317"
+      tls:
+        ca: /etc/traefik/certs/step-ca-chain.pem
+        cert: /etc/traefik/certs/otlp-client.crt
+        key: /etc/traefik/certs/otlp-client.key
+  dualOutput: true

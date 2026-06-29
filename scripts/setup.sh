@@ -549,6 +549,28 @@ TOML
     $CONTAINER_PROVIDER network connect kind "${STEP_CA_CONTAINER_NAME}" 2>/dev/null || true
     $CONTAINER_PROVIDER network connect kind "${VAULT_CONTAINER_NAME}" 2>/dev/null || true
     $CONTAINER_PROVIDER network connect kind "${AUTHELIA_CONTAINER_NAME}" 2>/dev/null || true
+    $CONTAINER_PROVIDER network connect kind "${SEAWEEDFS_ADMIN_CONTAINER_NAME}" 2>/dev/null || true
+
+    # Start external edge Traefik (host container, static IP 172.18.0.250 on kind network).
+    # Per-service TLS certs must be in traefik-edge/certs/ before this step — provisioned by
+    # scripts/traefik-edge-setup.sh (added in cnpg-playground-5sq.2).
+    echo "🔄 Starting external edge Traefik (${TRAEFIK_EDGE_CONTAINER_NAME} @ ${TRAEFIK_EDGE_IP})..."
+    TRAEFIK_EDGE_DIR="${GIT_REPO_ROOT}/traefik-edge"
+    TRAEFIK_EDGE_CERTS_DIR="${TRAEFIK_EDGE_DIR}/certs"
+    sudo mkdir -p "${TRAEFIK_EDGE_CERTS_DIR}"
+    $CONTAINER_PROVIDER stop  "${TRAEFIK_EDGE_CONTAINER_NAME}" 2>/dev/null || true
+    $CONTAINER_PROVIDER rm    "${TRAEFIK_EDGE_CONTAINER_NAME}" 2>/dev/null || true
+    $CONTAINER_PROVIDER run \
+        --name "${TRAEFIK_EDGE_CONTAINER_NAME}" -d \
+        --network kind --ip "${TRAEFIK_EDGE_IP}" \
+        -p "${TRAEFIK_EDGE_HTTP_PORT}:80" \
+        -p "${TRAEFIK_EDGE_HTTPS_PORT}:443" \
+        -v "${TRAEFIK_EDGE_DIR}/traefik.yaml:/etc/traefik/traefik.yaml:ro" \
+        -v "${TRAEFIK_EDGE_DIR}/dynamic:/etc/traefik/dynamic:ro" \
+        -v "${TRAEFIK_EDGE_CERTS_DIR}:/etc/traefik/certs:ro" \
+        --restart unless-stopped \
+        "${TRAEFIK_EDGE_IMAGE}"
+    echo "✅ Edge Traefik: https://*.${TRAEFIK_EDGE_IP_DASHED}.sslip.io"
 
     # Wire step-ca into K8s (namespace + headless Service/Endpoints)
     echo "🔧 Wiring step-ca into Kubernetes cluster '${K8S_CLUSTER_NAME}'..."
