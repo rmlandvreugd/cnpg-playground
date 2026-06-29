@@ -106,6 +106,11 @@ SEAWEEDFS_BACKUP_BUCKET="${SEAWEEDFS_BACKUP_BUCKET:-backups}"
 SEAWEEDFS_VER_BACKUP_BUCKET="${SEAWEEDFS_VER_BACKUP_BUCKET:-verstappen-backups}"
 # STS signing key for -s3.iam.config (base64, 32+ bytes). Demo value — override in real deployments.
 SEAWEEDFS_STS_SIGNING_KEY="${SEAWEEDFS_STS_SIGNING_KEY:-Y25wZy1wbGF5Z3JvdW5kLXNlYXdlZWRmcy1zdHMtMzI=}"
+# Admin UI (weed admin) HTTP login. OSS 'weed admin' has no OIDC — it only honours
+# -adminUser/-adminPassword, so this is the local credential behind the (future) Traefik+Authelia edge.
+# Demo value — override in real deployments. Tracked in cnpg-playground-yt4.
+SEAWEEDFS_ADMIN_UI_USER="${SEAWEEDFS_ADMIN_UI_USER:-admin}"
+SEAWEEDFS_ADMIN_UI_PASSWORD="${SEAWEEDFS_ADMIN_UI_PASSWORD:-swadminUIsecret}"
 
 # Revocation Exporter Configuration (host container, --network host)
 REVOCATION_EXPORTER_CONTAINER_NAME="${REVOCATION_EXPORTER_CONTAINER_NAME:-revocation-exporter}"

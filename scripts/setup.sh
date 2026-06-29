@@ -508,7 +508,9 @@ TOML
             "${SEAWEEDFS_IMAGE}" \
             admin \
                 -master="${SEAWEEDFS_BRIDGE_IP}:9333" \
-                -port=23646
+                -port=23646 \
+                -adminUser="${SEAWEEDFS_ADMIN_UI_USER}" \
+                -adminPassword="${SEAWEEDFS_ADMIN_UI_PASSWORD}"
 
         echo "🔒 Starting SeaweedFS WebDAV with TLS..."
         ${CONTAINER_PROVIDER} stop  "${SEAWEEDFS_WEBDAV_CONTAINER_NAME}" 2>/dev/null || true
@@ -849,7 +851,7 @@ ${CONTAINER_PROVIDER} build \
     "${GIT_REPO_ROOT}/revocation-exporter/"
 
 # Build comma-separated ENDPOINTS: step-ca, vault, seaweedfs, one rustfs per region
-REVOC_ENDPOINTS="step-ca:localhost:${STEP_CA_PORT},vault:localhost:${VAULT_PORT},seaweedfs:localhost:${SEAWEEDFS_S3_PORT}"
+REVOC_ENDPOINTS="step-ca:localhost:${STEP_CA_PORT},vault:localhost:${VAULT_PORT},seaweedfs:localhost:${SEAWEEDFS_S3_PORT},authelia:localhost:${AUTHELIA_PORT}"
 for region in "${REGIONS[@]}"; do
     port="${objectstore_ports[${region}]}"
     REVOC_ENDPOINTS="${REVOC_ENDPOINTS},rustfs-${region}:localhost:${port}"
