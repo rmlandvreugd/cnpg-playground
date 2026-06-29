@@ -104,8 +104,8 @@ observability. The in-cluster Traefik keeps only in-cluster apps.
   edge that isn't up). It's a machine ACME/API endpoint (no browser, no forward-auth value;
   re-terminating TLS would fight ACME identity). It keeps its existing in-cluster Traefik
   IngressRoute at `step-ca.<in-cluster-LB>.sslip.io`, so cert-manager's ClusterIssuer ACME
-  URL is unchanged and needs no re-bootstrap. step-ca is therefore the **one** host service
-  still routed by the in-cluster Traefik; vault/authelia/seaweedfs/rustfs move to the edge.
+  URL is unchanged and needs no re-bootstrap. step-ca (and `rustfs`, descoped this pass) stay
+  routed by the in-cluster Traefik; vault/authelia/seaweedfs move to the edge.
 
 ## Architecture
 
@@ -117,27 +117,29 @@ observability. The in-cluster Traefik keeps only in-cluster apps.
                           • file provider (watch=true) on a mounted config dir
                           • TLS termination (step-ca / vault-pki certs on host FS)
                           • forward-auth middleware → Authelia (human surfaces only)
-                          • OTLP traces + Prometheus metrics
+                          • OTLP traces + access/app logs (mTLS) + Prometheus metrics
                                  │ routes by Host/SNI to kind-IP backends
-            ┌──────────────┬─────┴────────┬───────────────┬───────────┐
-          vault         authelia       seaweedfs        seaweed-       rustfs
-        (:8200)         (:9091)        S3 (:8333)        admin         (:…)
+            ┌──────────────┬─────┴────────┬───────────────┐
+          vault         authelia       seaweedfs        seaweed-
+        (:8200)         (:9091)        S3 (:8333)        admin
                                                         (:23646)
         (all backends remain on the kind network; host ports still published)
+        (rustfs descoped this pass — stays in-cluster-fronted)
 ```
 
 **Forward-auth selectivity (critical):** attach the forward-auth middleware only to
 **human/browser** surfaces — the `seaweedfs-admin` UI. Do **not** forward-auth machine/API
 surfaces: the `authelia` route itself (would create an auth loop), `vault` API, `seaweedfs`
-S3 API, `rustfs` S3 API — these authenticate with their own tokens / access keys / OIDC-STS.
+S3 API — these authenticate with their own tokens / access keys / OIDC-STS.
 
 ## Work breakdown (reuse existing patterns)
 
 1. **External Traefik container — new `traefik-edge/`.** Static `traefik.yaml` (entrypoints,
    file provider `directory: /etc/traefik/dynamic` `watch: true`, `metrics.prometheus`,
    `tracing.otlp`), plus a `dynamic/` dir populated at setup. Run block in
-   `scripts/setup.sh` mirrors the seaweedfs-admin run block; `--network kind --ip
-   172.18.0.250` (the one pinned IP — confirm free); mount config + cert dirs; publish
+   `scripts/setup.sh` mirrors the seaweedfs-admin run block (`scripts/setup.sh` ~L498-528);
+   `--network kind --ip 172.18.0.250` (the one pinned IP — confirm free); mount config + cert
+   dirs; publish
    :443/:80. Add `TRAEFIK_EDGE_*` vars to `scripts/common.sh` (incl. `TRAEFIK_EDGE_IP` /
    `TRAEFIK_EDGE_IP_DASHED`) following the `SEAWEEDFS_ADMIN_*`/`AUTHELIA_*` var conventions.
    `network connect kind` the one bridge-only backend (`seaweedfs-admin`); `authelia` and
@@ -215,9 +217,27 @@ S3 API, `rustfs` S3 API — these authenticate with their own tokens / access ke
    - Optional Traefik GrafanaDashboard (same pattern as the kyverno/argocd dashboards).
 7. **yt4 admin UI.** Dynamic file routing `seaweedfs-admin.<edge-ip>.sslip.io` →
    admin `:23646` (https, insecureSkipVerify) + forward-auth. Keep `-adminUser/-adminPassword`.
-8. **Teardown + docs.** `scripts/teardown.sh` stops/removes the edge container + retired
-   resources; update `docs/architecture-overview.md` once built (it documents current
-   state — do **not** add the edge there until it exists).
+8. **Teardown + docs.** `scripts/teardown.sh` stops/removes the edge container (check-and-remove
+   pattern ~L105-154) + retired resources; update `docs/architecture-overview.md` once built
+   (it documents current state — do **not** add the edge there until it exists).
+
+## Files touched (representative)
+
+- **New:** `traefik-edge/traefik.yaml`, `traefik-edge/dynamic/*.yaml` (one per backend),
+  `traefik-edge/certs/` (gitignored).
+- **Scripts:** `scripts/common.sh` (`TRAEFIK_EDGE_*` + `ext-svc-lb` vars), `scripts/setup.sh`
+  (edge run block + `network connect kind seaweedfs-admin` + bootstrap ordering),
+  `scripts/teardown.sh` (edge removal), `scripts/vault-oidc-setup.sh` (issuer).
+- **Auth/OIDC:** `authelia/config/configuration*.yaml.tpl` (issuer, forward-auth, two cookie
+  domains; drop dead seaweedfs-admin client), retire `authelia/ingressroute.yaml.tpl` +
+  per-service Service/Cert templates for the moved services; `k8s/authn-config.yaml.tpl`
+  (kube-apiserver structured authn issuer).
+- **Observability:** `monitoring/otel-collector/otel-collector-values.yaml` (new `logs`
+  pipeline + `otlphttp/logs` → Loki + OTLP receiver mTLS), `monitoring/loki/loki-values.yaml`
+  (enable OTLP ingestion), new `monitoring/platform/ext-svc-lb*.yaml` + edge ServiceMonitor
+  (mirror `monitoring/platform/calico-*`).
+- **Endpoint consumers:** vault/seaweedfs/grafana/argocd/gangplank issuer refs; S3-endpoint
+  refs in CNPG barman ObjectStore, Loki storage, ESO.
 
 ## Resolved (decided)
 
@@ -231,8 +251,9 @@ S3 API, `rustfs` S3 API — these authenticate with their own tokens / access ke
 
 1. **Edge IP free-slot** — `172.18.0.250` confirmed clear (pool `kind-pool`
    = `172.18.255.200-250`; Docker high-water `.0.13`). Re-confirm at build.
-2. **OTLP reachability** — dedicated OTel `LoadBalancer` pinned to `172.18.255.201`; edge
-   exports to that IP:4317. See Decisions / item 6.
+2. **OTLP reachability** — shared `ext-svc-lb` `LoadBalancer` pinned to `172.18.255.240`
+   (reusable for future external→cluster o11y traffic); edge exports traces + logs to that
+   IP:4317 over mTLS. See Decisions / item 6.
 3. **Authelia placement** — moves to the edge (full OIDC re-bootstrap), executed as a fresh
    `setup.sh` bootstrap on the clean rebuild. See Decisions / item 4b.
 4. **Issuer/endpoint churn** — no live migration; clean rebuild renders all hostnames/issuers
@@ -271,16 +292,16 @@ S3 API, `rustfs` S3 API — these authenticate with their own tokens / access ke
 ## Tracking
 
 - Epic: **`cnpg-playground-5sq` — External edge Traefik for host services**.
-- `cnpg-playground-yt4` → child of the epic (admin-UI forward-auth; item 7).
-- Children (proposed):
-  1. Edge container + file provider (`traefik-edge/`, run block, `network connect kind`) — item 1
-  2. Per-service dynamic config + host TLS certs — items 2–3
-  3. Cluster-side replace / templating (`TRAEFIK_EDGE_IP*`, retire 4 in-cluster routes) — item 4
-  4. **OIDC re-bootstrap** (Authelia issuer move, kube-apiserver authn, vault/grafana/argocd/
-     gangplank/step-ca-provisioner/seaweedfs-s3, two cookie domains, `setup.sh` ordering) — item 4b
-  5. Forward-auth (Authelia ForwardAuth + seaweedfs-admin rule) — item 5
-  6. Observability — `ext-svc-lb` shared LB (.240) + metrics external-target + traces; **plus**
-     OTLP logs pipeline (collector `logs` pipeline + Loki OTLP enablement) and step-ca mTLS on
-     the edge→collector hop — item 6
-  7. `yt4` admin-UI forward-auth — item 7
-  8. Teardown + docs — item 8
+- Children filed (deps wired, no cycles; `bd ready` surfaces `.1` and `.3` first):
+  | Bead | Scope | Plan item |
+  |---|---|---|
+  | `cnpg-playground-5sq.1` | Edge container `traefik-edge/` + setup.sh run block + `network connect kind seaweedfs-admin` | 1 |
+  | `cnpg-playground-5sq.2` | Per-service dynamic config + host TLS certs | 2 |
+  | `cnpg-playground-5sq.3` | Cluster-side replace: `TRAEFIK_EDGE_IP*` token, retire in-cluster routes | 4 |
+  | `cnpg-playground-5sq.4` | **OIDC re-bootstrap** (Authelia issuer, kube-apiserver authn, vault/grafana/argocd/gangplank/step-ca-provisioner/seaweedfs-s3, two cookie domains, `setup.sh` ordering) | 4b |
+  | `cnpg-playground-5sq.5` | Forward-auth (Authelia ForwardAuth + seaweedfs-admin rule) | 5 |
+  | `cnpg-playground-5sq.6` | Observability: `ext-svc-lb` shared LB (.240), metrics external-target, traces + OTLP logs pipeline (collector `logs` + Loki OTLP) + step-ca mTLS | 6 |
+  | `cnpg-playground-yt4` | Admin-UI forward-auth (linked child) | 7 |
+  | `cnpg-playground-5sq.7` | Teardown + docs | 8 |
+- Dependency edges: `.1`→`.2/.5/.6/yt4`; `.3`→`.4`; `.1`→`.4`; `.2`→`.5/yt4`; `.4`→`.5`;
+  `.5`→`yt4`; all → `.7`.
