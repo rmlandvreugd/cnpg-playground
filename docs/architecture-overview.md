@@ -429,6 +429,8 @@ flowchart LR
 |---------|-----------|-------|-------------|
 | alloy | grafana | alloy-1.8.0 | v1.16.0 |
 | barman-cloud | cnpg-system | plugin-barman-cloud-0.6.0 | v0.12.0 |
+| capsule | capsule-system | capsule-0.13.6 | 0.13.6 |
+| capsule-proxy | capsule-system | capsule-proxy-0.13.5 | 0.13.5 |
 | caretta | caretta | caretta-0.0.16 | v0.0.16 |
 | cert-manager | cert-manager | cert-manager-v1.20.2 | v1.20.2 |
 | cnpg-operator | cnpg-system | cloudnative-pg-0.28.0 | 1.29.0 |
@@ -461,6 +463,8 @@ flowchart LR
 
 | Dashboard | Purpose |
 |-----------|---------|
+| calico-felix | Calico data-plane (Felix) metrics |
+| capsule-resourcepools | Capsule tenant resource pool usage |
 | cloudnativepg-dashboard | CNPG cluster overview |
 | cnpg-backup-dashboard | CNPG backup status |
 | cnpg-custom-pg | Custom PostgreSQL metrics |
