@@ -9,10 +9,8 @@ AUTHELIA_DIR="${GIT_REPO_ROOT}/authelia"
 
 echo "🔑 Configuring Vault OIDC auth with Authelia..."
 
-HOST_IP=$(hostname -I | awk '{print $1}')
-HOST_IP_DASHED=$(echo "$HOST_IP" | tr '.' '-')
-AUTHELIA_HOST="authelia.${HOST_IP_DASHED}.sslip.io"
-VAULT_HOST="vault.${HOST_IP_DASHED}.sslip.io"
+AUTHELIA_HOST="authelia.${TRAEFIK_EDGE_IP_DASHED}.sslip.io"
+VAULT_HOST="vault.${TRAEFIK_EDGE_IP_DASHED}.sslip.io"
 
 # Obtain admin token via userpass (demonstrates admin credentials, not root token)
 echo "🔐 Logging in as ${VAULT_ADMIN_USER}..."

@@ -16,8 +16,8 @@ echo "🚀 Setting up Authelia OIDC container..."
 
 HOST_IP=$(hostname -I | awk '{print $1}')
 HOST_IP_DASHED=$(echo "$HOST_IP" | tr '.' '-')
-AUTHELIA_HOST="authelia.${HOST_IP_DASHED}.sslip.io"
-VAULT_HOST="vault.${HOST_IP_DASHED}.sslip.io"
+AUTHELIA_HOST="authelia.${TRAEFIK_EDGE_IP_DASHED}.sslip.io"
+VAULT_HOST="vault.${TRAEFIK_EDGE_IP_DASHED}.sslip.io"
 STEP_CA_HOST="step-ca.${HOST_IP_DASHED}.sslip.io"
 TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED:-}"
 

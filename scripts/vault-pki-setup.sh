@@ -10,9 +10,7 @@ STEP_CA_DIR="${GIT_REPO_ROOT}/step-ca"
 STEP_CA_PKI_DIR="${STEP_CA_DIR}/pki"
 STEP_CA_SECRETS_DIR="${STEP_CA_DIR}/secrets"
 
-HOST_IP=$(hostname -I | awk '{print $1}')
-HOST_IP_DASHED=$(echo "$HOST_IP" | tr '.' '-')
-VAULT_HOST="vault.${HOST_IP_DASHED}.sslip.io"
+VAULT_HOST="vault.${TRAEFIK_EDGE_IP_DASHED}.sslip.io"
 
 echo "🔐 Bootstrapping Vault PKI (signed by step-ca)..."
 
