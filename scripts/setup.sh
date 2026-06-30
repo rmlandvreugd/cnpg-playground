@@ -115,8 +115,9 @@ echo "📝 Rendering initial authn-config (will be updated post-MetalLB)..."
 HOST_IP_INIT=$(hostname -I | awk '{print $1}' | tr '.' '-')
 STEP_CA_CHAIN_PEM=$(sudo cat "${GIT_REPO_ROOT}/step-ca/pki/root_ca.crt" "${GIT_REPO_ROOT}/step-ca/pki/intermediate_ca.crt" | sed 's/^/        /')
 TRAEFIK_IP_DASHED="${HOST_IP_INIT}" \
+TRAEFIK_EDGE_IP_DASHED="${TRAEFIK_EDGE_IP_DASHED}" \
 STEP_CA_CHAIN_PEM="${STEP_CA_CHAIN_PEM}" \
-envsubst '${TRAEFIK_IP_DASHED} ${STEP_CA_CHAIN_PEM}' \
+envsubst '${TRAEFIK_IP_DASHED} ${TRAEFIK_EDGE_IP_DASHED} ${STEP_CA_CHAIN_PEM}' \
     < "${GIT_REPO_ROOT}/k8s/authn-config.yaml.tpl" \
     > "${GIT_REPO_ROOT}/k8s/authn-config.yaml"
 
@@ -925,13 +926,12 @@ SEAWEEDFS_CFG_DIR="${GIT_REPO_ROOT}/seaweedfs/config"
 SEAWEEDFS_TLS_DIR="${GIT_REPO_ROOT}/seaweedfs/tls"
 SEAWEEDFS_IP=$(${CONTAINER_PROVIDER} inspect "${SEAWEEDFS_CONTAINER_NAME}" \
     --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
-AUTHELIA_ISSUER="https://authelia.${HUB_TRAEFIK_IP_DASHED}.sslip.io"
+AUTHELIA_ISSUER="https://authelia.${TRAEFIK_EDGE_IP_DASHED}.sslip.io"
 
-# CA bundle so the S3 gateway can verify Authelia's vault-pki-issued Traefik cert.
-# Chain: leaf(authelia) <- vault pki_int <- step-ca intermediate <- step-ca root.
+# CA bundle so the S3 gateway can verify Authelia's step-ca-signed TLS cert.
+# Authelia is now fronted by edge Traefik with a step-ca x5c cert (not vault PKI).
 echo "📜 Building Authelia CA trust bundle for SeaweedFS..."
 sudo bash -c "cat \
-    '${GIT_REPO_ROOT}/vault/pki/intermediate.crt' \
     '${GIT_REPO_ROOT}/step-ca/pki/intermediate_ca.crt' \
     '${GIT_REPO_ROOT}/step-ca/pki/root_ca.crt' \
     > '${SEAWEEDFS_CFG_DIR}/authelia-ca.pem'"
@@ -1153,8 +1153,9 @@ STEP_CA_CHAIN_PEM_ARGOCD=$(sudo cat "${GIT_REPO_ROOT}/step-ca/pki/root_ca.crt" \
     "${GIT_REPO_ROOT}/step-ca/pki/intermediate_ca.crt" | sed 's/^/      /')
 _argocd_cm_patch=$(mktemp)
 TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" \
+TRAEFIK_EDGE_IP_DASHED="${TRAEFIK_EDGE_IP_DASHED}" \
 STEP_CA_CHAIN_PEM_ARGOCD="${STEP_CA_CHAIN_PEM_ARGOCD}" \
-    envsubst '${TRAEFIK_IP_DASHED} ${STEP_CA_CHAIN_PEM_ARGOCD}' \
+    envsubst '${TRAEFIK_IP_DASHED} ${TRAEFIK_EDGE_IP_DASHED} ${STEP_CA_CHAIN_PEM_ARGOCD}' \
     < "${GIT_REPO_ROOT}/argocd/argocd-cm-patch.yaml.tpl" \
     > "${_argocd_cm_patch}"
 # Restore the ArgoCD secret reference that envsubst would otherwise mangle.

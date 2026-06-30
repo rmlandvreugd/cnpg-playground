@@ -21,13 +21,13 @@ session:
   secret: '${AUTHELIA_SESSION_SECRET}'
   cookies:
     - name: authelia_session
-      domain: '${HOST_IP_DASHED}.sslip.io'
-      authelia_url: 'https://${AUTHELIA_HOST}:${AUTHELIA_PORT}'
+      domain: '${TRAEFIK_EDGE_IP_DASHED}.sslip.io'
+      authelia_url: 'https://${AUTHELIA_HOST}'
       expiration: 1h
       inactivity: 5m
     - name: authelia_session
       domain: '${TRAEFIK_IP_DASHED}.sslip.io'
-      authelia_url: 'https://authelia.${TRAEFIK_IP_DASHED}.sslip.io'
+      authelia_url: 'https://authelia.${TRAEFIK_EDGE_IP_DASHED}.sslip.io'
       expiration: 1h
       inactivity: 5m
 
@@ -72,7 +72,7 @@ identity_providers:
         redirect_uris:
           - 'https://127.0.0.1:${VAULT_PORT}/ui/vault/auth/oidc/oidc/callback'
           - 'https://localhost:8250/oidc/callback'
-          - 'https://${VAULT_HOST}:${VAULT_PORT}/ui/vault/auth/oidc/oidc/callback'
+          - 'https://${VAULT_HOST}/ui/vault/auth/oidc/oidc/callback'
         scopes:
           - openid
           - email
@@ -161,25 +161,12 @@ identity_providers:
           - groups
         claims_policy: 'default_policy'
         userinfo_signed_response_alg: none
-      - client_id: seaweedfs-admin
-        client_name: SeaweedFS Admin
-        client_secret: '${AUTHELIA_SEAWEEDFS_ADMIN_CLIENT_SECRET_HASH}'
-        authorization_policy: one_factor
-        redirect_uris:
-          - 'https://seaweedfs-admin.${TRAEFIK_IP_DASHED}.sslip.io/login/callback'
-        scopes:
-          - openid
-          - email
-          - profile
-          - groups
-        claims_policy: 'default_policy'
-        userinfo_signed_response_alg: none
       - client_id: seaweedfs-s3
         client_name: SeaweedFS S3
         client_secret: '${AUTHELIA_SEAWEEDFS_S3_CLIENT_SECRET_HASH}'
         authorization_policy: one_factor
         redirect_uris:
-          - 'https://seaweedfs.${TRAEFIK_IP_DASHED}.sslip.io/iam'
+          - 'https://seaweedfs.${TRAEFIK_EDGE_IP_DASHED}.sslip.io/iam'
         scopes:
           - openid
           - email

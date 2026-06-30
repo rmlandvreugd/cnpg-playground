@@ -31,9 +31,9 @@ spec:
       # Browser-facing + backend OIDC endpoints must use the Traefik-domain
       # Authelia (same domain as the user's SSO session), not the host-IP
       # :9091 endpoint, or the two-domain session split strands login.
-      auth_url: "https://authelia.${TRAEFIK_IP_DASHED}.sslip.io/api/oidc/authorization"
-      token_url: "https://authelia.${TRAEFIK_IP_DASHED}.sslip.io/api/oidc/token"
-      api_url: "https://authelia.${TRAEFIK_IP_DASHED}.sslip.io/api/oidc/userinfo"
+      auth_url: "https://authelia.${TRAEFIK_EDGE_IP_DASHED}.sslip.io/api/oidc/authorization"
+      token_url: "https://authelia.${TRAEFIK_EDGE_IP_DASHED}.sslip.io/api/oidc/token"
+      api_url: "https://authelia.${TRAEFIK_EDGE_IP_DASHED}.sslip.io/api/oidc/userinfo"
       groups_attribute_path: "groups"
       org_mapping: "rbr-db-admin:Main Org.:Admin rbr-ver-db-admin:Main Org.:Viewer"
       role_attribute_strict: "false"

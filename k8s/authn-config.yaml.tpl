@@ -2,7 +2,7 @@ apiVersion: apiserver.config.k8s.io/v1
 kind: AuthenticationConfiguration
 jwt:
   - issuer:
-      url: https://authelia.${TRAEFIK_IP_DASHED}.sslip.io
+      url: https://authelia.${TRAEFIK_EDGE_IP_DASHED}.sslip.io
       audiences:
         - kubernetes
         - gangplank
