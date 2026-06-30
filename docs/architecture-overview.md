@@ -16,6 +16,7 @@ CNPG Playground creates a **fully functional Kubernetes-based PostgreSQL platfor
 graph TB
     subgraph Host["Host Machine (Docker)"]
         subgraph External["External Services (Docker Containers)"]
+            TraefikEdge["🔀 Traefik Edge<br/>Reverse Proxy<br/>172.18.0.250:443"]
             StepCA["🔐 step-ca<br/>Root CA<br/>:8443"]
             Vault["🗝️ Vault<br/>Secrets & PKI<br/>:8200"]
             Authelia["👤 Authelia<br/>OIDC Provider<br/>:9091"]
@@ -62,6 +63,9 @@ graph TB
     end
 
     StepCA -->|TLS certs| Vault
+    StepCA -->|x5c certs| TraefikEdge
+    TraefikEdge -->|forward-auth| Authelia
+    TraefikEdge -->|traces+logs mTLS| OTel
     Vault -->|PKI| CertMgr
     Vault -->|AppRole| ESO
     Authelia -->|OIDC| Vault
@@ -252,6 +256,7 @@ graph TD
     IntCA -->|issues| AutheliaTLS["Authelia TLS cert"]
     IntCA -->|issues| RustFSTLS["RustFS TLS cert"]
     IntCA -->|issues| SeaweedFSTLS["SeaweedFS TLS cert"]
+    IntCA -->|x5c: edge service certs| EdgeCerts["Edge TLS certs<br/>(vault/authelia/seaweedfs/<br/>seaweedfs-admin/otlp-client)"]
     VaultIntCA -->|issues| TraefikDashTLS["Traefik Dashboard cert"]
     VaultIntCA -->|issues| RadarDashTLS["Radar Dashboard cert"]
     VaultIntCA -->|issues| ClusterCerts["In-cluster TLS certs<br/>(via cert-manager)"]
@@ -323,6 +328,7 @@ flowchart LR
         K8sN["K8s Nodes<br/>(node-exporter)"]
         K8sO["K8s Objects<br/>(kube-state-metrics)"]
         TraefikS["Traefik<br/>(access logs + traces)"]
+        TraefikEdgeS["Traefik Edge<br/>(access logs + traces<br/>+ Prometheus metrics)"]
         AppL["Application<br/>Logs"]
     end
 
@@ -349,6 +355,7 @@ flowchart LR
     K8sO --> Prom
     AppL --> Alloy
     TraefikS --> OTel
+    TraefikEdgeS --> OTel
 
     Prom -->|remoteWrite| Mimir
     Alloy -->|push| Loki
@@ -460,6 +467,7 @@ flowchart LR
 | seaweed (SeaweedFS) | 8333 | S3-compatible object storage |
 | seaweed-admin (SeaweedFS Admin) | 23646 | S3-compatible object storage |
 | revocation-exporter | — | step-ca CRL / certificate revocation metrics exporter |
+| traefik-edge | 443 | External edge reverse proxy; TLS termination, Authelia forward-auth, OTLP traces/logs export |
 
 ### Grafana Dashboards
 

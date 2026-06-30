@@ -124,5 +124,13 @@ else
     echo "🔷 Revocation exporter container '${REVOCATION_EXPORTER_CONTAINER_NAME}' not found, skipping."
 fi
 
+# Tear down edge Traefik (host container, no volume — certs live in traefik-edge/certs/ on the host FS)
+if $CONTAINER_PROVIDER ps -a --format '{{.Names}}' | grep -q "^${TRAEFIK_EDGE_CONTAINER_NAME}$"; then
+    echo "🗑️  Removing edge Traefik container '${TRAEFIK_EDGE_CONTAINER_NAME}'..."
+    $CONTAINER_PROVIDER rm -f "${TRAEFIK_EDGE_CONTAINER_NAME}" > /dev/null
+else
+    echo "🔷 Edge Traefik container '${TRAEFIK_EDGE_CONTAINER_NAME}' not found, skipping."
+fi
+
 echo ""
 echo "✅ Cleanup complete!"
