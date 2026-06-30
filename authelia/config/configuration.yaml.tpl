@@ -3,6 +3,10 @@ server:
   tls:
     certificate: /config/tls/authelia.crt
     key: /config/tls/authelia.key
+  endpoints:
+    authz:
+      forward-auth:
+        implementation: ForwardAuth
 
 log:
   level: info
@@ -38,6 +42,13 @@ notifier:
 access_control:
   default_policy: one_factor
   rules:
+    - domain: 'seaweedfs-admin.${TRAEFIK_EDGE_IP_DASHED}.sslip.io'
+      policy: one_factor
+      subject:
+        - 'group:seaweedfs-admin'
+        - 'group:admin'
+    - domain: 'seaweedfs-admin.${TRAEFIK_EDGE_IP_DASHED}.sslip.io'
+      policy: deny
     - domain: 'radar.${TRAEFIK_IP_DASHED}.sslip.io'
       policy: one_factor
       subject:

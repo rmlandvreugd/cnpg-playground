@@ -1,10 +1,11 @@
-# forward-auth middleware added in cnpg-playground-5sq.5
 http:
   routers:
     seaweedfs-admin:
       rule: "Host(`seaweedfs-admin.172-18-0-250.sslip.io`)"
       entryPoints:
         - websecure
+      middlewares:
+        - authelia
       service: seaweedfs-admin
       tls: {}
 
