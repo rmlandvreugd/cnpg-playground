@@ -19,6 +19,10 @@ config:
       protocols:
         grpc:
           endpoint: 0.0.0.0:4317
+          tls:
+            cert_file: /etc/otel/tls/tls.crt
+            key_file: /etc/otel/tls/tls.key
+            client_ca_file: /etc/otel/step-ca/ca-certificates.crt
         http:
           endpoint: 0.0.0.0:4318
 
@@ -55,6 +59,10 @@ config:
       endpoint: tempo-distributor.tempo.svc.cluster.local:4317
       tls:
         insecure: true
+    otlphttp/logs:
+      endpoint: http://loki.grafana.svc.cluster.local:3100/otlp
+      tls:
+        insecure: true
     debug:
       verbosity: basic   # remove or set verbosity: detailed for trace debugging
 
@@ -64,6 +72,10 @@ config:
         receivers: [otlp]
         processors: [memory_limiter, tail_sampling, batch]
         exporters: [otlp]
+      logs:
+        receivers: [otlp]
+        processors: [memory_limiter, batch]
+        exporters: [otlphttp/logs]
 
 ports:
   otlp:
@@ -100,3 +112,19 @@ tolerations:
   - key: node-role.kubernetes.io/infra
     operator: Exists
     effect: NoSchedule
+
+extraVolumes:
+  - name: otlp-tls
+    secret:
+      secretName: otel-collector-otlp-tls
+  - name: step-ca-bundle
+    configMap:
+      name: step-ca-external-bundle
+
+extraVolumeMounts:
+  - name: otlp-tls
+    mountPath: /etc/otel/tls
+    readOnly: true
+  - name: step-ca-bundle
+    mountPath: /etc/otel/step-ca
+    readOnly: true

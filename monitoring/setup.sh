@@ -164,6 +164,10 @@ for region in "${REGIONS[@]}"; do
         kubectl --context "${CONTEXT_NAME}" -n otel rollout status deploy/otel-collector-opentelemetry-collector \
             --timeout=120s
 
+        echo "🌐 Applying ext-svc-lb LoadBalancer + OTLP TLS certificate (edge→collector mTLS)..."
+        kubectl --context "${CONTEXT_NAME}" apply \
+            -f "${GIT_REPO_ROOT}/monitoring/platform/ext-svc-lb.yaml"
+
         kubectl --context "${CONTEXT_NAME}" delete ingressroute tempo-otlp-http -n tempo \
             --ignore-not-found
 
@@ -332,6 +336,10 @@ fi
             -f "${GIT_REPO_ROOT}/monitoring/platform/argocd-podmonitors.yaml"
     fi
 
+    echo "📊 Applying edge Traefik ServiceMonitor (static external target)..."
+    kubectl --context "${CONTEXT_NAME}" apply \
+        -f "${GIT_REPO_ROOT}/monitoring/platform/traefik-edge-servicemonitor.yaml"
+
     # Wire revocation-exporter (host container) into monitoring namespace — hub only
     if [[ "${region}" == "${HUB_REGION}" ]]; then
         echo "🔍 Wiring revocation exporter into monitoring namespace..."
@@ -358,8 +366,9 @@ fi
 
         echo "📈 Applying monitoring Grafana instance (OIDC + HTTPS)..."
         TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
+        TRAEFIK_EDGE_IP_DASHED="${TRAEFIK_EDGE_IP_DASHED}" \
         AUTHELIA_HOST="${AUTHELIA_HOST}" AUTHELIA_PORT="${AUTHELIA_PORT}" \
-        envsubst '${TRAEFIK_IP_DASHED} ${AUTHELIA_HOST} ${AUTHELIA_PORT}' \
+        envsubst '${TRAEFIK_IP_DASHED} ${TRAEFIK_EDGE_IP_DASHED} ${AUTHELIA_HOST} ${AUTHELIA_PORT}' \
             < "${GIT_REPO_ROOT}/monitoring/grafana/grafana_instance.yaml.tpl" \
             | kubectl --context "${CONTEXT_NAME}" apply -f -
 

@@ -32,6 +32,13 @@ loki:
     retention_period: 3d
     ingestion_rate_mb: 32
     ingestion_burst_size_mb: 64
+    otlp_config:
+      resource_attributes:
+        attributes_config:
+          - action: index_label
+            attributes:
+              - service.name
+              - host.name
 
 singleBinary:
   replicas: 1
