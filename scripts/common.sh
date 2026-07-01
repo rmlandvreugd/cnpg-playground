@@ -168,6 +168,11 @@ TRAEFIK_EDGE_IMAGE="${TRAEFIK_EDGE_IMAGE:-traefik:v3.7.5}"
 TRAEFIK_EDGE_CONTAINER_NAME="${TRAEFIK_EDGE_CONTAINER_NAME:-traefik-edge}"
 TRAEFIK_EDGE_IP="${TRAEFIK_EDGE_IP:-172.18.0.250}"
 TRAEFIK_EDGE_IP_DASHED="${TRAEFIK_EDGE_IP_DASHED:-172-18-0-250}"
+# Hub cluster Traefik LB IP is deterministic: hub is region_index 0, so on the
+# kind /16 network MetalLB hands out X.X.255.200 first (see get_ip_range in
+# setup.sh). Used as the single, cross-cluster kube-apiserver OIDC issuer host
+# (must match gangplank's login portal), known before MetalLB is up.
+HUB_TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED:-172-18-255-200}"
 TRAEFIK_EDGE_HTTP_PORT="${TRAEFIK_EDGE_HTTP_PORT:-80}"
 TRAEFIK_EDGE_HTTPS_PORT="${TRAEFIK_EDGE_HTTPS_PORT:-443}"
 TRAEFIK_EDGE_METRICS_PORT="${TRAEFIK_EDGE_METRICS_PORT:-9102}"

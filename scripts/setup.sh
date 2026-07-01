@@ -112,12 +112,12 @@ GIT_REPO_ROOT="${GIT_REPO_ROOT}" envsubst '${GIT_REPO_ROOT}' \
     > "${GIT_REPO_ROOT}/k8s/kind-cluster.yaml"
 
 echo "📝 Rendering initial authn-config (will be updated post-MetalLB)..."
-HOST_IP_INIT=$(hostname -I | awk '{print $1}' | tr '.' '-')
 STEP_CA_CHAIN_PEM=$(sudo cat "${GIT_REPO_ROOT}/step-ca/pki/root_ca.crt" "${GIT_REPO_ROOT}/step-ca/pki/intermediate_ca.crt" | sed 's/^/        /')
-TRAEFIK_IP_DASHED="${HOST_IP_INIT}" \
-TRAEFIK_EDGE_IP_DASHED="${TRAEFIK_EDGE_IP_DASHED}" \
+# OIDC issuer is the hub in-cluster Authelia portal (fixed across all clusters,
+# matches gangplank's login portal). HUB_TRAEFIK_IP_DASHED is deterministic.
+HUB_TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" \
 STEP_CA_CHAIN_PEM="${STEP_CA_CHAIN_PEM}" \
-envsubst '${TRAEFIK_IP_DASHED} ${TRAEFIK_EDGE_IP_DASHED} ${STEP_CA_CHAIN_PEM}' \
+envsubst '${HUB_TRAEFIK_IP_DASHED} ${STEP_CA_CHAIN_PEM}' \
     < "${GIT_REPO_ROOT}/k8s/authn-config.yaml.tpl" \
     > "${GIT_REPO_ROOT}/k8s/authn-config.yaml"
 
@@ -704,11 +704,13 @@ ${STEP_CA_INT_CERT}" \
 
     TRAEFIK_IP=$(echo "$IP_RANGE" | cut -d- -f1)
     TRAEFIK_IP_DASHED=$(ip_to_dashed "${TRAEFIK_IP}")
-    echo "🔄 Re-rendering authn-config with Traefik IP (apiserver hot-reload)..."
+    # Issuer is the fixed hub in-cluster portal (same for every cluster, matches
+    # gangplank); only STEP_CA_CHAIN_PEM is refreshed here for the hot-reload.
+    echo "🔄 Re-rendering authn-config (apiserver hot-reload)..."
     STEP_CA_CHAIN_PEM=$(sudo cat "${GIT_REPO_ROOT}/step-ca/pki/root_ca.crt" "${GIT_REPO_ROOT}/step-ca/pki/intermediate_ca.crt" | sed 's/^/        /')
-    TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
+    HUB_TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" \
     STEP_CA_CHAIN_PEM="${STEP_CA_CHAIN_PEM}" \
-    envsubst '${TRAEFIK_IP_DASHED} ${STEP_CA_CHAIN_PEM}' \
+    envsubst '${HUB_TRAEFIK_IP_DASHED} ${STEP_CA_CHAIN_PEM}' \
         < "${GIT_REPO_ROOT}/k8s/authn-config.yaml.tpl" \
         > "${GIT_REPO_ROOT}/k8s/authn-config.yaml"
 
@@ -906,13 +908,38 @@ HUB_TRAEFIK_IP_DASHED=$(ip_to_dashed "${HUB_TRAEFIK_IP}")
 echo "=================================================="
 echo "🔐 Exposing Authelia via Traefik (hub cluster)..."
 echo "=================================================="
-# Authelia is fronted by the external edge Traefik (not in-cluster Traefik).
-# In-cluster routing (ExternalName Service, cert-manager Certificate, IngressRoute)
-# has been retired. Authelia's OIDC issuer is now authelia.172-18-0-250.sslip.io.
+# Authelia runs as a host container fronted by the external edge Traefik. Host
+# containers (vault, seaweedfs-admin) use the edge portal authelia.${TRAEFIK_EDGE_IP_DASHED}
+# directly. In-cluster clients (cookie domain ${HUB_TRAEFIK_IP_DASHED}) reach Authelia
+# through an in-cluster portal: a hub IngressRoute for authelia.${HUB_TRAEFIK_IP_DASHED}
+# that proxies to the edge, which routes that Host on to the Authelia container. This
+# keeps each cookie's authelia_url a subdomain of its own domain (otherwise Authelia
+# fatals with errFmtSessionDomainURLNotInCookieScope).
 
 echo "🔄 Reconfiguring Authelia with two-domain session cookie..."
 TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" \
     "${SCRIPT_DIR}/authelia-setup.sh"
+
+echo "🌐 Restoring in-cluster Authelia portal (proxied via edge Traefik)..."
+kubectl create namespace authelia --context "${HUB_CONTEXT}" \
+    --dry-run=client -o yaml | kubectl apply --context "${HUB_CONTEXT}" -f -
+
+# Backend ExternalName -> edge Traefik (443); edge routes Host(authelia.${HUB_TRAEFIK_IP_DASHED})
+envsubst '${TRAEFIK_EDGE_IP_DASHED}' \
+    < "${GIT_REPO_ROOT}/authelia/backend-service.yaml.tpl" \
+    | kubectl --context "${HUB_CONTEXT}" apply -f -
+
+echo "📜 Issuing in-cluster Authelia portal TLS certificate..."
+TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
+    < "${GIT_REPO_ROOT}/authelia/certificate.yaml.tpl" \
+    | kubectl --context "${HUB_CONTEXT}" apply -f -
+kubectl wait --for=condition=Ready certificate/authelia-tls-cert \
+    -n authelia --timeout=120s --context "${HUB_CONTEXT}"
+
+TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
+    < "${GIT_REPO_ROOT}/authelia/ingressroute.yaml.tpl" \
+    | kubectl --context "${HUB_CONTEXT}" apply -f -
+echo "✅ In-cluster Authelia portal at https://authelia.${HUB_TRAEFIK_IP_DASHED}.sslip.io (via edge)"
 
 echo "=================================================="
 echo "🔐 Wiring SeaweedFS S3 OIDC/STS (humans via Authelia)..."
@@ -1229,9 +1256,8 @@ helm_upgrade_install radar \
     --values "${GIT_REPO_ROOT}/radar/values.yaml"
 
 echo "🌐 Applying Radar Middleware + IngressRoute (HTTPS)..."
-HOST_IP_DASHED="${HOST_IP_DASHED}" \
-AUTHELIA_PORT="${AUTHELIA_PORT}" \
-envsubst '${HOST_IP_DASHED} ${AUTHELIA_PORT}' \
+# forwardAuth now targets the in-cluster Authelia portal (authelia.${HUB_TRAEFIK_IP_DASHED}).
+TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
     < "${GIT_REPO_ROOT}/radar/middleware.yaml.tpl" \
     | kubectl --context "${HUB_CONTEXT}" apply -f -
 TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \

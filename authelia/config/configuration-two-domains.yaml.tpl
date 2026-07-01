@@ -31,7 +31,10 @@ session:
       inactivity: 5m
     - name: authelia_session
       domain: '${TRAEFIK_IP_DASHED}.sslip.io'
-      authelia_url: 'https://authelia.${TRAEFIK_EDGE_IP_DASHED}.sslip.io'
+      # authelia_url MUST be a subdomain of this cookie's domain (Authelia
+      # errFmtSessionDomainURLNotInCookieScope). In-cluster clients use the
+      # in-cluster portal, which fronts the same Authelia via the edge Traefik.
+      authelia_url: 'https://authelia.${TRAEFIK_IP_DASHED}.sslip.io'
       expiration: 1h
       inactivity: 5m
 

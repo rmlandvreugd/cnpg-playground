@@ -78,8 +78,11 @@ _issue_cert "vault" \
     "vault.${TRAEFIK_EDGE_IP_DASHED}.sslip.io" \
     "vault" "localhost" "127.0.0.1"
 
+# SAN also covers the in-cluster portal host: hub Traefik proxies
+# authelia.${TRAEFIK_IP_DASHED} to this edge, which routes it to Authelia.
 _issue_cert "authelia" \
     "authelia.${TRAEFIK_EDGE_IP_DASHED}.sslip.io" \
+    "authelia.${TRAEFIK_IP_DASHED}.sslip.io" \
     "authelia" "localhost" "127.0.0.1"
 
 _issue_cert "seaweedfs" \

@@ -1,7 +1,10 @@
 http:
   routers:
     authelia:
-      rule: "Host(`authelia.172-18-0-250.sslip.io`)"
+      # Edge portal (host containers: vault, seaweedfs-admin) AND in-cluster
+      # portal (hub Traefik proxies authelia.172-18-255-200 here). One Authelia
+      # container derives the OIDC issuer per-request from the incoming Host.
+      rule: "Host(`authelia.172-18-0-250.sslip.io`) || Host(`authelia.172-18-255-200.sslip.io`)"
       entryPoints:
         - websecure
       service: authelia

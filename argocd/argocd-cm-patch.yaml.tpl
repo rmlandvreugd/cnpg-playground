@@ -2,7 +2,7 @@ data:
   url: "https://argocd.${TRAEFIK_IP_DASHED}.sslip.io"
   oidc.config: |
     name: Authelia
-    issuer: https://authelia.${TRAEFIK_EDGE_IP_DASHED}.sslip.io
+    issuer: https://authelia.${TRAEFIK_IP_DASHED}.sslip.io
     clientID: argocd
     # Sentinel restored to '$oidc.authelia.clientSecret' after envsubst — envsubst
     # otherwise strips the leading $oidc (unset var) and breaks the secret ref.

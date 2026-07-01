@@ -365,10 +365,13 @@ fi
             --for=condition=Ready certificate/grafana-monitoring-cert -n grafana
 
         echo "📈 Applying monitoring Grafana instance (OIDC + HTTPS)..."
+        # root_url uses this region's Traefik IP; OIDC endpoints use the fixed
+        # hub in-cluster Authelia portal (HUB_TRAEFIK_IP_DASHED from common.sh).
         TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
+        HUB_TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" \
         TRAEFIK_EDGE_IP_DASHED="${TRAEFIK_EDGE_IP_DASHED}" \
         AUTHELIA_HOST="${AUTHELIA_HOST}" AUTHELIA_PORT="${AUTHELIA_PORT}" \
-        envsubst '${TRAEFIK_IP_DASHED} ${TRAEFIK_EDGE_IP_DASHED} ${AUTHELIA_HOST} ${AUTHELIA_PORT}' \
+        envsubst '${TRAEFIK_IP_DASHED} ${HUB_TRAEFIK_IP_DASHED} ${TRAEFIK_EDGE_IP_DASHED} ${AUTHELIA_HOST} ${AUTHELIA_PORT}' \
             < "${GIT_REPO_ROOT}/monitoring/grafana/grafana_instance.yaml.tpl" \
             | kubectl --context "${CONTEXT_NAME}" apply -f -
 
