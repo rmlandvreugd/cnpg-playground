@@ -925,7 +925,7 @@ kubectl create namespace authelia --context "${HUB_CONTEXT}" \
     --dry-run=client -o yaml | kubectl apply --context "${HUB_CONTEXT}" -f -
 
 # Backend ExternalName -> edge Traefik (443); edge routes Host(authelia.${HUB_TRAEFIK_IP_DASHED})
-envsubst '${TRAEFIK_EDGE_IP_DASHED}' \
+TRAEFIK_EDGE_IP_DASHED="${TRAEFIK_EDGE_IP_DASHED}" envsubst '${TRAEFIK_EDGE_IP_DASHED}' \
     < "${GIT_REPO_ROOT}/authelia/backend-service.yaml.tpl" \
     | kubectl --context "${HUB_CONTEXT}" apply -f -
 
