@@ -155,6 +155,19 @@ for region in "${REGIONS[@]}"; do
         kubectl --context "${CONTEXT_NAME}" create namespace otel --dry-run=client -o yaml \
             | kubectl --context "${CONTEXT_NAME}" apply -f -
 
+        # The collector mounts secret otel-collector-otlp-tls as a REQUIRED volume
+        # (otel-collector-values.yaml extraVolumes), so the cert must be issued
+        # BEFORE the helm install. Otherwise the pod stays ContainerCreating, helm
+        # --wait fails with "Progress deadline exceeded", and the script dies here
+        # before it ever reaches the cert — so a fresh cluster can never converge.
+        echo "🌐 Applying ext-svc-lb LoadBalancer + OTLP TLS certificate (edge→collector mTLS)..."
+        kubectl --context "${CONTEXT_NAME}" apply \
+            -f "${GIT_REPO_ROOT}/monitoring/platform/ext-svc-lb.yaml"
+
+        echo "⏳ Waiting for OTLP TLS cert (otel-collector-otlp-tls) to be issued..."
+        kubectl --context "${CONTEXT_NAME}" wait --for=condition=Ready \
+            certificate/otel-collector-otlp-tls -n otel --timeout=120s
+
         helm_upgrade_install otel-collector \
             oci://ghcr.io/open-telemetry/opentelemetry-helm-charts/opentelemetry-collector \
             otel "${CONTEXT_NAME}" "${OTEL_COLLECTOR_CHART_VERSION}" \
@@ -163,10 +176,6 @@ for region in "${REGIONS[@]}"; do
 
         kubectl --context "${CONTEXT_NAME}" -n otel rollout status deploy/otel-collector-opentelemetry-collector \
             --timeout=120s
-
-        echo "🌐 Applying ext-svc-lb LoadBalancer + OTLP TLS certificate (edge→collector mTLS)..."
-        kubectl --context "${CONTEXT_NAME}" apply \
-            -f "${GIT_REPO_ROOT}/monitoring/platform/ext-svc-lb.yaml"
 
         kubectl --context "${CONTEXT_NAME}" delete ingressroute tempo-otlp-http -n tempo \
             --ignore-not-found
