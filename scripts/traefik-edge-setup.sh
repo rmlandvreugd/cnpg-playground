@@ -90,9 +90,16 @@ _issue_cert "seaweedfs-admin" \
     "seaweedfs-admin.${TRAEFIK_EDGE_IP_DASHED}.sslip.io" \
     "seaweedfs-admin" "localhost" "127.0.0.1"
 
+# OTLP mTLS client cert (referenced by tracing/log/accessLog in traefik.yaml).
+# Must exist before the edge container starts or Traefik fatals loading the
+# keypair — and since app logs ship over OTLP only, that crash is silent.
+# The collector's OTLP receiver verifies this against its step-ca client CA.
+_issue_cert "otlp-client" \
+    "traefik-edge.${TRAEFIK_EDGE_IP_DASHED}.sslip.io" \
+    "traefik-edge" "localhost" "127.0.0.1"
+
 # Clean up intermediate CA materials from step-ca container
 ${CONTAINER_PROVIDER} exec "${STEP_CA_CONTAINER_NAME}" rm -f \
     /tmp/edge_intermediate_ca.crt /tmp/edge_intermediate_ca_key
 
-echo "✅ Edge TLS certs provisioned in ${TRAEFIK_EDGE_CERTS_DIR}/"
-echo "   ⚠️  OTLP mTLS client cert (otlp-client.crt/key) provisioned in cnpg-playground-5sq.6"
+echo "✅ Edge TLS certs provisioned in ${TRAEFIK_EDGE_CERTS_DIR}/ (incl. otlp-client for OTLP mTLS)"
