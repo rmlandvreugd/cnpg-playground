@@ -173,12 +173,24 @@ ${CONTAINER_PROVIDER} run -d \
     -v "${AUTHELIA_SECRETS_DIR}:/config/secrets:ro" \
     "${AUTHELIA_IMAGE}"
 
-# Poll OIDC discovery endpoint for readiness
+# Poll OIDC discovery endpoint for readiness.
+# Authelia derives the effective OIDC issuer per request and refuses discovery
+# unless that issuer URL falls under a configured session.cookies domain. Hitting
+# the container directly on the loopback port keeps the non-standard ":${AUTHELIA_PORT}"
+# glued to the Host, so the derived issuer never matches the port-less cookie
+# domain. We instead replicate how the edge Traefik calls Authelia: connect to the
+# published port via --resolve, but send X-Forwarded-Proto/Host (no port) so the
+# issuer resolves to https://${AUTHELIA_HOST} and matches the cookie domain. This
+# verifies the OIDC discovery path end-to-end, not just liveness.
 echo "⏳ Waiting for Authelia OIDC endpoint..."
-DISCOVERY_URL="https://127.0.0.1:${AUTHELIA_PORT}/.well-known/openid-configuration"
+DISCOVERY_URL="https://${AUTHELIA_HOST}:${AUTHELIA_PORT}/.well-known/openid-configuration"
 MAX_RETRIES=30; COUNT=0
 while [ $COUNT -lt $MAX_RETRIES ]; do
-    if curl -sf --cacert "${AUTHELIA_TLS_DIR}/ca-chain.pem" "${DISCOVERY_URL}" > /dev/null 2>&1; then
+    if curl -sf --cacert "${AUTHELIA_TLS_DIR}/ca-chain.pem" \
+        --resolve "${AUTHELIA_HOST}:${AUTHELIA_PORT}:127.0.0.1" \
+        -H "X-Forwarded-Proto: https" \
+        -H "X-Forwarded-Host: ${AUTHELIA_HOST}" \
+        "${DISCOVERY_URL}" > /dev/null 2>&1; then
         echo "✅ Authelia is ready at https://${AUTHELIA_HOST}"
         break
     fi
