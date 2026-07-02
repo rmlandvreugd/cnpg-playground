@@ -1288,6 +1288,37 @@ TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
     | kubectl --context "${HUB_CONTEXT}" apply -f -
 echo "✅ Radar: https://radar.${HUB_TRAEFIK_IP_DASHED}.sslip.io"
 
+echo "=============================================="
+echo "📊 Installing policy-reporter on hub cluster..."
+echo "=============================================="
+
+kubectl create namespace policy-reporter --context "${HUB_CONTEXT}" \
+    --dry-run=client -o yaml | kubectl apply --context "${HUB_CONTEXT}" -f -
+
+echo "📜 Issuing policy-reporter TLS certificate..."
+TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
+    < "${GIT_REPO_ROOT}/policy-reporter/certificate.yaml.tpl" \
+    | kubectl --context "${HUB_CONTEXT}" apply -f -
+kubectl wait --for=condition=Ready certificate/policy-reporter-tls-cert \
+    -n policy-reporter --timeout=120s --context "${HUB_CONTEXT}"
+
+echo "📊 Installing policy-reporter ${POLICY_REPORTER_CHART_VERSION}..."
+helm_upgrade_install policy-reporter \
+    policy-reporter \
+    policy-reporter "${HUB_CONTEXT}" "${POLICY_REPORTER_CHART_VERSION}" \
+    --repo-url https://kyverno.github.io/policy-reporter \
+    --values "${GIT_REPO_ROOT}/policy-reporter/values.yaml"
+
+echo "🌐 Applying policy-reporter Middleware + IngressRoute (HTTPS)..."
+# forwardAuth targets the in-cluster Authelia portal (authelia.${HUB_TRAEFIK_IP_DASHED}).
+TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
+    < "${GIT_REPO_ROOT}/policy-reporter/middleware.yaml.tpl" \
+    | kubectl --context "${HUB_CONTEXT}" apply -f -
+TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
+    < "${GIT_REPO_ROOT}/policy-reporter/ingressroute.yaml.tpl" \
+    | kubectl --context "${HUB_CONTEXT}" apply -f -
+echo "✅ policy-reporter: https://policy-reporter.${HUB_TRAEFIK_IP_DASHED}.sslip.io"
+
 # --- Final Instructions ---
 echo
 # Display information using the info script

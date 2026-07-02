@@ -114,14 +114,31 @@ two bespoke `generate-*` policies that encode this repo's tenant model.
   JMESPath) when background-scanning workload controllers (Deployment/ReplicaSet).
   Surfaced now that reporting is clean; unrelated to PSS adoption.
 
-### Phase 3 — Add policy-reporter 3.7.4 *(depends on Phase 1)*
-- Install policy-reporter (ArgoCD Application or setup.sh) with `ui.enabled=true`,
-  `plugin.kyverno.enabled=true`, Prometheus `metrics`/ServiceMonitor on (repo has a
-  monitoring stack), and optionally a Loki target (cluster already runs Loki).
-- Expose the UI behind Traefik + Authelia forward-auth, consistent with the other
-  edge services (see the 5sq SSO work).
-- **Verify:** UI lists PolicyReports across namespaces; Kyverno plugin shows policy
-  detail; Prometheus scrapes `policy_report_*` metrics; a deny/audit shows up.
+### Phase 3 — Add policy-reporter 3.7.4 *(DONE, `cnpg-playground-k0e`)*
+- **Delivery — imperative `helm_upgrade_install` on the hub in setup.sh** (like
+  radar/caretta, after the per-region loop): the `rbr` AppProject blocks external
+  helm-repo sources and this is platform infra. `POLICY_REPORTER_CHART_VERSION=3.7.4`
+  (`--repo-url https://kyverno.github.io/policy-reporter`).
+- **Values** (`policy-reporter/values.yaml`): `metrics.enabled`, `ui.enabled`,
+  `plugin.kyverno.enabled`, `monitoring.enabled` (ServiceMonitor — Prometheus
+  `serviceMonitorSelector: {}` grabs it). `monitoring.grafana.dashboards.enabled:
+  false` — this repo uses grafana-operator, not the sidecar ConfigMaps the chart
+  ships, so those are suppressed to avoid orphans (operator-native dashboards are a
+  possible follow-up; not a bead requirement).
+- **Exposure — Traefik + Authelia forward-auth** on the hub, mirroring radar:
+  `policy-reporter/{certificate,middleware,ingressroute}.yaml.tpl` create a
+  cert-manager Certificate (`vault-pki` ClusterIssuer), an `authelia-forwardauth`
+  Middleware, and an IngressRoute → `policy-reporter-ui:8080` at
+  `policy-reporter.<traefik-ip>.sslip.io`. Authelia `default_policy: one_factor`
+  covers the new subdomain (no access_control rule needed).
+- **Verified live** (chart 3.7.4 on the hub): 3 pods (core + ui + kyverno-plugin)
+  Running; core `/metrics` emits `policy_report_result` for both tenant namespaces
+  (`rbr-ver`, `rbr-ver-db`) including PSS baseline results
+  (`category="Pod Security Standards (Baseline)"`, severity enriched by the kyverno
+  plugin) and the custom policies (pass/fail/error); Prometheus scrapes it
+  (`count(policy_report_result)=116`, target active); the IngressRoute router +
+  `authelia-forwardauth` ForwardAuth middleware are engaged over TLS 1.3 (identical
+  wiring to the browser-verified radar edge service).
 
 ## Risks / notes
 - **CRD stored-version migration** (not v2→v3 — both are v3 charts) is auto-run by

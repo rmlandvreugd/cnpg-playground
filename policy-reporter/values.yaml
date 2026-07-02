@@ -1,0 +1,32 @@
+# policy-reporter chart values (PolicyReport UI + metrics for Kyverno).
+#
+# Watches PolicyReport/ClusterPolicyReport (produced by the kyverno engine and the
+# adopted kyverno-policies PSS bundle) and surfaces them as a UI + Prometheus metrics.
+# Installed imperatively on the hub in scripts/setup.sh (like radar/caretta): the rbr
+# AppProject restricts ArgoCD sourceRepos to this git repo, so an external helm-repo
+# source is blocked — and this is platform infra, not a tenant workload.
+
+# Core policy-reporter: expose Prometheus metrics (scraped via the ServiceMonitor below).
+metrics:
+  enabled: true
+
+# Web UI (ClusterIP service policy-reporter-ui:8080), fronted by Traefik + Authelia
+# forward-auth (ingressroute.yaml.tpl / middleware.yaml.tpl).
+ui:
+  enabled: true
+
+# Kyverno plugin: policy/rule detail + live results in the UI, and per-policy metrics.
+plugin:
+  kyverno:
+    enabled: true
+
+# ServiceMonitor so the kube-prometheus-stack Prometheus scrapes policy_report_* /
+# kyverno-plugin metrics (serviceMonitorSelector is {} → all ServiceMonitors matched).
+# Grafana dashboards are shipped as sidecar ConfigMaps by this block; this repo uses
+# grafana-operator (GrafanaDashboard CRDs), so disable them here to avoid orphans —
+# add operator-native dashboards later if wanted.
+monitoring:
+  enabled: true
+  grafana:
+    dashboards:
+      enabled: false
