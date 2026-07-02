@@ -242,3 +242,29 @@ browser level on the live cluster — edge forward-auth (allow + deny) and the t
 OIDC login through the restored in-cluster portal. Only the clean-recreate
 validation of the `authelia-setup.sh` code fix remains before closing `o2r`/`1xa`.
 
+---
+
+# Clean-recreate validation — 2026-07-02 (FINAL — `o2r`/`1xa` closed)
+
+Ran a full from-scratch cycle with **no hot-fix**:
+`./scripts/teardown.sh local && ./scripts/setup.sh local --with-tenant` (exit 0).
+
+**The `authelia-setup.sh` code fix held automatically:**
+- `docker inspect authelia` → networks **`bridge kind`** (no manual `network connect`).
+- edge `/api/health` → **200**; edge portal `/` → **200**.
+- in-cluster OIDC issuer (from pgadmin pod) → **`https://authelia.172-18-255-200.sslip.io`**
+  (in-cluster host) — the `1xa` acceptance criterion, green from scratch.
+
+**Playwright browser flows (re-run on the fresh cluster):**
+- **#3 edge forward-auth:** unauth→302 to edge portal; `authuser`→**403** (deny);
+  `admin`→app renders its own `SeaweedFS Admin - Login` (allow). ✅
+  (One transient `error=Unable to initialize session` on the very first `admin`
+  hit right after setup — the seaweedfs-admin app's own session backend still
+  warming; cleared on retry. App-level, not SSO.)
+- **#7 tenant Grafana OIDC:** "Sign in with Authelia" → **in-cluster portal**
+  OIDC flow → `rbr-ver-admin` → consent "Grafana RBR VER" → **Grafana Home orgId=2**,
+  0 console errors. ✅ Screenshot: `docs/tenant-grafana-rbr-ver-sso-recreate-verified.png`.
+
+**Verdict:** `o2r` fix is durable across a clean teardown+setup; `1xa`'s in-cluster
+portal + issuer criterion is met from scratch. **Both beads closed.**
+
