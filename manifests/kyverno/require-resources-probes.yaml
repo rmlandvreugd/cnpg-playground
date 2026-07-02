@@ -29,18 +29,23 @@ spec:
             deny:
               conditions:
                 any:
-                  - key: "{{element.resources.requests.cpu | length(@)}}"
+                  # Coalesce absent values to '' before comparing: when a container
+                  # has no resources block, element.resources.requests.cpu is nil and
+                  # `length(@)` throws "Invalid type for: <nil>" on background scan.
+                  # '' Equals "" denies when the request/limit is missing (same as the
+                  # probe rules below), turning those error results into clean fails.
+                  - key: "{{ element.resources.requests.cpu || '' }}"
                     operator: Equals
-                    value: 0
-                  - key: "{{element.resources.requests.memory | length(@)}}"
+                    value: ""
+                  - key: "{{ element.resources.requests.memory || '' }}"
                     operator: Equals
-                    value: 0
-                  - key: "{{element.resources.limits.cpu | length(@)}}"
+                    value: ""
+                  - key: "{{ element.resources.limits.cpu || '' }}"
                     operator: Equals
-                    value: 0
-                  - key: "{{element.resources.limits.memory | length(@)}}"
+                    value: ""
+                  - key: "{{ element.resources.limits.memory || '' }}"
                     operator: Equals
-                    value: 0
+                    value: ""
 
     - name: require-liveness-probe
       match:
