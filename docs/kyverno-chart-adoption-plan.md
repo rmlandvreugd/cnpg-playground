@@ -28,18 +28,23 @@ two bespoke `generate-*` policies that encode this repo's tenant model.
 
 ## Research findings (deepwiki)
 
-### kyverno engine 3.4.2 → 3.8.1
-- **CRD migration `v2` → `v3`** on the `kyverno.io` group is the headline change.
-  Existing **`kyverno.io/v1` ClusterPolicy manifests still admit and work
-  unchanged** (v1 is retained), so our 5 policies do not need rewriting.
-- The chart provides an **`upgrade.fromV2` value** and a **post-upgrade migration
-  hook** (`templates/hooks/post-upgrade-migrate-resources.yaml`) that re-stores
-  existing CRs at the new stored version. This must be set/allowed when jumping a
-  chart that shipped v2 CRDs to one shipping v3.
-- Several engine minor releases are crossed; re-validate the background-controller
-  RBAC fix from `anu` (`kyverno/background-controller-rbac.yaml`) still aggregates
-  (the `rbac.kyverno.io/aggregate-to-background-controller` label is stable, but
-  re-verify get/list/watch+bind land after upgrade).
+### kyverno engine 3.4.2 → 3.8.1  *(DONE — see verification below)*
+- **Both 3.4.2 and 3.8.1 are v3 charts** (CRDs at apiVersion `v1`). `upgrade.fromV2`
+  is a **v2→v3-only flag and must NOT be set** within the v3 series — the chart's
+  own validation rejects it. Existing `kyverno.io/v1` ClusterPolicy manifests admit
+  and work unchanged, so our 5 policies do not need rewriting.
+- Stored-version migration is handled automatically by the chart default
+  **`crds.migration.enabled=true`**, which runs a post-upgrade
+  `kyverno-migrate-resources` Job. No `--set` needed; the scripted install keeps
+  chart defaults.
+- Minimum Kubernetes **`>=1.25.0`** (live cluster is 1.36 → fine).
+- 3.8.x **enables `--generateValidatingAdmissionPolicy` / `--validatingAdmissionPolicyReports`
+  by default**. Our validate policies are JMESPath (foreach/deny), not CEL, so they
+  are not VAP-convertible → no VAPs are generated (verified: none). No new RBAC gaps.
+- Several engine minors crossed; the background-controller RBAC fix from `anu`
+  (`kyverno/background-controller-rbac.yaml`, label
+  `rbac.kyverno.io/aggregate-to-background-controller`) survives the upgrade —
+  `generate-tenant-rolebindings` still produces all 4 tenant RoleBindings.
 
 ### kyverno-policies chart 3.8.1
 - CEL-based bundle, three categories: **PSS Baseline**, **PSS Restricted**,
@@ -60,16 +65,17 @@ two bespoke `generate-*` policies that encode this repo's tenant model.
 
 ## Phased plan (3 beads, ordered)
 
-### Phase 1 — Engine upgrade 3.4.2 → 3.8.1 *(depends on nothing)*
-- Bump `KYVERNO_CHART_VERSION` default in `scripts/common.sh`.
-- Add the `--set upgrade.fromV2=true` (and allow the post-upgrade hook) to the
-  `helm_upgrade_install kyverno` call in `scripts/setup.sh`; confirm the CRD
-  migration hook completes.
-- Re-apply `kyverno/background-controller-rbac.yaml` (already in setup.sh after the
-  install) and re-verify aggregation.
-- **Verify:** all 5 existing ClusterPolicies `Ready=True`; `generate-tenant-rolebindings`
-  still generates the 4 tenant RoleBindings; `kyverno-policies` app Synced/Healthy;
-  no CRD-served-version errors. Validate on a clean `teardown && setup … --with-tenant`.
+### Phase 1 — Engine upgrade 3.4.2 → 3.8.1 *(DONE, `cnpg-playground-6w2`)*
+- Bumped `KYVERNO_CHART_VERSION` default `3.4.2 → 3.8.1` in `scripts/common.sh`
+  (with a comment on the v3/migration/k8s-floor facts). **No** `--set` changes: the
+  chart's default `crds.migration.enabled=true` migrates stored versions on upgrade,
+  and `upgrade.fromV2` is deliberately not set (v2→v3 only). Install stays
+  chart-defaults; `background-controller-rbac.yaml` re-apply already lives in setup.sh.
+- **Verified live** (in-place `helm upgrade` on `kind-k8s-local`, chart 3.8.1 /
+  kyverno v1.18.1): migration Job `Complete`; CRD stored version `["v1"]`; all 5
+  ClusterPolicies `Ready=True`; `generate-tenant-rolebindings` produced all 4 tenant
+  RoleBindings (rbr-ver + rbr-ver-db → admin/edit); no background/admission-controller
+  errors; no VAPs generated; `kyverno-policies` ArgoCD app `Synced`/`Healthy`.
 
 ### Phase 2 — Adopt kyverno-policies chart 3.8.1 *(depends on Phase 1)*
 - Add a `kyverno-policies` Helm release (values: enable PSS Baseline + Best
@@ -95,9 +101,10 @@ two bespoke `generate-*` policies that encode this repo's tenant model.
   detail; Prometheus scrapes `policy_report_*` metrics; a deny/audit shows up.
 
 ## Risks / notes
-- **CRD v2→v3 migration** is the main risk — take a backup/export of ClusterPolicies
-  before upgrade; validate the migration hook ran (`kubectl get crd policies.kyverno.io
-  -o jsonpath='{.status.storedVersions}'`).
+- **CRD stored-version migration** (not v2→v3 — both are v3 charts) is auto-run by
+  `crds.migration.enabled=true`. Back up ClusterPolicies before upgrade and validate
+  the migration Job completed / `kubectl get crd policies.kyverno.io
+  -o jsonpath='{.status.storedVersions}'` is `["v1"]`. *(Phase 1 confirmed clean.)*
 - **Policy-name collisions**: don't leave a custom policy and its chart equivalent
   both enforcing — retire the custom one in the same change that enables the chart one.
 - **CEL prerequisites**: the 3.8.1 bundle is CEL-based; confirmed fine on the 3.8.1
