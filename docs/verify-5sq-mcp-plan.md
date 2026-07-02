@@ -210,3 +210,35 @@ this environment (`npx playwright install chrome`). The HTTP-level chain (portal
 the code fix still pending** (a fresh `teardown local && setup local` should leave
 authelia on `bridge kind` with no hot-fix). `1xa` unblocked.
 
+---
+
+# Playwright browser flows — 2026-07-02 (now unblocked)
+
+The Playwright MCP browser (Chrome) is now installed (`npx playwright install chrome`),
+so the two login flows that were previously HTTP-only could be run for real.
+
+**#3 — Edge forward-auth (seaweedfs-admin, edge portal):** ✅ ALL PASS
+- Unauthenticated `https://seaweedfs-admin.172-18-0-250.sslip.io/`
+  → 302 to edge portal `authelia.172-18-0-250.sslip.io/?rd=...seaweedfs-admin...`.
+- Login `authuser` / `password` → authenticates, redirected back → **403 Forbidden**
+  (not in `seaweedfs-admin` group). Correct deny.
+- Logout, login `admin` / `password` → forward-auth passes → app renders its own
+  `SeaweedFS Admin - Login` page (no 403). Correct allow.
+
+**#7 — Tenant Grafana OIDC (in-cluster portal):** ✅ FULL ROUND-TRIP PASS
+- `https://grafana-rbr-ver.172-18-255-200.sslip.io/` shows **"Sign in with Authelia"**.
+- Click → redirects to the **in-cluster portal** `authelia.172-18-255-200.sslip.io/?flow=openid_connect`
+  (the exact 1xa fix — in-cluster portal serving the OIDC flow).
+- Login `rbr-ver-admin` / `password` → consent screen "Hi RBR VER Admin" for app
+  "Grafana RBR VER" (scopes openid/email/profile/groups) → Accept.
+- Lands on **Grafana Home, orgId=2** (tenant org), 0 console errors.
+  Screenshot: `docs/tenant-grafana-rbr-ver-sso-success.png`.
+
+Test credentials confirmed: static password is `password` (verified via
+`authelia crypto hash validate`); users from `authelia/config/users_database.yml.tpl`.
+
+**Conclusion:** every Authelia-dependent surface in the runbook now passes at the
+browser level on the live cluster — edge forward-auth (allow + deny) and the tenant
+OIDC login through the restored in-cluster portal. Only the clean-recreate
+validation of the `authelia-setup.sh` code fix remains before closing `o2r`/`1xa`.
+
