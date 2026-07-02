@@ -832,6 +832,19 @@ ${STEP_CA_INT_CERT}" \
     kubectl --context "${CONTEXT_NAME}" apply \
         -f "${GIT_REPO_ROOT}/kyverno/background-controller-rbac.yaml"
 
+    # Upstream Pod Security Standards (baseline, Audit) bundle. Delivered here
+    # imperatively rather than via ArgoCD because the rbr AppProject restricts
+    # sourceRepos to this git repo (no external helm-repo sources), and it is
+    # platform infra like the engine above. Namespace scoping (exclude platform
+    # namespaces) lives in policies-values.yaml via per-policy `policyExclude`
+    # (engine resourceFilters only gate admission, not background reporting).
+    echo "🛡️  Installing kyverno-policies ${KYVERNO_POLICIES_CHART_VERSION} (PSS baseline, Audit)..."
+    helm_upgrade_install kyverno-policies \
+        kyverno-policies \
+        kyverno "${CONTEXT_NAME}" "${KYVERNO_POLICIES_CHART_VERSION}" \
+        --repo-url https://kyverno.github.io/kyverno/ \
+        -f "${GIT_REPO_ROOT}/kyverno/policies-values.yaml"
+
     echo "🚀 Installing ArgoCD ${ARGOCD_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
     helm_upgrade_install argocd \
         oci://ghcr.io/argoproj/argo-helm/argo-cd \

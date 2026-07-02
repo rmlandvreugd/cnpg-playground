@@ -204,6 +204,9 @@ GANGPLANK_CHART_VERSION="${GANGPLANK_CHART_VERSION:-0.2.1}"
 # chart's default `crds.migration.enabled=true` runs a post-upgrade Job that
 # migrates CRD stored versions automatically. Requires Kubernetes >= 1.25.
 KYVERNO_CHART_VERSION="${KYVERNO_CHART_VERSION:-3.8.1}"
+# kyverno-policies bundle (Pod Security Standards). Only in the https helm repo,
+# not the ghcr OCI registry, so it is installed via --repo-url.
+KYVERNO_POLICIES_CHART_VERSION="${KYVERNO_POLICIES_CHART_VERSION:-3.8.1}"
 # Argo Ecosystem
 ARGOCD_CHART_VERSION="${ARGOCD_CHART_VERSION:-9.7.0}"
 ARGO_WORKFLOWS_CHART_VERSION="${ARGO_WORKFLOWS_CHART_VERSION:-1.0.17}"

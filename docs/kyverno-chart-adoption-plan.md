@@ -47,13 +47,18 @@ two bespoke `generate-*` policies that encode this repo's tenant model.
   `generate-tenant-rolebindings` still produces all 4 tenant RoleBindings.
 
 ### kyverno-policies chart 3.8.1
-- CEL-based bundle, three categories: **PSS Baseline**, **PSS Restricted**,
-  **Best Practices**. Every policy is individually enable/disable-able and each has
-  a configurable `validationFailureAction` (Audit vs Enforce) via values.
-- Ships equivalents for 3 of our custom policies (table above), plus extras
-  (`drop-all-capabilities`, `drop-cap-net-raw`, `require-labels`, etc.).
-- Does **not** cover generate policies → `generate-default-networkpolicy` and
-  `generate-tenant-rolebindings` stay hand-written in `manifests/kyverno/`.
+- **Correction (verified via `helm template`):** the chart ships **only Pod
+  Security Standards** — `podSecurityStandard: baseline` (11 ClusterPolicies) or
+  `restricted`. It does **not** ship `require-pod-probes`, `require-requests-limits`,
+  or `restrict-image-registries` equivalents. So it overlaps exactly **1** of our
+  custom policies: the hand-written `disallow-privileged` (whose intent is a subset
+  of PSS baseline's `disallow-privileged-containers` + `disallow-host-namespaces` +
+  `disallow-host-path`).
+- `policyType` selects `ClusterPolicy` (default) or `ValidatingPolicy` (CEL / VAP,
+  kyverno ≥1.17). `validationFailureAction` (Audit vs Enforce) is configurable.
+- Does **not** cover our other four customs → `require-resources-probes`,
+  `restrict-image-registries`, `generate-default-networkpolicy`, and
+  `generate-tenant-rolebindings` all stay hand-written in `manifests/kyverno/`.
 
 ### policy-reporter chart 3.7.4
 - Watches `PolicyReport`/`ClusterPolicyReport`, exposes **Prometheus metrics**, an
@@ -77,19 +82,37 @@ two bespoke `generate-*` policies that encode this repo's tenant model.
   RoleBindings (rbr-ver + rbr-ver-db → admin/edit); no background/admission-controller
   errors; no VAPs generated; `kyverno-policies` ArgoCD app `Synced`/`Healthy`.
 
-### Phase 2 — Adopt kyverno-policies chart 3.8.1 *(depends on Phase 1)*
-- Add a `kyverno-policies` Helm release (values: enable PSS Baseline + Best
-  Practices; `validationFailureAction: Audit` to start; set `restrict-image-registries`
-  allowed registries to match the current custom policy). Decide delivery: ArgoCD
-  Application pointing at the chart vs. `helm_upgrade_install` in setup.sh (prefer
-  ArgoCD for parity with the existing app-of-apps).
-- **Retire the 3 overlapping hand-written policies** (`disallow-privileged`,
-  `require-resources-probes`, `restrict-image-registries`) from `manifests/kyverno/`
-  once the chart equivalents are enforcing the same intent — avoid duplicate
-  ClusterPolicy names / double reporting. Keep the two `generate-*` policies.
-- **Verify:** chart policies admit and report; the retired behaviors still covered
-  (e.g. a probe-less Pod is flagged by `require-pod-probes`); no orphaned
-  PolicyReports; app(s) Synced.
+### Phase 2 — Adopt kyverno-policies chart 3.8.1 *(DONE, `cnpg-playground-1pk`)*
+- **Scope corrected mid-flight** (see analysis above): the chart is PSS-only, so it
+  supersedes just `disallow-privileged`, not three customs. Per user decision:
+  *adopt PSS baseline in Audit cluster-wide, exclude platform/system namespaces,
+  retire only `disallow-privileged`, keep the other four customs.*
+- **Delivery — imperative `helm_upgrade_install` in setup.sh** (not ArgoCD): the
+  `rbr` AppProject restricts `sourceRepos` to this git repo (no external helm-repo
+  sources), and PSS is platform infra like the engine + capsule-proxy already
+  installed imperatively. `KYVERNO_POLICIES_CHART_VERSION=3.8.1` (chart lives in the
+  `https://kyverno.github.io/kyverno/` repo, not the ghcr OCI registry).
+- **Values** (`kyverno/policies-values.yaml`): `podSecurityStandard: baseline`,
+  `policyType: ClusterPolicy`, `validationFailureAction: Audit`.
+  - `ClusterPolicy` (not `ValidatingPolicy`): the CEL `ValidatingPolicy` +
+    `vpolExclude.excludeNamespaces` path throws `no such key: namespace` **error**
+    results during background scans (chart bug); `ClusterPolicy` background-scans
+    cleanly and matches the remaining custom policies' kind.
+  - **Namespace exclusion via `policyExclude`** (keyed by policy name, applies to all
+    of a policy's rules) — *not* engine `resourceFilters`, which only gate the
+    admission webhook and do **not** stop background PolicyReport generation. A YAML
+    anchor lists the 23 platform namespaces once and reuses it across all 11 baseline
+    policies, so PSS evaluates only tenant/app workloads (`rbr-*`, `default`).
+- **Retired** `manifests/kyverno/disallow-privileged.yaml` (pruned by the
+  `kyverno-policies` ArgoCD app after commit+push). Kept the four other customs.
+- **Verified live** (chart 3.8.1, ClusterPolicy): reports exist **only** in tenant
+  namespaces (`rbr-ver`, `rbr-ver-db`) — **zero** PolicyReports in all platform
+  namespaces; `rbr-ver` shows 24 `pass` PSS results; no orphaned reports.
+- **Out of scope, filed as follow-up:** pre-existing JMESPath **error** results in
+  the kept customs `require-resources-probes` (`length(@)` on nil `resources`) and
+  `restrict-image-registries` (`containers + initContainers` — invalid `+` in
+  JMESPath) when background-scanning workload controllers (Deployment/ReplicaSet).
+  Surfaced now that reporting is clean; unrelated to PSS adoption.
 
 ### Phase 3 — Add policy-reporter 3.7.4 *(depends on Phase 1)*
 - Install policy-reporter (ArgoCD Application or setup.sh) with `ui.enabled=true`,
