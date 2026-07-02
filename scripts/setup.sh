@@ -822,6 +822,16 @@ ${STEP_CA_INT_CERT}" \
         oci://ghcr.io/kyverno/charts/kyverno \
         kyverno "${CONTEXT_NAME}" "${KYVERNO_CHART_VERSION}"
 
+    # The chart's default background-controller RBAC lacks get/list/watch on
+    # rolebindings/roles (+ bind on admin/edit), which the synchronize=true
+    # generate-tenant-rolebindings policy needs. Without this the policy is
+    # rejected by the kyverno webhook and the argocd kyverno-policies app stays
+    # OutOfSync. Aggregated ClusterRole, applied here (idempotent) rather than
+    # via the rbr AppProject (which is tenant-scoped, no ClusterRole whitelist).
+    echo "🔑 Granting kyverno background-controller read/bind on RoleBindings..."
+    kubectl --context "${CONTEXT_NAME}" apply \
+        -f "${GIT_REPO_ROOT}/kyverno/background-controller-rbac.yaml"
+
     echo "🚀 Installing ArgoCD ${ARGOCD_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
     helm_upgrade_install argocd \
         oci://ghcr.io/argoproj/argo-helm/argo-cd \
