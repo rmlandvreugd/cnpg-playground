@@ -123,3 +123,90 @@ Run once up front so failures in 1–6 are easy to attribute:
 - Cookie scope: the edge portal issues cookies for `172-18-0-250.sslip.io`, the
   in-cluster portal for `172-18-255-200.sslip.io` — a login on one does **not**
   authenticate the other; test each portal independently.
+
+---
+
+# Execution results — 2026-07-02 (clean recreate: cluster `verstappen`, tenant `rbr-ver`)
+
+Run via MCP (radar + k8s + grafana) and Bash/mc/curl. Live LB IPs this run: edge
+`172.18.0.250`, in-cluster Traefik `172.18.255.200`, tenant DB `172.18.255.210`.
+Playwright `--ignore-https-errors` was already set in `~/.claude.json` (blocker
+pre-cleared). Browser login steps (#3/#4/#7-grafana) were **not** run because the
+Authelia SSO backend is down at the HTTP layer (see headline finding) and a
+browser would only reproduce the 500/504 — proven more cheaply with curl.
+
+## 🔴 Headline finding — Authelia SSO is fully down (edge→authelia 504)
+`traefik-edge` returns **HTTP 504** for every path to the authelia backend, on
+both the edge portal (`authelia.172-18-0-250.sslip.io`) and the in-cluster portal
+(`authelia.172-18-255-200.sslip.io`, which proxies to the edge via the
+`authelia-backend` ExternalName). Cascade: `seaweedfs-admin` forward-auth → **500**;
+grafana / argocd / tenant-grafana SSO cannot complete.
+
+- **Root cause:** the `authelia` host container is on the docker **`bridge`**
+  network only (`172.17.0.4`), **not `kind`**. `traefik-edge` is on `kind` only
+  (`172.18.0.250`) → cannot reach `authelia:9091`. vault (`172.18.0.13`) and
+  seaweedfs-admin (`172.18.0.15`) are on **both** and route fine. Authelia itself
+  is healthy (docker healthcheck green; `curl https://127.0.0.1:9091/api/health` → 200).
+- **Why:** `scripts/authelia-setup.sh` creates the container with `--network bridge`
+  (line 166) and is invoked twice from `scripts/setup.sh` (lines 82 and 921). The
+  lone `docker network connect kind authelia` (setup.sh line 552, guarded by
+  `2>/dev/null || true`) runs *between* them, so the late re-run at 921 recreates
+  the container bridge-only and drops the kind attachment; nothing reconnects it.
+- **Filed:** `cnpg-playground-o2r` (P1, under epic `5sq`, **blocks `1xa`**).
+
+## Per-item results
+| # | Item | Verdict | Evidence |
+|---|---|---|---|
+| 0 | Baseline health | ⚠️ PASS w/ caveats | in-cluster traefik chart v41 (`41.0.1`); all Helm releases deployed. Pre-existing **critical unrelated**: argocd `kyverno-policies` sync fails (kyverno webhook RBAC). Benign warnings: PDB `verstappen-primary`, `tempo-memcached` endpoints, calico `goldmane`. |
+| 1 | Edge is single front | ✅ PASS | `traefik-edge` Up 10h, `:443`, IP `172.18.0.250` on kind net; vault routes through edge → 200. |
+| 2 | S3 through edge | ✅ PASS | `mc ls` (via `--insecure` for step-ca) shows `backups/`, `loki/`, `verstappen-backups/`; `mc mb edge/verify-5sq` succeeded. |
+| 3 | Edge human surfaces 302/403/login | ❌ FAIL | `seaweedfs-admin` through edge = **500** (forward-auth → authelia 504), not 302. Blocked by `o2r`. |
+| 4 | In-cluster portal login + OIDC issuer | ❌ FAIL | Plumbing OK: `authelia-tls-cert` `Ready=True` (CN `authelia.172-18-255-200.sslip.io`), `authelia` IngressRoute + `authelia-backend` ExternalName → edge exist. But `/.well-known/openid-configuration` = **504** from an in-cluster pod (pgadmin) *and* host. Issuer unverifiable. Blocked by `o2r`. **→ resolves bead `1xa`? NO.** |
+| 5 | Traces + logs in Loki | ⚠️ PARTIAL | Pipeline up: collector `otel-collector-opentelemetry-collector` (ns `otel`) Running, `traefik-edge-metrics` svc in ns `otel`, Loki (`loki.grafana:3100`) live with ~60 `service_name` values. But **no distinct `traefik-edge` service_name** in Loki (only `traefik`); Grafana MCP is TLS-blocked (won't skip step-ca) so deeper trace/log confirmation was not possible. |
+| 6 | Host-port debug bypass | ✅ PASS | vault `127.0.0.1:8200/v1/sys/health` → 200; seaweedfs-admin `127.0.0.1:23646/` → 307. |
+| 7 | Tenant URLs (added) | ⚠️ MIXED | **pgAdmin** `http://pgadmin-rbr-ver.172-18-255-200.sslip.io` → 301→**200** (own login, Authelia-independent) ✅. **tenant Grafana** `https://grafana-rbr-ver.172-18-255-200.sslip.io` → 302 `/login` (page loads) but "Sign in with Authelia" hits the dead portal ⚠️. |
+
+## Bead `cnpg-playground-1xa` — NOT resolved
+Title: *"Two-domain Authelia fatals: in-cluster clients need in-cluster portal
+restored."* The in-cluster-portal plumbing that 1xa added is all correctly in
+place (cert `Ready`, IngressRoute, `authelia-backend` ExternalName), so its
+original cookie-scope bug appears fixed — **but its live acceptance test cannot
+pass**: the in-cluster portal 504s because the upstream edge Authelia is
+unreachable from `traefik-edge`. Root cause is the **new** regression `o2r`
+(authelia not on kind net), not 1xa's original issue. **Keep `1xa` open, now
+blocked by `o2r`.** Re-run #3/#4/#7-grafana (incl. the Playwright login flows)
+once `o2r` is fixed and authelia is on both `bridge`+`kind`.
+
+---
+
+# Re-verification after `o2r` fix — 2026-07-02
+
+**Fix applied:**
+- Code (durable): `scripts/authelia-setup.sh` now runs
+  `${CONTAINER_PROVIDER} network connect kind "${AUTHELIA_CONTAINER_NAME}" 2>/dev/null || true`
+  immediately after the container is (re)created, so the kind attachment survives
+  the second `authelia-setup.sh` invocation (`setup.sh:921`).
+- Live hot-fix (current cluster): `docker network connect kind authelia`
+  → `docker inspect` now shows **`bridge kind`**.
+
+**Results (all previously-failing items now pass):**
+| # | Item | Before | After |
+|---|---|---|---|
+| 1 | edge Authelia `/api/health` | 504 | **200** ✅ |
+| 4 | in-cluster portal OIDC issuer | 504 | **`https://authelia.172-18-255-200.sslip.io`** (in-cluster host) ✅ |
+| 3 | edge forward-auth (seaweedfs-admin) | 500 | **302 → authelia login** ✅ |
+| — | both portals render app HTML | 504 | **200 + Authelia SPA** (edge & in-cluster) ✅ |
+
+**`1xa` acceptance criterion met:** the in-cluster portal serves OIDC discovery
+with `issuer == in-cluster host` and both portals are live — the cookie-scope
+fatal (`errFmtSessionDomainURLNotInCookieScope`) is gone. Its plumbing was already
+correct; `o2r` was the sole live blocker.
+
+**Not re-run:** Playwright browser logins — the MCP's Chrome isn't installed in
+this environment (`npx playwright install chrome`). The HTTP-level chain (portal
+200 + correct issuer + forward-auth 302) is conclusive for the SSO/1xa criterion.
+
+**Status:** `o2r` fix verified on the live cluster; **clean-recreate validation of
+the code fix still pending** (a fresh `teardown local && setup local` should leave
+authelia on `bridge kind` with no hot-fix). `1xa` unblocked.
+

@@ -173,6 +173,13 @@ ${CONTAINER_PROVIDER} run -d \
     -v "${AUTHELIA_SECRETS_DIR}:/config/secrets:ro" \
     "${AUTHELIA_IMAGE}"
 
+# Join the kind network so the edge and in-cluster Traefik can reach Authelia at
+# authelia:9091. This container is recreated (rm -f) on every run of this script,
+# and this script runs more than once during setup, so we (re)attach here rather
+# than rely on a one-shot connect elsewhere that a later recreate would undo.
+# Guarded: the kind network may not exist yet on the earliest invocation.
+${CONTAINER_PROVIDER} network connect kind "${AUTHELIA_CONTAINER_NAME}" 2>/dev/null || true
+
 # Poll OIDC discovery endpoint for readiness.
 # Authelia derives the effective OIDC issuer per request and refuses discovery
 # unless that issuer URL falls under a configured session.cookies domain. Hitting
