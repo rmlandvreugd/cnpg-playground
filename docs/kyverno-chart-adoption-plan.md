@@ -108,11 +108,14 @@ two bespoke `generate-*` policies that encode this repo's tenant model.
 - **Verified live** (chart 3.8.1, ClusterPolicy): reports exist **only** in tenant
   namespaces (`rbr-ver`, `rbr-ver-db`) — **zero** PolicyReports in all platform
   namespaces; `rbr-ver` shows 24 `pass` PSS results; no orphaned reports.
-- **Out of scope, filed as follow-up:** pre-existing JMESPath **error** results in
-  the kept customs `require-resources-probes` (`length(@)` on nil `resources`) and
-  `restrict-image-registries` (`containers + initContainers` — invalid `+` in
-  JMESPath) when background-scanning workload controllers (Deployment/ReplicaSet).
-  Surfaced now that reporting is clean; unrelated to PSS adoption.
+- **Follow-up `cnpg-playground-4p8.1` (DONE):** fixed pre-existing JMESPath **error**
+  results in the kept customs — `require-resources-probes` (`length(@)` on nil
+  `resources` → coalesce `|| ''` and compare to `""`) and `restrict-image-registries`
+  (`containers + initContainers` — invalid `+` → two `foreach` entries sharing a
+  deny anchor). Surfaced once reporting was clean; unrelated to PSS adoption. After
+  the fix: 0 `error` results; both policies evaluate to real pass/fail (the pooler's
+  container without resources now cleanly fails; the registry-less local
+  `demo-app:0.1.0` image now cleanly fails restrict-image-registries — both Audit).
 
 ### Phase 3 — Add policy-reporter 3.7.4 *(DONE, `cnpg-playground-k0e`)*
 - **Delivery — imperative `helm_upgrade_install` on the hub in setup.sh** (like
