@@ -27,3 +27,11 @@ spec:
       kind: ClusterPolicy
       jsonPointers:
         - /status
+      # Kyverno's admission webhook injects these spec defaults (absent from git),
+      # which otherwise keeps policies like require-resources-probes permanently
+      # OutOfSync. spec.background stays diffed (it is set explicitly in git).
+      jqPathExpressions:
+        - .spec.admission
+        - .spec.emitWarning
+        - .spec.rules[].skipBackgroundRequests
+        - .spec.rules[].validate.allowExistingViolations

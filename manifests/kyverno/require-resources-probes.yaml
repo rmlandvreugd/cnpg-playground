@@ -59,9 +59,12 @@ spec:
             deny:
               conditions:
                 all:
-                  - key: "{{element.livenessProbe}}"
+                  # Coalesce absent probe to '' rather than comparing to null:
+                  # kyverno strips `value: null` on persist, causing permanent
+                  # ArgoCD drift. '' is semantically equivalent (deny when absent).
+                  - key: "{{ element.livenessProbe || '' }}"
                     operator: Equals
-                    value: null
+                    value: ""
 
     - name: require-readiness-probe
       match:
@@ -80,6 +83,7 @@ spec:
             deny:
               conditions:
                 all:
-                  - key: "{{element.readinessProbe}}"
+                  # See livenessProbe note above: avoid `value: null` drift.
+                  - key: "{{ element.readinessProbe || '' }}"
                     operator: Equals
-                    value: null
+                    value: ""
