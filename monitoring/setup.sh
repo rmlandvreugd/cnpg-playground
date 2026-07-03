@@ -344,6 +344,14 @@ fi
         kubectl --context "${CONTEXT_NAME}" apply \
             -f "${GIT_REPO_ROOT}/monitoring/platform/argocd-podmonitors.yaml"
     fi
+    # policy-reporter (hub only) is installed by scripts/setup.sh before these CRDs exist,
+    # so its ServiceMonitor is applied here (chart's monitoring.enabled is off). The
+    # namespace only exists on the hub, so this guard is naturally hub-scoped.
+    if kubectl --context "${CONTEXT_NAME}" get namespace policy-reporter &>/dev/null; then
+        echo "📊 Applying policy-reporter monitor..."
+        kubectl --context "${CONTEXT_NAME}" apply \
+            -f "${GIT_REPO_ROOT}/monitoring/platform/policy-reporter-servicemonitor.yaml"
+    fi
 
     echo "📊 Applying edge Traefik ServiceMonitor (static external target)..."
     kubectl --context "${CONTEXT_NAME}" apply \

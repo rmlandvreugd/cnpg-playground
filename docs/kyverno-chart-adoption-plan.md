@@ -123,11 +123,17 @@ two bespoke `generate-*` policies that encode this repo's tenant model.
   helm-repo sources and this is platform infra. `POLICY_REPORTER_CHART_VERSION=3.7.4`
   (`--repo-url https://kyverno.github.io/policy-reporter`).
 - **Values** (`policy-reporter/values.yaml`): `metrics.enabled`, `ui.enabled`,
-  `plugin.kyverno.enabled`, `monitoring.enabled` (ServiceMonitor — Prometheus
-  `serviceMonitorSelector: {}` grabs it). `monitoring.grafana.dashboards.enabled:
-  false` — this repo uses grafana-operator, not the sidecar ConfigMaps the chart
-  ships, so those are suppressed to avoid orphans (operator-native dashboards are a
-  possible follow-up; not a bead requirement).
+  `plugin.kyverno.enabled`. `monitoring.enabled: false` — the chart's ServiceMonitor
+  is **not** rendered at install time: policy-reporter installs (hub) before the
+  Prometheus Operator CRDs exist (kube-prometheus-stack comes later via
+  `monitoring/setup.sh`), so a chart-rendered ServiceMonitor fails with *no matches
+  for kind ServiceMonitor*. Instead a standalone
+  `monitoring/platform/policy-reporter-servicemonitor.yaml` (a faithful copy of the
+  chart's) is applied by `monitoring/setup.sh` after the CRDs exist — the same pattern
+  the repo already uses for Capsule/Calico/Kyverno/ArgoCD monitors. Prometheus
+  `serviceMonitorSelector: {}` then grabs it. (Grafana dashboards stayed disabled —
+  this repo uses grafana-operator, not the chart's sidecar ConfigMaps.) Fixed as
+  `cnpg-playground-fmo`, surfaced only on a fresh `teardown && setup` bootstrap.
 - **Exposure — Traefik + Authelia forward-auth** on the hub, mirroring radar:
   `policy-reporter/{certificate,middleware,ingressroute}.yaml.tpl` create a
   cert-manager Certificate (`vault-pki` ClusterIssuer), an `authelia-forwardauth`

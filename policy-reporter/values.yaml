@@ -20,13 +20,12 @@ plugin:
   kyverno:
     enabled: true
 
-# ServiceMonitor so the kube-prometheus-stack Prometheus scrapes policy_report_* /
-# kyverno-plugin metrics (serviceMonitorSelector is {} → all ServiceMonitors matched).
-# Grafana dashboards are shipped as sidecar ConfigMaps by this block; this repo uses
-# grafana-operator (GrafanaDashboard CRDs), so disable them here to avoid orphans —
-# add operator-native dashboards later if wanted.
+# ServiceMonitor is NOT rendered by the chart: policy-reporter installs (scripts/setup.sh,
+# hub) BEFORE the Prometheus Operator CRDs exist (kube-prometheus-stack comes later via
+# monitoring/setup.sh), so a chart-rendered ServiceMonitor fails "no matches for kind
+# ServiceMonitor in version monitoring.coreos.com/v1". A standalone copy is applied by
+# monitoring/setup.sh after the CRDs exist — see
+# monitoring/platform/policy-reporter-servicemonitor.yaml. (This also mirrors how the
+# repo handles Capsule/Calico/Kyverno/ArgoCD monitors — monitoring/setup.sh:321.)
 monitoring:
-  enabled: true
-  grafana:
-    dashboards:
-      enabled: false
+  enabled: false
