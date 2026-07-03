@@ -42,8 +42,9 @@ tracing:
         key: /etc/traefik/certs/otlp-client.key
 
 log:
-  level: INFO
+  level: DEBUG
   otlp:
+    serviceName: traefik-edge
     grpc:
       endpoint: "172.18.255.240:4317"
       tls:
@@ -53,6 +54,7 @@ log:
 
 accessLog:
   otlp:
+    serviceName: traefik-edge
     grpc:
       endpoint: "172.18.255.240:4317"
       tls:

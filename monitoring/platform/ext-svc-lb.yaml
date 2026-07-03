@@ -42,6 +42,12 @@ spec:
   dnsNames:
     - otel-collector-opentelemetry-collector.otel.svc.cluster.local
     - otel-collector-opentelemetry-collector.otel
+  # The external edge Traefik dials the LB by IP (172.18.255.240:4317), so the
+  # server cert MUST carry a matching IP SAN — Go's gRPC/TLS client verifies the
+  # dialed IP against the cert SANs (DNS names alone fail with "cannot validate
+  # certificate for 172.18.255.240 because it doesn't contain any IP SANs").
+  ipAddresses:
+    - 172.18.255.240
   duration: 720h
   renewBefore: 24h
   privateKey:
