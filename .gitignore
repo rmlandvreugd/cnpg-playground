@@ -65,3 +65,5 @@ graphify-out/cache/           # optional: commit for speed, skip to keep repo sm
 
 # Personal machine-specific Claude instructions
 CLAUDE.local.md
+graphify-out
+.playwright-mcp
