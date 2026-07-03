@@ -16,6 +16,16 @@ entryPoints:
           permanent: true
   websecure:
     address: ":443"
+    # Trust X-Forwarded-* (incl. X-Forwarded-Method) from the internal cluster
+    # networks so cross-boundary forward-auth from the in-cluster Traefik
+    # reaches Authelia intact. Without this, Traefik strips X-Forwarded-Method
+    # from the untrusted source and Authelia rejects forward-auth with a bare
+    # 400 ("header 'X-Forwarded-Method' is empty") — breaking auth on
+    # in-cluster services like radar.172-18-255-200.sslip.io.
+    forwardedHeaders:
+      trustedIPs:
+        - 172.18.0.0/16
+        - 10.244.0.0/16
   metrics:
     address: ":9102"
 
