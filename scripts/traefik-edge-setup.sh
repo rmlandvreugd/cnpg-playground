@@ -93,6 +93,11 @@ _issue_cert "seaweedfs-admin" \
     "seaweedfs-admin.${TRAEFIK_EDGE_IP_DASHED}.sslip.io" \
     "seaweedfs-admin" "localhost" "127.0.0.1"
 
+# Traefik dashboard/API host (dynamic/dashboard.yaml -> api@internal).
+_issue_cert "traefik" \
+    "traefik.${TRAEFIK_EDGE_IP_DASHED}.sslip.io" \
+    "traefik" "localhost" "127.0.0.1"
+
 # OTLP mTLS client cert (referenced by tracing/log/accessLog in traefik.yaml).
 # Must exist before the edge container starts or Traefik fatals loading the
 # keypair — and since app logs ship over OTLP only, that crash is silent.

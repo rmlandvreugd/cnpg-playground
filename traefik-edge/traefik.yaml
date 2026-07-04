@@ -5,6 +5,13 @@ global:
 experimental:
   otlpLogs: true
 
+# Traefik dashboard/API, served by the internal api@internal service. Exposed
+# via a dynamic router (dynamic/dashboard.yaml) on traefik.172-18-0-250.sslip.io
+# over TLS (no forward-auth, mirroring the in-cluster dashboard). `insecure` is
+# intentionally NOT set (that would also publish it unauthenticated on :8080).
+api:
+  dashboard: true
+
 entryPoints:
   web:
     address: ":80"
@@ -52,7 +59,7 @@ tracing:
         key: /etc/traefik/certs/otlp-client.key
 
 log:
-  level: DEBUG
+  level: INFO
   otlp:
     serviceName: traefik-edge
     grpc:
