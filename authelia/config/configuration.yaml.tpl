@@ -142,6 +142,12 @@ identity_providers:
         client_name: Gangplank
         client_secret: '${AUTHELIA_GANGPLANK_CLIENT_SECRET_HASH}'
         authorization_policy: one_factor
+        token_endpoint_auth_method: 'client_secret_post'
+        # Gangplank requests `audience=gangplank` (defaults to its client_id and
+        # cannot be suppressed client-side); whitelist it or fosite rejects the
+        # authorize request with invalid_target.
+        audience:
+          - 'gangplank'
         redirect_uris:
           - 'https://gangplank.${TRAEFIK_IP_DASHED}.sslip.io/callback'
         scopes:

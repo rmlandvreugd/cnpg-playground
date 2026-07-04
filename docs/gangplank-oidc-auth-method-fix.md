@@ -67,32 +67,56 @@ No secret rotation, no gangplank redeploy needed — this is purely the Authelia
    (`gangplank`) is accepted by the API server (`k8s/authn-config.yaml.tpl` accepts audiences
    `kubernetes` and `gangplank` via MatchAny).
 
-## Contingency — the `invalid_target` symptom
+## Second bug (CONFIRMED and fixed) — `invalid_target` / audience not whitelisted
 
-The bead also noted `error=invalid_target` on the callback URL. Client authentication is validated
-**before** audience/target in Authelia's token endpoint, so the `invalid_client` failure masked
-whatever follows. After the primary fix, one of two outcomes:
+The `invalid_target` on the callback was **not** a downstream artifact — it is a genuine second
+defect. After the `client_secret_post` fix, the authorize request failed with:
 
-- **Login completes** → `invalid_target` was a downstream artifact of the failed exchange. Close a7o.
-- **`invalid_target` persists** → gangplank's `config.audience=gangplank` (RFC 8707 resource /
-  audience parameter) isn't being granted. Then:
-  1. Enable Authelia debug logging (`log.level: debug`) and capture the exact authorize + token
-     requests to see whether the `audience`/`resource` param is the rejection source.
-  2. Since the dispensed token's `aud` must include `gangplank` for the API server, do **not** drop
-     `config.audience`. Instead permit it on the Authelia side — verify whether Authelia auto-grants
-     the client's own id (`gangplank`) as audience (it normally does) or whether an explicit grant
-     is required for this Authelia version. File the remediation as a sub-task of a7o if it turns
-     out to be a genuine second bug.
+> Authorization Request failed: **"Requested audience 'gangplank' has not been whitelisted by the
+> OAuth 2.0 Client."** (`method=GET path=/api/oidc/authorization`)
+
+Root cause: gangplank sends an `audience` OAuth parameter, and **defaults it to its own client_id
+(`gangplank`) when `config.audience` is empty** — confirmed live: setting `config.audience: ""`
+still produced `audience=gangplank` in the request. So the audience **cannot** be suppressed from
+the gangplank side. Authelia/fosite (`explicit` requested-audience mode, the default) rejects any
+requested audience the client hasn't registered.
+
+**Fix (Authelia side):** whitelist the audience on the gangplank OIDC client. Authelia's client
+schema accepts a bare (non-URI) string in `identity_providers.oidc.clients[].audience`:
+```yaml
+      - client_id: gangplank
+        # …
+        token_endpoint_auth_method: 'client_secret_post'
+        audience:
+          - 'gangplank'          # ← ADD: gangplank requests aud=<client_id>, whitelist it
+        redirect_uris:
+          - 'https://gangplank.${TRAEFIK_IP_DASHED}.sslip.io/callback'
+```
+Applied to **both** templates. `scripts/setup.sh` keeps `--set "config.audience=gangplank"` (the
+explicit, self-documenting value; empty behaves identically since gangplank defaults to client_id).
+The dispensed ID token's `aud` is `["gangplank"]`, which the API server accepts
+(`k8s/authn-config.yaml.tpl` audiences `kubernetes`, `gangplank`).
+
+## Verification (COMPLETE — 2026-07-04)
+
+Live Playwright flow against `https://gangplank.172-18-255-200.sslip.io`:
+- **admin**: login → consent → kubeconfig page rendered. `kubectl auth whoami` through
+  capsule-proxy → `Username oidc:admin@example.com`, groups include `oidc:capsule-admin`,
+  `oidc:k8s-admin` (full access).
+- **rbr-po**: same flow completes; `kubectl auth whoami` → `Username oidc:rbr-po@example.com`,
+  groups `[oidc:rbr-po system:authenticated]`; `kubectl get tenants` correctly **Forbidden** at
+  cluster scope — RBAC scoping verified distinct from admin.
+
+Both ends of the RBAC spectrum pass; the OIDC exchange is client-level and identical for every
+persona, so the fix unblocks the whole K8s/Capsule persona column.
 
 ## Bead actions
-- `bd update cnpg-playground-a7o --claim` before starting.
-- On green persona-matrix verification, `bd close cnpg-playground-a7o` with a note linking this doc
-  and the verified personas.
-- If the `invalid_target` contingency turns out to be a real second defect, file a child bead under
-  a7o (or lhj) rather than reopening scope.
+- `bd update cnpg-playground-a7o --claim` before starting. ✅
+- On green persona-matrix verification, `bd close cnpg-playground-a7o`. ✅ (this pass)
 
 ## Files touched (summary)
 | File | Change |
 |---|---|
-| `authelia/config/configuration.yaml.tpl` | add `token_endpoint_auth_method: 'client_secret_post'` to gangplank client |
-| `authelia/config/configuration-two-domains.yaml.tpl` | same one-line addition to gangplank client |
+| `authelia/config/configuration.yaml.tpl` | add `token_endpoint_auth_method: 'client_secret_post'` + `audience: ['gangplank']` to gangplank client |
+| `authelia/config/configuration-two-domains.yaml.tpl` | same additions to gangplank client (this is the live/two-domain config) |
+| `scripts/setup.sh` | keep explicit `--set "config.audience=gangplank"` with a comment explaining the Authelia-side whitelist |

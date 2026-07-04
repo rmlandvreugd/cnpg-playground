@@ -1146,17 +1146,24 @@ kubectl create secret generic gangplank-oidc \
     --from-literal=GANGPLANK_CONFIG_CLIENT_SECRET="${AUTHELIA_GANGPLANK_CLIENT_SECRET}" \
     --dry-run=client -o yaml | kubectl apply --context "${HUB_CONTEXT}" -f -
 
+# config.audience=gangplank: gangplank sends `audience` as an OAuth request param
+# (defaulting to the client_id when unset), so the value cannot be suppressed from
+# this side. Authelia (fosite) rejects any requested audience that the OIDC client
+# hasn't whitelisted, so the gangplank client stanza in both Authelia config
+# templates lists `audience: ['gangplank']`. The dispensed ID token's `aud` is
+# `gangplank`, which the API server accepts (k8s/authn-config.yaml.tpl audiences:
+# kubernetes, gangplank). See docs/gangplank-oidc-auth-method-fix.md.
 helm_upgrade_install gangplank \
     gangplank \
     gangplank "${HUB_CONTEXT}" "${GANGPLANK_CHART_VERSION}" \
     --repo-url https://peak-scale.github.io/helm-charts \
+    --set "config.audience=gangplank" \
     --set "config.clusterName=cnpg" \
     --set "config.apiServerURL=https://capsule-proxy.${HUB_TRAEFIK_IP_DASHED}.sslip.io" \
     --set "config.authorizeURL=https://authelia.${HUB_TRAEFIK_IP_DASHED}.sslip.io/api/oidc/authorization" \
     --set "config.tokenURL=https://authelia.${HUB_TRAEFIK_IP_DASHED}.sslip.io/api/oidc/token" \
     --set "config.redirectURL=https://gangplank.${HUB_TRAEFIK_IP_DASHED}.sslip.io/callback" \
     --set "config.usernameClaim=email" \
-    --set "config.audience=gangplank" \
     --set-json 'config.scopes=["openid","email","profile","groups"]' \
     --set-json 'envFrom=[{"secretRef":{"name":"gangplank-oidc"}}]' \
     --set "config.clusterCAPath=/etc/step-ca/ca-certificates.crt" \
