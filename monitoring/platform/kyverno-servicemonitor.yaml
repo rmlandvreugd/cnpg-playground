@@ -10,14 +10,6 @@
 # share the label app.kubernetes.io/part-of=kyverno and expose port "metrics-port"
 # (8000). Non-metrics Services that share the label have no "metrics-port" endpoint and
 # are simply skipped by the Operator.
-#
-# The cleanup-controller is excluded: although it is started with metrics enabled
-# (--disableMetrics=false --metricsPort=8000) and its metrics Service/endpoints are
-# correct, the endpoint accepts the TCP connection but never answers the HTTP scrape
-# (context deadline exceeded — not a NetworkPolicy; none exist in this namespace), so it
-# would be a permanently-down target. Tracked as a follow-up; re-include once the
-# upstream cleanup-controller metrics endpoint responds. The other three controllers
-# provide the bulk of kyverno_* policy/admission metrics.
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -27,11 +19,6 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/part-of: kyverno
-    matchExpressions:
-      - key: app.kubernetes.io/component
-        operator: NotIn
-        values:
-          - cleanup-controller
   endpoints:
     - port: metrics-port
       path: /metrics

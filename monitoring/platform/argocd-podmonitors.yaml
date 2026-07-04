@@ -9,17 +9,16 @@
 #   repo-server                 8084
 #   applicationset-controller   8080
 #   notifications-controller    9001
-#   dex-server                  5558
 #
 # All Argo CD pods carry app.kubernetes.io/part-of=argocd, so a single PodMonitor selecting
 # that label and the "metrics" port covers every component (pods without a "metrics" port
 # are skipped). The cluster Prometheus has podMonitorSelector={} / podMonitorNamespaceSelector={},
 # so this is discovered without extra labels.
 #
-# argocd-dex-server is excluded: it declares a "metrics" port (5558) but the bundled
-# `argocd-dex rundex` wrapper does not start a metrics server there (scrapes get connection
-# refused), so it would be a permanently-down target. Dex metrics require enabling telemetry
-# in the Argo CD dex config — out of scope here.
+# dex-server is not deployed (dex.enabled: false in argocd/values.yaml): SSO uses
+# oidc.config directly against Authelia, so the dex-server pod never ran an actual
+# dex process anyway ("dex is not configured") and would have been a permanently-down
+# metrics target.
 #
 # Applied by monitoring/setup.sh after the Prometheus Operator CRDs exist (Argo CD is
 # installed earlier by scripts/setup.sh).
@@ -32,11 +31,6 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/part-of: argocd
-    matchExpressions:
-      - key: app.kubernetes.io/name
-        operator: NotIn
-        values:
-          - argocd-dex-server
   podMetricsEndpoints:
     - port: metrics
       path: /metrics

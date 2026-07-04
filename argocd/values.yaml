@@ -1,3 +1,10 @@
+# dex is disabled: SSO uses oidc.config (direct OIDC against Authelia, patched
+# onto argocd-cm by scripts/authelia-setup.sh) instead of a dex.config connector,
+# so the bundled dex-server never actually starts ("dex is not configured") and
+# would otherwise sit around as a permanently-down metrics target for no benefit.
+dex:
+  enabled: false
+
 configs:
   params:
     server.insecure: "true"
