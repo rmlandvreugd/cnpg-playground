@@ -36,7 +36,9 @@ spec:
       token_url: "https://authelia.${HUB_TRAEFIK_IP_DASHED}.sslip.io/api/oidc/token"
       api_url: "https://authelia.${HUB_TRAEFIK_IP_DASHED}.sslip.io/api/oidc/userinfo"
       groups_attribute_path: "groups"
-      org_mapping: "rbr-db-admin:Main Org.:Admin rbr-ver-db-admin:Main Org.:Viewer"
+      # grafana-admin:*:GrafanaAdmin grants the admin persona server-admin
+      # (isGrafanaAdmin=true) + Admin in every org, per the persona matrix.
+      org_mapping: "grafana-admin:*:GrafanaAdmin rbr-db-admin:Main Org.:Admin rbr-ver-db-admin:Main Org.:Viewer"
       role_attribute_strict: "false"
       tls_client_ca_file: "/etc/ssl/authelia-ca/ca-chain.pem"
   deployment:

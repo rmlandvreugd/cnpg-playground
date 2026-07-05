@@ -25,8 +25,10 @@ Status: in progress 2026-06-25. Identity per `plan-tenant-personas-authelia.md`.
   (RW on `loki` only — blanket Admin dropped; bucket-init uses `admin` creds), `barman`
   (RW/List on `backups` + `verstappen-backups`).
 - **Group→role mapping** (iam.json `roleMapping`, no `defaultRole` = deny others):
-  `admin`→S3AdminRole (s3:*), `rbr-ver-db-admin`→S3BackupRWRole, `rbr-po`→S3BackupRORole
-  (both scoped to `verstappen-backups`). Authelia issuer
+  `admin`→S3AdminRole (s3:*); `rbr-ver-db-admin` + `rbr-db-admin`→S3BackupRWRole;
+  `rbr-po` + `rbr-ver-dev`→S3BackupRORole (both backup roles scoped to `verstappen-backups`;
+  their trust conditions use a `oidc:groups` array to cover the paired groups — `cnpg-playground-8ct`).
+  Authelia issuer
   `https://authelia.<TRAEFIK_IP_DASHED>.sslip.io`, jwksUri `…/jwks.json`. Provider
   `tlsCaCert` = vault pki_int + step-ca chain bundle (Authelia's Traefik cert is vault-pki).
 

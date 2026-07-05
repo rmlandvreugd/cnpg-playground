@@ -36,8 +36,10 @@ spec:
       api_url: "https://authelia.${TRAEFIK_IP_DASHED}.sslip.io/api/oidc/userinfo"
       groups_attribute_path: "groups"
       org_attribute_path: "groups"
-      org_mapping: "rbr-db-admin:rbr:Admin rbr-ver-db-admin:rbr:Editor"
-      allowed_groups: "rbr-db-admin,rbr-ver-db-admin"
+      # Per persona matrix: admin=Admin(all orgs), rbr-admin=Admin, rbr-ver-admin
+      # and rbr-ver-dev=Editor, rbr-po=Viewer on this tenant instance.
+      org_mapping: "grafana-admin:*:GrafanaAdmin rbr-db-admin:rbr:Admin rbr-ver-db-admin:rbr:Editor rbr-ver-dev:rbr:Editor rbr-po:rbr:Viewer"
+      allowed_groups: "grafana-admin,rbr-db-admin,rbr-ver-db-admin,rbr-ver-dev,rbr-po"
       role_attribute_strict: "false"
       tls_client_ca_file: "/etc/ssl/authelia-ca/ca-chain.pem"
   deployment:
