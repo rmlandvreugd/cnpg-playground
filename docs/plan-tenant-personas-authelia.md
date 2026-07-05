@@ -96,7 +96,7 @@ Claims unchanged: `groups`, `email`, `preferred_username`, `name` via the defaul
 | capsule-proxy | trusts apiserver OIDC; scopes visibility by `groups` | tenant owner/additionalRoleBindings |
 | gangplank | OIDC → kubeconfig dispenser (edge-fronted at `gangplank.<IP>.sslip.io`, in-cluster Traefik) | `usernameClaim=email` |
 | Vault | native OIDC auth method; UI is edge-fronted (`vault.<EDGE_IP>.sslip.io`, `traefik-edge`, host Docker container) with **no** forward-auth — Vault's own login page drives the OIDC flow | Authelia group → Vault policy |
-| Grafana | generic OAuth `org_mapping`, in-cluster Traefik | group → org/role |
+| Grafana | generic OAuth, in-cluster Traefik. **Two instances:** the platform monitoring Grafana (`grafana.<IP>`, admin-only) and the per-tenant `grafana-rbr-ver.<IP>` (rbr personas) | server-admin via `role_attribute_path`; per-tenant roles via `org_mapping` (see note) |
 | ArgoCD | OIDC (`argocd-cm`) + `argocd-rbac-cm`, in-cluster Traefik | `argocd-admin`→`role:admin` |
 | SeaweedFS admin UI | **no native OIDC** (OSS `weed admin` has no OIDC code path) — edge-fronted (`seaweedfs-admin.<EDGE_IP>.sslip.io`, `traefik-edge`, host Docker container) behind an Authelia **forward-auth** middleware; `-adminUser`/`-adminPassword` remains as a behind-proxy backstop | `access_control`: `group:seaweedfs-admin`/`group:admin` only |
 | SeaweedFS S3 API | real OIDC/STS (`-s3.iam.config`, `AssumeRoleWithWebIdentity`), edge-fronted (`seaweedfs.<EDGE_IP>.sslip.io`, `traefik-edge`) | `groups` → `roleMapping` (see §2 note); no `defaultRole`, so unmapped groups are denied |
@@ -104,6 +104,22 @@ Claims unchanged: `groups`, `email`, `preferred_username`, `name` via the defaul
 `<EDGE_IP>` is the `traefik-edge` host (`172-18-0-250` locally), separate from the in-cluster
 Traefik IP used by ArgoCD/Grafana/gangplank. Route definitions live in
 `traefik-edge/dynamic/*.yaml`.
+
+**Grafana OAuth note (verified live 2026-07-05, epic lhj):** three non-obvious Grafana
+generic-OAuth facts, learned the hard way:
+- `org_mapping` matches its group field against **`org_attribute_path`**, not
+  `groups_attribute_path`. Both must be set to the `groups` claim or every entry silently
+  misses and the user falls back to the default Viewer role.
+- The **server-admin flag (`isGrafanaAdmin`) is derived from `role_attribute_path`**, *not* from
+  a `GrafanaAdmin` role in `org_mapping`. An `org`-position `*` wildcard (`grafana-admin:*:GrafanaAdmin`)
+  does **not** grant server admin. The admin persona gets it via
+  `role_attribute_path: contains(groups, 'grafana-admin') && 'GrafanaAdmin' || ''` +
+  `allow_assign_grafana_admin: true`. Empty-string fallback (with `role_attribute_strict: false`)
+  lets non-admins fall through to `org_mapping`.
+- The tenant Grafana (`grafana-rbr-ver`) has **only the default org (id 1)** — grafana-operator
+  never creates a named "rbr" org, so `org_mapping` targets org `1`, not `rbr`. The instance
+  *is* the rbr tenant, so the org name carries no meaning. The **platform** monitoring Grafana
+  maps no tenant groups (admin persona only); tenant personas use `grafana-rbr-ver`.
 
 See: `capsule-integration-plan.md`, `plan-argocd-gitops.md`, `plan-seaweedfs-oidc.md`,
 `plan-external-edge-traefik.md`, `plan-kyverno-policies.md`,

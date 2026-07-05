@@ -36,9 +36,20 @@ spec:
       api_url: "https://authelia.${TRAEFIK_IP_DASHED}.sslip.io/api/oidc/userinfo"
       groups_attribute_path: "groups"
       org_attribute_path: "groups"
-      # Per persona matrix: admin=Admin(all orgs), rbr-admin=Admin, rbr-ver-admin
-      # and rbr-ver-dev=Editor, rbr-po=Viewer on this tenant instance.
-      org_mapping: "grafana-admin:*:GrafanaAdmin rbr-db-admin:rbr:Admin rbr-ver-db-admin:rbr:Editor rbr-ver-dev:rbr:Editor rbr-po:rbr:Viewer"
+      # Server-admin (isGrafanaAdmin) for the admin persona comes from
+      # role_attribute_path, NOT org_mapping: a "*" in the org position does not
+      # set the server-admin flag (that flag is derived from role_attribute_path
+      # via extractRoleAndAdminOptional). Empty for everyone else so org_mapping
+      # governs their role (role_attribute_strict=false lets '' fall through).
+      role_attribute_path: "contains(groups, 'grafana-admin') && 'GrafanaAdmin' || ''"
+      # This instance is the rbr tenant's own Grafana and has only the default
+      # org (id 1) — grafana-operator never creates a named "rbr" org, so the
+      # old "rbr" org target resolved to nothing. Tenant personas map onto org 1.
+      # Per persona matrix: rbr-admin=Admin, rbr-ver-admin & rbr-ver-dev=Editor,
+      # rbr-po=Viewer on this tenant instance.
+      org_mapping: "rbr-db-admin:1:Admin rbr-ver-db-admin:1:Editor rbr-ver-dev:1:Editor rbr-po:1:Viewer"
+      # Required or Grafana drops the GrafanaAdmin role and falls back to Viewer.
+      allow_assign_grafana_admin: "true"
       allowed_groups: "grafana-admin,rbr-db-admin,rbr-ver-db-admin,rbr-ver-dev,rbr-po"
       role_attribute_strict: "false"
       tls_client_ca_file: "/etc/ssl/authelia-ca/ca-chain.pem"
