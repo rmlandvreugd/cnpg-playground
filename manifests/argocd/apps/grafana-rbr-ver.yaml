@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: grafana-rbr-ver
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: rbr
+  source:
+    repoURL: https://github.com/rmlandvreugd/cnpg-playground.git
+    targetRevision: feature/self-service
+    path: demo/yaml/self-service/grafana
+    directory:
+      exclude: '*.yaml.tpl'
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: grafana
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false

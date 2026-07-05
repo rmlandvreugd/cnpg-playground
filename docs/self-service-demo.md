@@ -78,12 +78,21 @@ graph TB
 
 ## Prerequisites
 
-Base setup must be complete before running the self-service demo:
+Base setup must be complete before running the self-service demo. `scripts/setup.sh` builds the
+cluster **and the platform governance layer** (Capsule, capsule-proxy, Kyverno, ArgoCD, gangplank)
+but creates **no tenant** — there is no `Tenant rbr`, no `rbr-ver*` namespaces, and no ArgoCD
+app-of-apps until the self-service script runs. Canonical order:
 
 ```bash
-./scripts/setup.sh local          # Kind cluster, Vault, Dex, cert-manager, ESO, Traefik
+./scripts/setup.sh local          # Kind cluster + platform (Capsule/Kyverno/ArgoCD/gangplank) — no tenant
 ./monitoring/setup.sh local       # kube-prometheus-stack, Grafana Operator, Loki, Alloy
+./demo/self-service-setup.sh setup local   # tenant onboarding (see Runbook below)
 ```
+
+Monitoring is a **hard requirement**: `self-service-setup.sh setup` preflights for the `grafana`
+namespace + Grafana operator CRD and aborts with a clear message if monitoring is not installed.
+
+One-shot equivalent: `./scripts/setup.sh local --with-tenant` chains all three steps.
 
 Verify Traefik has a LoadBalancer IP:
 
@@ -102,20 +111,22 @@ kubectl get svc traefik -n traefik --context kind-k8s-local \
 
 What it does (in order):
 
-1. **Traefik upgrade** — adds `postgres` entrypoint on port 5432
+1. **Preflight** — hard-requires the platform (`tenants.capsule.clastix.io` CRD + `argocd` namespace) and monitoring (`grafana` namespace + Grafana operator CRD); aborts with a pointer to the right script if either is missing.
 2. **Vault policies** — `eso-rbr-ver`, `rbr-db-admin`, `rbr-ver-db-admin`, `rbr-ver-db-readonly`
-3. **ESO AppRole** `eso-rbr-local` — role_id/secret_id persisted to `vault/.eso_rbr_role_id/secret_id`; K8s Secret `vault-approle-rbr-creds` in `external-secrets`; `ClusterSecretStore vault-approle-rbr` applied
+3. **ESO AppRole** `eso-rbr-local` — K8s Secret `vault-approle-rbr-creds` in `external-secrets`; `ClusterSecretStore vault-approle-rbr` + `vault-approle-rbr-db` applied
 4. **Vault KV seed** — `cnpg/rbr/ver/{superuser,app,readonly}` with random passwords
-5. **Namespaces** — `rbr-ver-db`, `rbr-ver`
-6. **ExternalSecrets** — superuser, app, readonly; waits for Ready status
-7. **Objectstore wiring** — `objectstore-local` Service+Endpoints in `rbr-ver-db` pointing to RustFS; objectstore Secret
-8. **CNPG Cluster** — `verstappen` cluster; waits up to 30m for Ready
+5. **Tenant `rbr` pre-seed** — applies `manifests/capsule-tenant-rbr.yaml`, waits `status.state=Active` (ArgoCD's `tenant-rbr` app adopts it on later sync)
+6. **Tenant namespaces** — `rbr-ver-db`, `rbr-ver` created **as the Capsule tenant owner** (`--as=capsule-bot --as-group=oidc:rbr-db-admin …`) so Capsule injects the `ownerReference`; labelled `capsule.clastix.io/tenant=rbr`
+7. **Objectstore wiring** — `objectstore-local` Service+Endpoints in `rbr-ver-db` pointing to RustFS; objectstore Secret; ObjectStore CR + custom monitoring ConfigMap
+8. **CNPG Cluster + Pooler + ScheduledBackup** — `verstappen` cluster; `pooler-verstappen-rw` (pinned to app nodes); waits up to 30m for Ready
 9. **Traefik TCP IngressRoute** — SNI passthrough on `verstappen-rbr-ver-db.<IP>.sslip.io:5432`
 10. **Stable PostgreSQL roles** — `rbr_ver_ddl_owner`, `rbr_ver_ddl_admin`, `rbr_ver_ddl_reader` with grants
 11. **VDE admin role** — `rbr_ver_vde_admin` with CREATEROLE; password in Vault KV `cnpg/rbr/ver/vde-admin`
-12. **Vault DB Engine** — config `rbr-ver-max` (sslip.io endpoint, TLS); roles `rbr-db-admin`, `rbr-ver-db-admin`, `rbr-ver-db-readonly`
-13. **pgAdmin** — `pgadmin-rbr-ver` Deployment in `pgadmin` namespace; servers.json ConfigMap preloaded; HTTP IngressRoute
-14. **Grafana + Dex** — re-renders `dex-config.yaml` with `TRAEFIK_IP_DASHED`; restarts Dex; issues TLS cert; deploys `grafana-rbr-ver` CR with Generic OAuth; applies Prometheus + Loki datasources + pgaudit dashboard; HTTPS IngressRoute; pre-creates `rbr` org via API
+12. **Vault DB Engine** — config `rbr-ver-max` (sslip.io endpoint, TLS); rotate-root; static role `app` (24h rotation); dynamic roles `rbr-db-admin`, `rbr-ver-db-admin`, `rbr-ver-db-readonly`
+13. **demo-app image build + `kind load`** — built from `app/`, tagged with the chart `appVersion`, loaded into the Kind cluster
+14. **ArgoCD app-of-apps** — applies `manifests/argocd/root-app.yaml` (`rbr-root`), waits for sync, patches `demo-app` with `global.traefikIpDashed`. Runs **last** (after the DB + `verstappen-app` secret exist) so `demo-app` comes up healthy on its app node instead of crash-looping
+15. **pgAdmin** — `pgadmin-rbr-ver` Deployment in `pgadmin` namespace; servers.json ConfigMap preloaded; HTTP IngressRoute
+16. **Grafana + Authelia** — issues TLS cert; deploys `grafana-rbr-ver` CR with Generic OAuth (Authelia); applies Prometheus + Loki datasources + pgaudit dashboard; HTTPS IngressRoute; pre-creates `rbr` org via API
 
 Setup output includes the full access summary:
 
@@ -130,11 +141,7 @@ Setup output includes the full access summary:
    Password:    <generated>
 
    Grafana:     https://grafana-rbr-ver.<IP>.sslip.io
-   Dex users:   rbr-admin@example.com / rbr-ver-admin@example.com
-   (password:   same as dexuser — see DEX_STATIC_PASSWORD_HASH)
 ```
-
-The Dex default password (`DEX_STATIC_PASSWORD_HASH` in `scripts/common.sh`) is `password`.
 
 ---
 
@@ -282,20 +289,24 @@ password=<password from vault>
 ./demo/self-service-setup.sh teardown local
 ```
 
-Removes:
+Removes (in order):
 
-- Namespaces `rbr-ver-db` and `rbr-ver` (deletes all resources including CNPG cluster, backups, PVCs)
-- `ClusterSecretStore vault-approle-rbr`
+- ArgoCD app-of-apps `rbr-root` Application (cascade-deletes child apps `demo-app`, `grafana-rbr-ver`, `kyverno-policies`, `tenant-rbr`) + AppProject `rbr` — done **first** so ArgoCD stops reconciling while teardown runs
+- `verstappen` Cluster, `pooler-verstappen-rw` Pooler, ObjectStore, and ExternalSecrets in `rbr-ver-db` (finalizers awaited)
+- Namespaces `rbr-ver-db` and `rbr-ver` (deletes all remaining resources including backups, PVCs)
+- `ClusterSecretStore vault-approle-rbr` + `vault-approle-rbr-db`
 - Secret `vault-approle-rbr-creds` in `external-secrets`
 - `IngressRouteTCP postgres-rbr-ver` in `traefik`
 - pgAdmin Deployment, Service, ConfigMap, Secret, IngressRoute in `pgadmin`
 - Grafana CR, datasources, dashboard, TLS cert, OAuth Secret, IngressRoute in `grafana`
+- Capsule `Tenant rbr` — done **last**, after all tenant-owned namespaces/resources are gone (idempotent; may already be cascade-removed via the `tenant-rbr` app)
 
-**Not removed:**
+**Not removed** (platform stays intact — only `scripts/teardown.sh` nukes the whole cluster):
 
+- The platform layer (Capsule, capsule-proxy, Kyverno, ArgoCD, gangplank) installed by `scripts/setup.sh`
 - Vault VDE config (`database/config/rbr-ver-max`), roles, and policies — retained for post-demo inspection
 - Vault KV paths (`cnpg/rbr/ver/`)
-- Dex config — Dex is NOT reconfigured; to remove the self-service entries re-run `scripts/dex-setup.sh`
+- Authelia config — not reconfigured by teardown
 
 Clean up Vault manually after the demo:
 

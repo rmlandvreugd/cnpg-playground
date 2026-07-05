@@ -1,0 +1,55 @@
+# Shared LoadBalancer at 172.18.255.240 for external→cluster OTLP ingest.
+# MetalLB allow-shared-ip key lets future Services share this IP on non-overlapping ports.
+# externalTrafficPolicy: Cluster required for shared-IP Services.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ext-svc-lb
+  namespace: otel
+  annotations:
+    metallb.universe.tf/loadBalancerIPs: "172.18.255.240"
+    metallb.universe.tf/allow-shared-ip: "ext-svc-lb"
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Cluster
+  selector:
+    app.kubernetes.io/name: opentelemetry-collector
+    app.kubernetes.io/instance: otel-collector
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
+---
+# TLS server cert for the OTLP gRPC receiver.
+# Issued by vault-pki (vault PKI int is step-ca-signed), so the edge Traefik can
+# verify it with step-ca-chain.pem (chain: leaf←vault-pki-int←step-ca-int←step-ca-root).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: otel-collector-otlp-tls
+  namespace: otel
+spec:
+  secretName: otel-collector-otlp-tls
+  issuerRef:
+    kind: ClusterIssuer
+    name: vault-pki
+  commonName: otel-collector-opentelemetry-collector.otel.svc.cluster.local
+  dnsNames:
+    - otel-collector-opentelemetry-collector.otel.svc.cluster.local
+    - otel-collector-opentelemetry-collector.otel
+  # The external edge Traefik dials the LB by IP (172.18.255.240:4317), so the
+  # server cert MUST carry a matching IP SAN — Go's gRPC/TLS client verifies the
+  # dialed IP against the cert SANs (DNS names alone fail with "cannot validate
+  # certificate for 172.18.255.240 because it doesn't contain any IP SANs").
+  ipAddresses:
+    - 172.18.255.240
+  duration: 720h
+  renewBefore: 24h
+  privateKey:
+    algorithm: ECDSA
+    size: 256

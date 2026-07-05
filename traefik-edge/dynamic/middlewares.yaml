@@ -1,0 +1,12 @@
+http:
+  middlewares:
+    authelia:
+      forwardAuth:
+        address: "https://authelia:9091/api/authz/forward-auth"
+        tls:
+          ca: /etc/traefik/certs/step-ca-chain.pem
+        authResponseHeaders:
+          - Remote-User
+          - Remote-Groups
+          - Remote-Name
+          - Remote-Email

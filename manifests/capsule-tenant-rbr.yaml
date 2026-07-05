@@ -1,0 +1,20 @@
+apiVersion: capsule.clastix.io/v1beta2
+kind: Tenant
+metadata:
+  name: rbr
+spec:
+  owners:
+    - name: oidc:capsule-admin
+      kind: Group
+    - name: oidc:rbr-db-admin
+      kind: Group
+  additionalRoleBindings:
+    - clusterRoleName: view
+      subjects:
+        - apiGroup: rbac.authorization.k8s.io
+          kind: Group
+          name: oidc:rbr-po
+  ingressOptions:
+    hostnameCollisionScope: Tenant
+  resourceQuotas:
+    scope: Tenant

@@ -58,3 +58,12 @@ seaweedfs/
 
 graphify-out/cost.json        # local only
 graphify-out/cache/           # optional: commit for speed, skip to keep repo small
+
+# Playground mutual-exclusion lockfiles
+.playground.lock
+.playground.lock.pid
+
+# Personal machine-specific Claude instructions
+CLAUDE.local.md
+graphify-out
+.playwright-mcp

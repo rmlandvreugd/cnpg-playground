@@ -9,10 +9,8 @@ AUTHELIA_DIR="${GIT_REPO_ROOT}/authelia"
 
 echo "🔑 Configuring Vault OIDC auth with Authelia..."
 
-HOST_IP=$(hostname -I | awk '{print $1}')
-HOST_IP_DASHED=$(echo "$HOST_IP" | tr '.' '-')
-AUTHELIA_HOST="authelia.${HOST_IP_DASHED}.sslip.io"
-VAULT_HOST="vault.${HOST_IP_DASHED}.sslip.io"
+AUTHELIA_HOST="authelia.${TRAEFIK_EDGE_IP_DASHED}.sslip.io"
+VAULT_HOST="vault.${TRAEFIK_EDGE_IP_DASHED}.sslip.io"
 
 # Obtain admin token via userpass (demonstrates admin credentials, not root token)
 echo "🔐 Logging in as ${VAULT_ADMIN_USER}..."
@@ -53,7 +51,7 @@ sudo cat "${AUTHELIA_DIR}/tls/ca-chain.pem" \
         -e VAULT_TOKEN="${ADMIN_TOKEN}" \
         "${VAULT_CONTAINER_NAME}" \
         vault write auth/oidc/config \
-        oidc_discovery_url="https://${AUTHELIA_HOST}:${AUTHELIA_PORT}" \
+        oidc_discovery_url="https://${AUTHELIA_HOST}" \
         oidc_discovery_ca_pem=- \
         oidc_client_id="vault" \
         oidc_client_secret="${AUTHELIA_VAULT_CLIENT_SECRET}" \
@@ -76,7 +74,7 @@ _vcmd write auth/oidc/role/oidc-user \
     bound_audiences="vault" \
     allowed_redirect_uris="https://127.0.0.1:${VAULT_PORT}/ui/vault/auth/oidc/oidc/callback" \
     allowed_redirect_uris="https://localhost:8250/oidc/callback" \
-    allowed_redirect_uris="https://${VAULT_HOST}:${VAULT_PORT}/ui/vault/auth/oidc/oidc/callback" \
+    allowed_redirect_uris="https://${VAULT_HOST}/ui/vault/auth/oidc/oidc/callback" \
     user_claim="email" \
     groups_claim="groups" \
     oidc_scopes="openid,email,profile,groups" \
@@ -96,5 +94,5 @@ _vcmd write identity/group-alias \
     canonical_id="${GROUP_ID}"
 
 echo "✅ OIDC integration complete."
-echo "🌐 Login: https://${VAULT_HOST}:${VAULT_PORT}/ui → OIDC → admin@example.com / password"
+echo "🌐 Login: https://${VAULT_HOST}/ui → OIDC → admin@example.com / password"
 echo "   Users in Authelia 'vault-admin' group get full Vault superuser access."

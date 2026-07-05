@@ -16,8 +16,8 @@ echo "🚀 Setting up Authelia OIDC container..."
 
 HOST_IP=$(hostname -I | awk '{print $1}')
 HOST_IP_DASHED=$(echo "$HOST_IP" | tr '.' '-')
-AUTHELIA_HOST="authelia.${HOST_IP_DASHED}.sslip.io"
-VAULT_HOST="vault.${HOST_IP_DASHED}.sslip.io"
+AUTHELIA_HOST="authelia.${TRAEFIK_EDGE_IP_DASHED}.sslip.io"
+VAULT_HOST="vault.${TRAEFIK_EDGE_IP_DASHED}.sslip.io"
 STEP_CA_HOST="step-ca.${HOST_IP_DASHED}.sslip.io"
 TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED:-}"
 
@@ -106,6 +106,9 @@ AUTHELIA_VAULT_CLIENT_SECRET_HASH=$(_hash_secret "${AUTHELIA_VAULT_CLIENT_SECRET
 AUTHELIA_STEP_CA_CLIENT_SECRET_HASH=$(_hash_secret "${AUTHELIA_STEP_CA_CLIENT_SECRET}")
 AUTHELIA_GRAFANA_RBR_VER_CLIENT_SECRET_HASH=$(_hash_secret "${AUTHELIA_GRAFANA_RBR_VER_CLIENT_SECRET}")
 AUTHELIA_GRAFANA_MONITORING_CLIENT_SECRET_HASH=$(_hash_secret "${AUTHELIA_GRAFANA_MONITORING_CLIENT_SECRET}")
+AUTHELIA_GANGPLANK_CLIENT_SECRET_HASH=$(_hash_secret "${AUTHELIA_GANGPLANK_CLIENT_SECRET}")
+AUTHELIA_ARGOCD_CLIENT_SECRET_HASH=$(_hash_secret "${AUTHELIA_ARGOCD_CLIENT_SECRET}")
+AUTHELIA_SEAWEEDFS_S3_CLIENT_SECRET_HASH=$(_hash_secret "${AUTHELIA_SEAWEEDFS_S3_CLIENT_SECRET}")
 
 # If TRAEFIK_IP_DASHED is not set, derive it from the host IP
 if [ -z "${TRAEFIK_IP_DASHED}" ]; then
@@ -132,11 +135,15 @@ VAULT_PORT="${VAULT_PORT}" \
 STEP_CA_HOST="${STEP_CA_HOST}" \
 STEP_CA_PORT="${STEP_CA_PORT}" \
 TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
+TRAEFIK_EDGE_IP_DASHED="${TRAEFIK_EDGE_IP_DASHED}" \
 AUTHELIA_VAULT_CLIENT_SECRET_HASH="${AUTHELIA_VAULT_CLIENT_SECRET_HASH}" \
 AUTHELIA_STEP_CA_CLIENT_SECRET_HASH="${AUTHELIA_STEP_CA_CLIENT_SECRET_HASH}" \
 AUTHELIA_GRAFANA_RBR_VER_CLIENT_SECRET_HASH="${AUTHELIA_GRAFANA_RBR_VER_CLIENT_SECRET_HASH}" \
 AUTHELIA_GRAFANA_MONITORING_CLIENT_SECRET_HASH="${AUTHELIA_GRAFANA_MONITORING_CLIENT_SECRET_HASH}" \
-envsubst '${AUTHELIA_HOST} ${AUTHELIA_PORT} ${HOST_IP_DASHED} ${AUTHELIA_JWT_SECRET} ${AUTHELIA_SESSION_SECRET} ${AUTHELIA_STORAGE_ENCRYPTION_KEY} ${AUTHELIA_OIDC_HMAC_SECRET} ${VAULT_HOST} ${VAULT_PORT} ${STEP_CA_HOST} ${STEP_CA_PORT} ${TRAEFIK_IP_DASHED} ${AUTHELIA_VAULT_CLIENT_SECRET_HASH} ${AUTHELIA_STEP_CA_CLIENT_SECRET_HASH} ${AUTHELIA_GRAFANA_RBR_VER_CLIENT_SECRET_HASH} ${AUTHELIA_GRAFANA_MONITORING_CLIENT_SECRET_HASH}' \
+AUTHELIA_GANGPLANK_CLIENT_SECRET_HASH="${AUTHELIA_GANGPLANK_CLIENT_SECRET_HASH}" \
+AUTHELIA_ARGOCD_CLIENT_SECRET_HASH="${AUTHELIA_ARGOCD_CLIENT_SECRET_HASH}" \
+AUTHELIA_SEAWEEDFS_S3_CLIENT_SECRET_HASH="${AUTHELIA_SEAWEEDFS_S3_CLIENT_SECRET_HASH}" \
+envsubst '${AUTHELIA_HOST} ${AUTHELIA_PORT} ${HOST_IP_DASHED} ${AUTHELIA_JWT_SECRET} ${AUTHELIA_SESSION_SECRET} ${AUTHELIA_STORAGE_ENCRYPTION_KEY} ${AUTHELIA_OIDC_HMAC_SECRET} ${VAULT_HOST} ${VAULT_PORT} ${STEP_CA_HOST} ${STEP_CA_PORT} ${TRAEFIK_IP_DASHED} ${TRAEFIK_EDGE_IP_DASHED} ${AUTHELIA_VAULT_CLIENT_SECRET_HASH} ${AUTHELIA_STEP_CA_CLIENT_SECRET_HASH} ${AUTHELIA_GRAFANA_RBR_VER_CLIENT_SECRET_HASH} ${AUTHELIA_GRAFANA_MONITORING_CLIENT_SECRET_HASH} ${AUTHELIA_GANGPLANK_CLIENT_SECRET_HASH} ${AUTHELIA_ARGOCD_CLIENT_SECRET_HASH} ${AUTHELIA_SEAWEEDFS_S3_CLIENT_SECRET_HASH}' \
     < "${CONFIG_TEMPLATE}" \
     | sudo tee "${AUTHELIA_CONFIG_DIR}/configuration.yaml" > /dev/null
 
@@ -144,7 +151,9 @@ AUTHELIA_STATIC_PASSWORD_HASH="${AUTHELIA_STATIC_PASSWORD_HASH}" \
 AUTHELIA_RBR_ADMIN_PASSWORD_HASH="${AUTHELIA_RBR_ADMIN_PASSWORD_HASH}" \
 AUTHELIA_RBR_VER_ADMIN_PASSWORD_HASH="${AUTHELIA_RBR_VER_ADMIN_PASSWORD_HASH}" \
 AUTHELIA_UNRELATED_PASSWORD_HASH="${AUTHELIA_UNRELATED_PASSWORD_HASH}" \
-envsubst '${AUTHELIA_STATIC_PASSWORD_HASH} ${AUTHELIA_RBR_ADMIN_PASSWORD_HASH} ${AUTHELIA_RBR_VER_ADMIN_PASSWORD_HASH} ${AUTHELIA_UNRELATED_PASSWORD_HASH}' \
+AUTHELIA_RBR_VER_DEV_PASSWORD_HASH="${AUTHELIA_RBR_VER_DEV_PASSWORD_HASH}" \
+AUTHELIA_RBR_PO_PASSWORD_HASH="${AUTHELIA_RBR_PO_PASSWORD_HASH}" \
+envsubst '${AUTHELIA_STATIC_PASSWORD_HASH} ${AUTHELIA_RBR_ADMIN_PASSWORD_HASH} ${AUTHELIA_RBR_VER_ADMIN_PASSWORD_HASH} ${AUTHELIA_UNRELATED_PASSWORD_HASH} ${AUTHELIA_RBR_VER_DEV_PASSWORD_HASH} ${AUTHELIA_RBR_PO_PASSWORD_HASH}' \
     < "${AUTHELIA_CONFIG_DIR}/users_database.yml.tpl" \
     | sudo tee "${AUTHELIA_CONFIG_DIR}/users_database.yml" > /dev/null
 
@@ -164,13 +173,32 @@ ${CONTAINER_PROVIDER} run -d \
     -v "${AUTHELIA_SECRETS_DIR}:/config/secrets:ro" \
     "${AUTHELIA_IMAGE}"
 
-# Poll OIDC discovery endpoint for readiness
+# Join the kind network so the edge and in-cluster Traefik can reach Authelia at
+# authelia:9091. This container is recreated (rm -f) on every run of this script,
+# and this script runs more than once during setup, so we (re)attach here rather
+# than rely on a one-shot connect elsewhere that a later recreate would undo.
+# Guarded: the kind network may not exist yet on the earliest invocation.
+${CONTAINER_PROVIDER} network connect kind "${AUTHELIA_CONTAINER_NAME}" 2>/dev/null || true
+
+# Poll OIDC discovery endpoint for readiness.
+# Authelia derives the effective OIDC issuer per request and refuses discovery
+# unless that issuer URL falls under a configured session.cookies domain. Hitting
+# the container directly on the loopback port keeps the non-standard ":${AUTHELIA_PORT}"
+# glued to the Host, so the derived issuer never matches the port-less cookie
+# domain. We instead replicate how the edge Traefik calls Authelia: connect to the
+# published port via --resolve, but send X-Forwarded-Proto/Host (no port) so the
+# issuer resolves to https://${AUTHELIA_HOST} and matches the cookie domain. This
+# verifies the OIDC discovery path end-to-end, not just liveness.
 echo "⏳ Waiting for Authelia OIDC endpoint..."
 DISCOVERY_URL="https://${AUTHELIA_HOST}:${AUTHELIA_PORT}/.well-known/openid-configuration"
 MAX_RETRIES=30; COUNT=0
 while [ $COUNT -lt $MAX_RETRIES ]; do
-    if curl -sf --cacert "${AUTHELIA_TLS_DIR}/ca-chain.pem" "${DISCOVERY_URL}" > /dev/null 2>&1; then
-        echo "✅ Authelia is ready at https://${AUTHELIA_HOST}:${AUTHELIA_PORT}"
+    if curl -sf --cacert "${AUTHELIA_TLS_DIR}/ca-chain.pem" \
+        --resolve "${AUTHELIA_HOST}:${AUTHELIA_PORT}:127.0.0.1" \
+        -H "X-Forwarded-Proto: https" \
+        -H "X-Forwarded-Host: ${AUTHELIA_HOST}" \
+        "${DISCOVERY_URL}" > /dev/null 2>&1; then
+        echo "✅ Authelia is ready at https://${AUTHELIA_HOST}"
         break
     fi
     sleep 5

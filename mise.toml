@@ -1,5 +1,9 @@
 [tools]
 "aqua:theseus-rs/postgresql-binaries" = "latest"
+argo = "latest"
 envsubst = "latest"
-kind = "0.31.0"
+kind = "latest"
 tilt = "latest"
+argocd = "latest"
+argo-rollouts = "latest"
+mc = "latest"

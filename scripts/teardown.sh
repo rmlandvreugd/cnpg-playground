@@ -21,6 +21,7 @@
 # Source the common setup script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
+acquire_lock
 
 # --- Main Logic ---
 # Determine regions from arguments, or auto-detect if none are provided
@@ -121,6 +122,14 @@ if $CONTAINER_PROVIDER ps -a --format '{{.Names}}' | grep -q "^${REVOCATION_EXPO
     $CONTAINER_PROVIDER rm -f "${REVOCATION_EXPORTER_CONTAINER_NAME}" > /dev/null
 else
     echo "🔷 Revocation exporter container '${REVOCATION_EXPORTER_CONTAINER_NAME}' not found, skipping."
+fi
+
+# Tear down edge Traefik (host container, no volume — certs live in traefik-edge/certs/ on the host FS)
+if $CONTAINER_PROVIDER ps -a --format '{{.Names}}' | grep -q "^${TRAEFIK_EDGE_CONTAINER_NAME}$"; then
+    echo "🗑️  Removing edge Traefik container '${TRAEFIK_EDGE_CONTAINER_NAME}'..."
+    $CONTAINER_PROVIDER rm -f "${TRAEFIK_EDGE_CONTAINER_NAME}" > /dev/null
+else
+    echo "🔷 Edge Traefik container '${TRAEFIK_EDGE_CONTAINER_NAME}' not found, skipping."
 fi
 
 echo ""

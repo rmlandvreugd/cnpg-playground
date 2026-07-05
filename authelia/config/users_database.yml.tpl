@@ -11,6 +11,9 @@ users:
       - data-admin
       - database-admin
       - k8s-admin
+      - capsule-admin
+      - argocd-admin
+      - seaweedfs-admin
   authuser:
     displayname: "Authelia User"
     password: "${AUTHELIA_STATIC_PASSWORD_HASH}"
@@ -29,6 +32,18 @@ users:
     email: rbr-ver-admin@example.com
     groups:
       - rbr-ver-db-admin
+  rbr-ver-dev:
+    displayname: "RBR VER Developer"
+    password: "${AUTHELIA_RBR_VER_DEV_PASSWORD_HASH}"
+    email: rbr-ver-dev@example.com
+    groups:
+      - rbr-ver-dev
+  rbr-po:
+    displayname: "RBR Product Owner"
+    password: "${AUTHELIA_RBR_PO_PASSWORD_HASH}"
+    email: rbr-po@example.com
+    groups:
+      - rbr-po
   unrelated:
     displayname: "Unrelated"
     password: "${AUTHELIA_UNRELATED_PASSWORD_HASH}"

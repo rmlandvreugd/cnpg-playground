@@ -1,0 +1,12 @@
+tls:
+  certificates:
+    - certFile: /etc/traefik/certs/vault.crt
+      keyFile: /etc/traefik/certs/vault.key
+    - certFile: /etc/traefik/certs/authelia.crt
+      keyFile: /etc/traefik/certs/authelia.key
+    - certFile: /etc/traefik/certs/seaweedfs.crt
+      keyFile: /etc/traefik/certs/seaweedfs.key
+    - certFile: /etc/traefik/certs/seaweedfs-admin.crt
+      keyFile: /etc/traefik/certs/seaweedfs-admin.key
+    - certFile: /etc/traefik/certs/traefik.crt
+      keyFile: /etc/traefik/certs/traefik.key

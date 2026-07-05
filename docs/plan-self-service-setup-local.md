@@ -194,11 +194,21 @@ In `demo/self-service-setup.sh` Vault/Postgres setup:
 
 ## Verification (end-to-end, local)
 
+> **Boundary (Workstream J):** `scripts/setup.sh` installs the cluster + platform but creates **no
+> tenant**; the `rbr/ver` tenant instance is owned by `demo/self-service-setup.sh`. Canonical order:
+> `setup.sh local` → `monitoring/setup.sh local` → `self-service-setup.sh setup local`. One-shot:
+> `setup.sh local --with-tenant`.
+
 1. `scripts/setup.sh local` → Capsule, capsule-proxy, gangplank, Kyverno, ArgoCD installed;
    `kubectl get crd tenants.capsule.clastix.io`; ArgoCD UI loginable via Authelia (`admin`).
+   **No pollution:** `kubectl get ns | grep rbr-ver` empty, no `rbr-root` Application, no `Tenant rbr`.
+   **Node pool:** `kubectl get nodes -l node-role.kubernetes.io/app` shows **2** nodes (8 total).
+1b. `monitoring/setup.sh local` → Grafana operator + datasources up (hard requirement for step 2).
 2. `demo/self-service-setup.sh setup local` → Tenant `rbr` Active; `rbr-ver`/`rbr-ver-db` labeled;
    Kyverno-generated RoleBindings present; ArgoCD root app `Synced/Healthy`; demo-app pods Running
-   in `rbr-ver` and serving; `verstappen-app` secret is Vault-static-role-rotated.
+   in `rbr-ver` and serving (not crash-looping); `verstappen-app` secret is Vault-static-role-rotated.
+   **Scheduling:** `demo-app` and `pooler-verstappen-rw` pods land on `app`-role nodes; postgres
+   instances stay on `postgres` nodes. **Hard-require:** running step 2 without step 1b fails fast.
 3. **Personas**: gangplank dispenses kubeconfig; `rbr-ver-dev` can `get/edit` in `rbr-ver*` but not
    other namespaces; `rbr-po` can `get` across `rbr-*` read-only; `unrelated` forbidden. Grafana
    roles match the matrix.

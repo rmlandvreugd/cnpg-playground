@@ -1,0 +1,64 @@
+# kyverno-policies chart values (Pod Security Standards bundle).
+#
+# Ships the PSS *baseline* ClusterPolicies (disallow-privileged-containers,
+# disallow-host-namespaces, disallow-host-path, etc.). Emitted as legacy
+# ClusterPolicy (not the CEL ValidatingPolicy type): ClusterPolicy background-scans
+# existing workloads cleanly, matches the kind of the remaining custom policies,
+# and avoids a chart bug where ValidatingPolicy's excludeNamespaces matchCondition
+# throws "no such key: namespace" errors during background scans.
+#
+# Started in Audit (report-only, non-breaking). Flip individual policies to
+# Enforce after reviewing PolicyReports.
+podSecurityStandard: baseline
+policyType: ClusterPolicy
+validationFailureAction: Audit
+
+# Exclude platform/infra namespaces from every baseline policy so PSS only
+# evaluates tenant/app workloads (rbr-*, default). Kyverno's resourceFilters only
+# gate the admission webhook, NOT background reporting, so exclusion must live on
+# the policies themselves via policyExclude (keyed by policy name; applies to all
+# of a policy's rules). The list mirrors the platform components setup.sh installs;
+# kube-system/kube-public/kube-node-lease/kyverno are already handled elsewhere and
+# would only ever produce skipped results.
+policyExclude:
+  disallow-capabilities: &platformExclude
+    any:
+      - resources:
+          namespaces: &platformNamespaces
+            - argocd
+            - authelia
+            - calico-system
+            - capsule-system
+            - caretta
+            - cert-manager
+            - cnpg-system
+            - external-secrets
+            - gangplank
+            - grafana
+            - kube-node-lease
+            - kube-public
+            - kube-system
+            - kyverno
+            - local-path-storage
+            - metallb-system
+            - metrics-server
+            - mimir
+            - otel
+            - pgadmin
+            - prometheus-operator
+            - radar
+            - step-ca
+            - tempo
+            - tigera-operator
+            - traefik
+            - vault
+  disallow-host-namespaces: *platformExclude
+  disallow-host-path: *platformExclude
+  disallow-host-ports: *platformExclude
+  disallow-host-process: *platformExclude
+  disallow-privileged-containers: *platformExclude
+  disallow-proc-mount: *platformExclude
+  disallow-selinux: *platformExclude
+  restrict-apparmor-profiles: *platformExclude
+  restrict-seccomp: *platformExclude
+  restrict-sysctls: *platformExclude

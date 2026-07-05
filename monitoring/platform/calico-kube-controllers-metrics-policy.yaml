@@ -1,0 +1,31 @@
+# Allow our Prometheus to scrape calico-kube-controllers metrics (port 9094).
+#
+# The Tigera operator installs a "calico-system.kube-controller-access" policy (tier
+# calico-system, order 1) that only permits port 9094 ingress from the tigera-prometheus
+# namespace — Calico's own bundled Prometheus. This cluster scrapes with the
+# kube-prometheus-stack Prometheus in the prometheus-operator namespace, so its scrapes
+# fall through to the tier's default-deny and are dropped (the calico-felix / calico-typha
+# targets are unaffected because those components run on the host network).
+#
+# This policy lives in the same calico-system tier with order 2 (after kube-controller-access,
+# before default-deny) and is named with the required "<tier>." prefix. It is a
+# user-created policy, so the Tigera operator will not reconcile it away.
+apiVersion: projectcalico.org/v3
+kind: NetworkPolicy
+metadata:
+  name: calico-system.allow-prometheus-kube-controllers
+  namespace: calico-system
+spec:
+  tier: calico-system
+  order: 2
+  selector: k8s-app == 'calico-kube-controllers'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source:
+        namespaceSelector: name == 'prometheus-operator'
+      destination:
+        ports:
+          - 9094

@@ -1,0 +1,44 @@
+# Static Service + Endpoints for edge Traefik Prometheus metrics (host container).
+# Edge exposes /metrics at 172.18.0.250:9102 (TRAEFIK_EDGE_METRICS_PORT).
+# Headless + manual Endpoints pattern for external (non-k8s) targets.
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik-edge-metrics
+  namespace: otel
+  labels:
+    app.kubernetes.io/name: traefik-edge-metrics
+spec:
+  clusterIP: None
+  ports:
+    - name: metrics
+      port: 9102
+      targetPort: 9102
+      protocol: TCP
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: traefik-edge-metrics
+  namespace: otel
+subsets:
+  - addresses:
+      - ip: 172.18.0.250
+    ports:
+      - name: metrics
+        port: 9102
+        protocol: TCP
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: traefik-edge
+  namespace: otel
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: traefik-edge-metrics
+  endpoints:
+    - port: metrics
+      path: /metrics
+      scheme: http

@@ -1,0 +1,36 @@
+# dex is disabled: SSO uses oidc.config (direct OIDC against Authelia, patched
+# onto argocd-cm by scripts/authelia-setup.sh) instead of a dex.config connector,
+# so the bundled dex-server never actually starts ("dex is not configured") and
+# would otherwise sit around as a permanently-down metrics target for no benefit.
+dex:
+  enabled: false
+
+configs:
+  params:
+    server.insecure: "true"
+  cm:
+    # admin.enabled bootstraps access before OIDC is verified. Disable after
+    # confirming Authelia login works: set admin.enabled: "false" and rotate the
+    # admin password out of argocd-secret.
+    admin.enabled: "true"
+    application.resourceTrackingMethod: annotation
+  rbac:
+    policy.csv: |
+      g, argocd-admin, role:admin
+      p, role:rbr-ver-sync, applications, sync, rbr/demo-app, allow
+      p, role:rbr-ver-sync, applications, get, rbr/demo-app, allow
+      # ArgoCD v3 enforces fine-grained logs RBAC; applications,get no longer
+      # implies pod-log access, so grant it explicitly.
+      p, role:rbr-ver-sync, logs, get, rbr/demo-app, allow
+      g, rbr-ver-dev, role:rbr-ver-sync
+      # rbr tenant admin: full control over everything in the rbr project.
+      # rbr-admin user carries both groups; bind each so either grants access.
+      p, role:rbr-admin, applications, *, rbr/*, allow
+      p, role:rbr-admin, logs, *, rbr/*, allow
+      g, rbr-db-admin, role:rbr-admin
+      g, rbr-ver-db-admin, role:rbr-admin
+    policy.default: ''
+
+server:
+  service:
+    type: ClusterIP

@@ -1,0 +1,12 @@
+# capsule-proxy serves HTTPS on :9001 (chart installed with options.enableSSL=true),
+# but its serving cert SANs are only [capsule-proxy, capsule-proxy.capsule-system.svc] —
+# not the external sslip.io host. Traefik re-encrypts to the backend over HTTPS and skips
+# verification of that internal-SAN cert (same approach as authelia-transport). Tenant auth
+# is still enforced end-to-end: capsule-proxy authenticates the forwarded OIDC bearer token.
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransport
+metadata:
+  name: capsule-proxy-transport
+  namespace: capsule-system
+spec:
+  insecureSkipVerify: true

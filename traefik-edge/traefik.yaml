@@ -1,0 +1,81 @@
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+experimental:
+  otlpLogs: true
+
+# Traefik dashboard/API, served by the internal api@internal service. Exposed
+# via a dynamic router (dynamic/dashboard.yaml) on traefik.172-18-0-250.sslip.io
+# over TLS (no forward-auth, mirroring the in-cluster dashboard). `insecure` is
+# intentionally NOT set (that would also publish it unauthenticated on :8080).
+api:
+  dashboard: true
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+  websecure:
+    address: ":443"
+    # Trust X-Forwarded-* (incl. X-Forwarded-Method) from the internal cluster
+    # networks so cross-boundary forward-auth from the in-cluster Traefik
+    # reaches Authelia intact. Without this, Traefik strips X-Forwarded-Method
+    # from the untrusted source and Authelia rejects forward-auth with a bare
+    # 400 ("header 'X-Forwarded-Method' is empty") — breaking auth on
+    # in-cluster services like radar.172-18-255-200.sslip.io.
+    forwardedHeaders:
+      trustedIPs:
+        - 172.18.0.0/16
+        - 10.244.0.0/16
+  metrics:
+    address: ":9102"
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+metrics:
+  prometheus:
+    entryPoint: metrics
+    addEntryPointsLabels: true
+    addServicesLabels: true
+    addRoutersLabels: true
+
+tracing:
+  serviceName: traefik-edge
+  otlp:
+    grpc:
+      endpoint: "172.18.255.240:4317"
+      tls:
+        ca: /etc/traefik/certs/step-ca-chain.pem
+        cert: /etc/traefik/certs/otlp-client.crt
+        key: /etc/traefik/certs/otlp-client.key
+
+log:
+  level: INFO
+  otlp:
+    serviceName: traefik-edge
+    grpc:
+      endpoint: "172.18.255.240:4317"
+      tls:
+        ca: /etc/traefik/certs/step-ca-chain.pem
+        cert: /etc/traefik/certs/otlp-client.crt
+        key: /etc/traefik/certs/otlp-client.key
+
+accessLog:
+  otlp:
+    serviceName: traefik-edge
+    grpc:
+      endpoint: "172.18.255.240:4317"
+      tls:
+        ca: /etc/traefik/certs/step-ca-chain.pem
+        cert: /etc/traefik/certs/otlp-client.crt
+        key: /etc/traefik/certs/otlp-client.key
+  dualOutput: true

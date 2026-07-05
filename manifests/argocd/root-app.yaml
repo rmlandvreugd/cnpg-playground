@@ -1,0 +1,81 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: rbr
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: RBR tenant workloads
+  sourceRepos:
+    - https://github.com/rmlandvreugd/cnpg-playground.git
+  destinations:
+    - namespace: rbr-ver
+      server: https://kubernetes.default.svc
+    - namespace: rbr-ver-db
+      server: https://kubernetes.default.svc
+    - namespace: grafana
+      server: https://kubernetes.default.svc
+    - namespace: kyverno
+      server: https://kubernetes.default.svc
+    - namespace: argocd
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: capsule.clastix.io
+      kind: Tenant
+    - group: kyverno.io
+      kind: ClusterPolicy
+    - group: kyverno.io
+      kind: ClusterPolicyReport
+  namespaceResourceWhitelist:
+    - group: ''
+      kind: ConfigMap
+    - group: ''
+      kind: Service
+    - group: ''
+      kind: ServiceAccount
+    - group: apps
+      kind: Deployment
+    - group: policy
+      kind: PodDisruptionBudget
+    - group: monitoring.coreos.com
+      kind: PodMonitor
+    - group: external-secrets.io
+      kind: ExternalSecret
+    - group: cert-manager.io
+      kind: Certificate
+    - group: traefik.io
+      kind: IngressRoute
+    - group: grafana.integreatly.org
+      kind: GrafanaDatasource
+    - group: grafana.integreatly.org
+      kind: GrafanaDashboard
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rbr-root
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/rmlandvreugd/cnpg-playground.git
+    targetRevision: feature/self-service
+    path: manifests/argocd/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+  ignoreDifferences:
+    - group: argoproj.io
+      kind: Application
+      name: demo-app
+      jsonPointers:
+        - /spec/source/helm/parameters

@@ -23,21 +23,22 @@ ingressRoute:
   dashboard:
     enabled: false
 
-logs:
-  general:
-    level: "INFO"
-  access:
-    enabled: true
-    format: json
-    bufferingSize: 0      # immediate flush
-    fields:
-      general:
-        defaultmode: keep
-      headers:
-        defaultmode: drop  # drop request headers by default (PII)
-        names:
-          User-Agent: keep
-          X-Forwarded-For: keep
+# chart v41 renamed logs.general -> log and logs.access -> accessLog, camelCased
+# field keys, and dropped the fields.general nesting level (v41.0.0 breaking change).
+log:
+  level: "INFO"
+
+accessLog:
+  enabled: true
+  format: json
+  bufferingSize: 0      # immediate flush
+  fields:
+    defaultMode: keep
+    headers:
+      defaultMode: drop  # drop request headers by default (PII)
+      names:
+        User-Agent: keep
+        X-Forwarded-For: keep
 
 tracing:
   serviceName: traefik
@@ -55,6 +56,14 @@ additionalArguments:
   - "--entrypoints.web.http.redirections.entrypoint.to=:443"
   - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
   - "--entrypoints.web.http.redirections.entrypoint.permanent=true"
+  # Trust X-Forwarded-* (incl. X-Forwarded-Method) on the internal docker/pod
+  # networks so cross-boundary forward-auth to the edge Authelia works: the
+  # radar forwardAuth sub-request relays through this entrypoint and the edge
+  # Traefik, and Traefik strips X-Forwarded-Method from untrusted sources,
+  # which makes Authelia reject forward-auth with 400 "X-Forwarded-Method is
+  # empty". Sources here are the kind node net (172.18.0.0/16) or the Calico
+  # pod net (10.244.0.0/16) depending on hairpin SNAT.
+  - "--entrypoints.websecure.forwardedHeaders.trustedIPs=172.18.0.0/16,10.244.0.0/16"
 
 ports:
   postgres:

@@ -6,13 +6,18 @@ metadata:
 spec:
   configuration:
     destinationPath: s3://verstappen-backups/
-    endpointURL: http://objectstore-local:9000
+    # SeaweedFS S3 gateway (migrated off RustFS). Hostname 'seaweedfs' matches the
+    # step-ca cert SAN; the Service+Endpoints are wired in self-service-setup.sh.
+    endpointURL: https://seaweedfs:8333
+    endpointCA:
+      name: step-ca-external-bundle
+      key: ca.crt
     s3Credentials:
       accessKeyId:
-        name: objectstore-local
+        name: seaweedfs-barman
         key: ACCESS_KEY_ID
       secretAccessKey:
-        name: objectstore-local
+        name: seaweedfs-barman
         key: ACCESS_SECRET_KEY
     wal:
       compression: gzip

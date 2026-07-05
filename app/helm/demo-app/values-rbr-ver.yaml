@@ -1,0 +1,49 @@
+# RBR VER environment overrides for demo-app
+# global.traefikIpDashed is injected by setup.sh after ArgoCD bootstrap via kubectl patch application
+global:
+  traefikIpDashed: ""
+
+replicaCount: 1
+
+image:
+  pullPolicy: Never  # image is loaded into Kind by setup.sh via kind load docker-image
+
+database:
+  host: "pooler-verstappen-rw.rbr-ver-db.svc.cluster.local"
+  migrationHost: "verstappen-rw.rbr-ver-db.svc.cluster.local"
+  name: "max"  # CNPG bootstrap.initdb.database from cluster-verstappen.yaml.tpl
+  passwordSecret: "verstappen-app"
+  credentialsMode: "static"
+  staticSecret:
+    refreshInterval: 5m
+    vaultPath: "database/static-creds/app"
+
+tls:
+  hostnamePrefix: "demo-rbr-ver"
+  issuerRef:
+    kind: ClusterIssuer
+    name: vault-pki
+
+app:
+  seed: true
+
+# Pin the demo-app to the (untainted) app node pool.
+nodeSelector:
+  node-role.kubernetes.io/app: ""
+
+migration:
+  strategy: "initContainer"
+
+externalSecret:
+  secretStoreRef:
+    name: vault-approle-rbr-db
+    kind: ClusterSecretStore
+  data:
+    - secretKey: username
+      remoteRef:
+        key: static-creds/app
+        property: username
+    - secretKey: password
+      remoteRef:
+        key: static-creds/app
+        property: password

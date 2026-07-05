@@ -155,6 +155,19 @@ for region in "${REGIONS[@]}"; do
         kubectl --context "${CONTEXT_NAME}" create namespace otel --dry-run=client -o yaml \
             | kubectl --context "${CONTEXT_NAME}" apply -f -
 
+        # The collector mounts secret otel-collector-otlp-tls as a REQUIRED volume
+        # (otel-collector-values.yaml extraVolumes), so the cert must be issued
+        # BEFORE the helm install. Otherwise the pod stays ContainerCreating, helm
+        # --wait fails with "Progress deadline exceeded", and the script dies here
+        # before it ever reaches the cert — so a fresh cluster can never converge.
+        echo "🌐 Applying ext-svc-lb LoadBalancer + OTLP TLS certificate (edge→collector mTLS)..."
+        kubectl --context "${CONTEXT_NAME}" apply \
+            -f "${GIT_REPO_ROOT}/monitoring/platform/ext-svc-lb.yaml"
+
+        echo "⏳ Waiting for OTLP TLS cert (otel-collector-otlp-tls) to be issued..."
+        kubectl --context "${CONTEXT_NAME}" wait --for=condition=Ready \
+            certificate/otel-collector-otlp-tls -n otel --timeout=120s
+
         helm_upgrade_install otel-collector \
             oci://ghcr.io/open-telemetry/opentelemetry-helm-charts/opentelemetry-collector \
             otel "${CONTEXT_NAME}" "${OTEL_COLLECTOR_CHART_VERSION}" \
@@ -264,7 +277,7 @@ EOF
         -n grafana \
         --image=minio/mc:latest \
         --pod-running-timeout=180s \
-        --command -- sh -c "mc --insecure alias set store https://seaweedfs:8333 '${SEAWEEDFS_ACCESS_KEY}' '${SEAWEEDFS_SECRET_KEY}' 2>&1 \
+        --command -- sh -c "mc --insecure alias set store https://seaweedfs:8333 '${SEAWEEDFS_ADMIN_ACCESS_KEY}' '${SEAWEEDFS_ADMIN_SECRET_KEY}' 2>&1 \
             && mc --insecure mb --ignore-existing store/loki \
             && echo '✅ Bucket loki ready'"
     kubectl --context "${CONTEXT_NAME}" -n grafana wait pod/loki-bucket-init \
@@ -305,6 +318,45 @@ fi
             -f "${GIT_REPO_ROOT}/monitoring/cnpg/cnpg-backup-alerts.yaml"
     fi
 
+    # Platform monitors (Capsule + Calico + Kyverno + ArgoCD). These components are
+    # installed before the Prometheus Operator CRDs exist, so their ServiceMonitors /
+    # PodMonitors are applied here instead of via the charts' built-in serviceMonitor option.
+    if kubectl --context "${CONTEXT_NAME}" get namespace capsule-system &>/dev/null; then
+        echo "📊 Applying Capsule monitors..."
+        kubectl --context "${CONTEXT_NAME}" apply \
+            -f "${GIT_REPO_ROOT}/monitoring/platform/capsule-servicemonitor.yaml"
+    fi
+
+    if kubectl --context "${CONTEXT_NAME}" get namespace calico-system &>/dev/null; then
+        echo "📊 Applying Calico metrics services and monitors..."
+        kubectl --context "${CONTEXT_NAME}" apply \
+            -f "${GIT_REPO_ROOT}/monitoring/platform/calico-metrics-services.yaml" \
+            -f "${GIT_REPO_ROOT}/monitoring/platform/calico-servicemonitors.yaml" \
+            -f "${GIT_REPO_ROOT}/monitoring/platform/calico-kube-controllers-metrics-policy.yaml"
+    fi
+    if kubectl --context "${CONTEXT_NAME}" get namespace kyverno &>/dev/null; then
+        echo "📊 Applying Kyverno monitors..."
+        kubectl --context "${CONTEXT_NAME}" apply \
+            -f "${GIT_REPO_ROOT}/monitoring/platform/kyverno-servicemonitor.yaml"
+    fi
+    if kubectl --context "${CONTEXT_NAME}" get namespace argocd &>/dev/null; then
+        echo "📊 Applying ArgoCD monitors..."
+        kubectl --context "${CONTEXT_NAME}" apply \
+            -f "${GIT_REPO_ROOT}/monitoring/platform/argocd-podmonitors.yaml"
+    fi
+    # policy-reporter (hub only) is installed by scripts/setup.sh before these CRDs exist,
+    # so its ServiceMonitor is applied here (chart's monitoring.enabled is off). The
+    # namespace only exists on the hub, so this guard is naturally hub-scoped.
+    if kubectl --context "${CONTEXT_NAME}" get namespace policy-reporter &>/dev/null; then
+        echo "📊 Applying policy-reporter monitor..."
+        kubectl --context "${CONTEXT_NAME}" apply \
+            -f "${GIT_REPO_ROOT}/monitoring/platform/policy-reporter-servicemonitor.yaml"
+    fi
+
+    echo "📊 Applying edge Traefik ServiceMonitor (static external target)..."
+    kubectl --context "${CONTEXT_NAME}" apply \
+        -f "${GIT_REPO_ROOT}/monitoring/platform/traefik-edge-servicemonitor.yaml"
+
     # Wire revocation-exporter (host container) into monitoring namespace — hub only
     if [[ "${region}" == "${HUB_REGION}" ]]; then
         echo "🔍 Wiring revocation exporter into monitoring namespace..."
@@ -330,9 +382,13 @@ fi
             --for=condition=Ready certificate/grafana-monitoring-cert -n grafana
 
         echo "📈 Applying monitoring Grafana instance (OIDC + HTTPS)..."
+        # root_url uses this region's Traefik IP; OIDC endpoints use the fixed
+        # hub in-cluster Authelia portal (HUB_TRAEFIK_IP_DASHED from common.sh).
         TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
+        HUB_TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" \
+        TRAEFIK_EDGE_IP_DASHED="${TRAEFIK_EDGE_IP_DASHED}" \
         AUTHELIA_HOST="${AUTHELIA_HOST}" AUTHELIA_PORT="${AUTHELIA_PORT}" \
-        envsubst '${TRAEFIK_IP_DASHED} ${AUTHELIA_HOST} ${AUTHELIA_PORT}' \
+        envsubst '${TRAEFIK_IP_DASHED} ${HUB_TRAEFIK_IP_DASHED} ${TRAEFIK_EDGE_IP_DASHED} ${AUTHELIA_HOST} ${AUTHELIA_PORT}' \
             < "${GIT_REPO_ROOT}/monitoring/grafana/grafana_instance.yaml.tpl" \
             | kubectl --context "${CONTEXT_NAME}" apply -f -
 

@@ -91,8 +91,26 @@ SEAWEEDFS_WEBDAV_PORT="${SEAWEEDFS_WEBDAV_PORT:-7333}"              # WebDAV HTT
 SEAWEEDFS_WEBDAV_CONTAINER_NAME="${SEAWEEDFS_WEBDAV_CONTAINER_NAME:-seaweedfs-webdav}"
 SEAWEEDFS_WORKER_METRICS_PORT="${SEAWEEDFS_WORKER_METRICS_PORT:-9327}"  # Worker Prometheus metrics
 SEAWEEDFS_WORKER_CONTAINER_NAME="${SEAWEEDFS_WORKER_CONTAINER_NAME:-seaweedfs-worker}"
+# Static S3 identities (-s3.config / identities.json). Machine creds — humans use OIDC/STS (-s3.iam.config).
+# loki: RW on the 'loki' bucket only (keeps Loki working; blanket Admin dropped — see SEAWEEDFS_ADMIN_* for bootstrap).
 SEAWEEDFS_ACCESS_KEY="${SEAWEEDFS_ACCESS_KEY:-loki}"
 SEAWEEDFS_SECRET_KEY="${SEAWEEDFS_SECRET_KEY:-lokiS3secret}"
+# admin: full Admin — used only to bootstrap buckets (mc mb) during setup, not handed to any workload.
+SEAWEEDFS_ADMIN_ACCESS_KEY="${SEAWEEDFS_ADMIN_ACCESS_KEY:-swadmin}"
+SEAWEEDFS_ADMIN_SECRET_KEY="${SEAWEEDFS_ADMIN_SECRET_KEY:-swadminS3secret}"
+# barman: RW/List on the backup buckets — used by CNPG/Barman ObjectStores (migrated off RustFS).
+SEAWEEDFS_BARMAN_ACCESS_KEY="${SEAWEEDFS_BARMAN_ACCESS_KEY:-barman}"
+SEAWEEDFS_BARMAN_SECRET_KEY="${SEAWEEDFS_BARMAN_SECRET_KEY:-barmanS3secret}"
+# Backup buckets (Barman). 'backups' = pg-local; per-tenant buckets carved out per cluster.
+SEAWEEDFS_BACKUP_BUCKET="${SEAWEEDFS_BACKUP_BUCKET:-backups}"
+SEAWEEDFS_VER_BACKUP_BUCKET="${SEAWEEDFS_VER_BACKUP_BUCKET:-verstappen-backups}"
+# STS signing key for -s3.iam.config (base64, 32+ bytes). Demo value — override in real deployments.
+SEAWEEDFS_STS_SIGNING_KEY="${SEAWEEDFS_STS_SIGNING_KEY:-Y25wZy1wbGF5Z3JvdW5kLXNlYXdlZWRmcy1zdHMtMzI=}"
+# Admin UI (weed admin) HTTP login. OSS 'weed admin' has no OIDC — it only honours
+# -adminUser/-adminPassword, so this is the local credential behind the (future) Traefik+Authelia edge.
+# Demo value — override in real deployments. Tracked in cnpg-playground-yt4.
+SEAWEEDFS_ADMIN_UI_USER="${SEAWEEDFS_ADMIN_UI_USER:-admin}"
+SEAWEEDFS_ADMIN_UI_PASSWORD="${SEAWEEDFS_ADMIN_UI_PASSWORD:-swadminUIsecret}"
 
 # Revocation Exporter Configuration (host container, --network host)
 REVOCATION_EXPORTER_CONTAINER_NAME="${REVOCATION_EXPORTER_CONTAINER_NAME:-revocation-exporter}"
@@ -129,16 +147,35 @@ AUTHELIA_STATIC_PASSWORD_HASH="${AUTHELIA_STATIC_PASSWORD_HASH:-\$2a\$10\$2b2cU8
 AUTHELIA_RBR_ADMIN_PASSWORD_HASH="${AUTHELIA_RBR_ADMIN_PASSWORD_HASH:-${AUTHELIA_STATIC_PASSWORD_HASH}}"
 AUTHELIA_RBR_VER_ADMIN_PASSWORD_HASH="${AUTHELIA_RBR_VER_ADMIN_PASSWORD_HASH:-${AUTHELIA_STATIC_PASSWORD_HASH}}"
 AUTHELIA_UNRELATED_PASSWORD_HASH="${AUTHELIA_UNRELATED_PASSWORD_HASH:-${AUTHELIA_STATIC_PASSWORD_HASH}}"
+AUTHELIA_RBR_VER_DEV_PASSWORD_HASH="${AUTHELIA_RBR_VER_DEV_PASSWORD_HASH:-${AUTHELIA_STATIC_PASSWORD_HASH}}"
+AUTHELIA_RBR_PO_PASSWORD_HASH="${AUTHELIA_RBR_PO_PASSWORD_HASH:-${AUTHELIA_STATIC_PASSWORD_HASH}}"
 # OIDC client secrets (plaintext — hashed to PBKDF2 at setup time by authelia-setup.sh)
 AUTHELIA_VAULT_CLIENT_SECRET="${AUTHELIA_VAULT_CLIENT_SECRET:-vault-oidc-secret}"
 AUTHELIA_STEP_CA_CLIENT_SECRET="${AUTHELIA_STEP_CA_CLIENT_SECRET:-step-ca-demo-secret}"
 AUTHELIA_GRAFANA_RBR_VER_CLIENT_SECRET="${AUTHELIA_GRAFANA_RBR_VER_CLIENT_SECRET:-grafana-rbr-ver-demo-secret}"
 AUTHELIA_GRAFANA_MONITORING_CLIENT_SECRET="${AUTHELIA_GRAFANA_MONITORING_CLIENT_SECRET:-grafana-monitoring-demo-secret}"
+AUTHELIA_GANGPLANK_CLIENT_SECRET="${AUTHELIA_GANGPLANK_CLIENT_SECRET:-gangplank-demo-secret}"
+AUTHELIA_ARGOCD_CLIENT_SECRET="${AUTHELIA_ARGOCD_CLIENT_SECRET:-argocd-demo-secret}"
+AUTHELIA_SEAWEEDFS_S3_CLIENT_SECRET="${AUTHELIA_SEAWEEDFS_S3_CLIENT_SECRET:-seaweedfs-s3-demo-secret}"
 # Authelia internal secrets (session, storage, OIDC HMAC, JWT)
 AUTHELIA_SESSION_SECRET="${AUTHELIA_SESSION_SECRET:-authelia-session-secret-dev}"
 AUTHELIA_STORAGE_ENCRYPTION_KEY="${AUTHELIA_STORAGE_ENCRYPTION_KEY:-authelia-storage-key-dev-32chars!}"
 AUTHELIA_OIDC_HMAC_SECRET="${AUTHELIA_OIDC_HMAC_SECRET:-authelia-oidc-hmac-secret-dev}"
 AUTHELIA_JWT_SECRET="${AUTHELIA_JWT_SECRET:-authelia-jwt-secret-dev}"
+
+# External Edge Traefik (host container on kind network — fronts vault/authelia/seaweedfs)
+TRAEFIK_EDGE_IMAGE="${TRAEFIK_EDGE_IMAGE:-traefik:v3.7.5}"
+TRAEFIK_EDGE_CONTAINER_NAME="${TRAEFIK_EDGE_CONTAINER_NAME:-traefik-edge}"
+TRAEFIK_EDGE_IP="${TRAEFIK_EDGE_IP:-172.18.0.250}"
+TRAEFIK_EDGE_IP_DASHED="${TRAEFIK_EDGE_IP_DASHED:-172-18-0-250}"
+# Hub cluster Traefik LB IP is deterministic: hub is region_index 0, so on the
+# kind /16 network MetalLB hands out X.X.255.200 first (see get_ip_range in
+# setup.sh). Used as the single, cross-cluster kube-apiserver OIDC issuer host
+# (must match gangplank's login portal), known before MetalLB is up.
+HUB_TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED:-172-18-255-200}"
+TRAEFIK_EDGE_HTTP_PORT="${TRAEFIK_EDGE_HTTP_PORT:-80}"
+TRAEFIK_EDGE_HTTPS_PORT="${TRAEFIK_EDGE_HTTPS_PORT:-443}"
+TRAEFIK_EDGE_METRICS_PORT="${TRAEFIK_EDGE_METRICS_PORT:-9102}"
 
 # cert-manager
 CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION:-v1.20.2}"
@@ -154,8 +191,33 @@ CNPG_DEMO_NAMESPACE="${CNPG_DEMO_NAMESPACE:-demo-local-db}"
 METALLB_VERSION="${METALLB_VERSION:-v0.16.1}"
 METALLB_CHART_VERSION="${METALLB_CHART_VERSION:-0.16.1}"
 CERT_MANAGER_CHART_VERSION="${CERT_MANAGER_CHART_VERSION:-v1.20.2}"
+TRUST_MANAGER_CHART_VERSION="${TRUST_MANAGER_CHART_VERSION:-v0.12.2}"
+METRICS_SERVER_CHART_VERSION="${METRICS_SERVER_CHART_VERSION:-3.13.1}"
+KUBELET_CSR_APPROVER_CHART_VERSION="${KUBELET_CSR_APPROVER_CHART_VERSION:-1.2.14}"
+
+# Capsule + capsule-proxy + gangplank
+CAPSULE_CHART_VERSION="${CAPSULE_CHART_VERSION:-0.13.6}"
+CAPSULE_PROXY_CHART_VERSION="${CAPSULE_PROXY_CHART_VERSION:-0.13.5}"
+GANGPLANK_CHART_VERSION="${GANGPLANK_CHART_VERSION:-0.2.1}"
+# Kyverno
+# 3.8.1 is still a v3 chart (CRDs at apiVersion v1), so no `upgrade.fromV2`; the
+# chart's default `crds.migration.enabled=true` runs a post-upgrade Job that
+# migrates CRD stored versions automatically. Requires Kubernetes >= 1.25.
+KYVERNO_CHART_VERSION="${KYVERNO_CHART_VERSION:-3.8.1}"
+# kyverno-policies bundle (Pod Security Standards). Only in the https helm repo,
+# not the ghcr OCI registry, so it is installed via --repo-url.
+KYVERNO_POLICIES_CHART_VERSION="${KYVERNO_POLICIES_CHART_VERSION:-3.8.1}"
+# policy-reporter: PolicyReport UI + Prometheus metrics for Kyverno. Installed on the
+# hub via --repo-url and fronted by Traefik + Authelia (see scripts/setup.sh).
+POLICY_REPORTER_CHART_VERSION="${POLICY_REPORTER_CHART_VERSION:-3.7.4}"
+# Argo Ecosystem
+ARGOCD_CHART_VERSION="${ARGOCD_CHART_VERSION:-9.7.0}"
+ARGO_WORKFLOWS_CHART_VERSION="${ARGO_WORKFLOWS_CHART_VERSION:-1.0.17}"
+ARGO_EVENTS_CHART_VERSION="${ARGO_EVENTS_CHART_VERSION:-2.4.22}"
+ARGO_ROLLOUTS_CHART_VERSION="${ARGO_ROLLOUTS_CHART_VERSION:-2.41.0}"
+
 ESO_CHART_VERSION="${ESO_CHART_VERSION:-2.4.1}"
-TRAEFIK_CHART_VERSION="${TRAEFIK_CHART_VERSION:-39.0.8}"
+TRAEFIK_CHART_VERSION="${TRAEFIK_CHART_VERSION:-41.0.1}"
 CNPG_CHART_VERSION="${CNPG_CHART_VERSION:-0.28.0}"
 BARMAN_CLOUD_PLUGIN_CHART_VERSION="${BARMAN_CLOUD_PLUGIN_CHART_VERSION:-0.6.0}"
 GRAFANA_OPERATOR_CHART_VERSION="${GRAFANA_OPERATOR_CHART_VERSION:-5.22.2}"
@@ -202,9 +264,54 @@ KUBE_CONFIG_PATH="${GIT_REPO_ROOT}/k8s/kube-config.yaml"
 # source funcs_regions.sh
 source $(git rev-parse --show-toplevel)/scripts/funcs_regions.sh
 
+# --- Mutual-exclusion lock ---
+# Prevents concurrent setup.sh / teardown.sh runs from corrupting the shared
+# kubeconfig (k8s/kube-config.yaml). Call acquire_lock once per top-level script
+# immediately after sourcing common.sh.
+# Globals so the EXIT/INT/TERM trap handler can resolve paths after acquire_lock
+# returns (its locals would be out of scope, tripping `set -u`).
+_PLAYGROUND_LOCKFILE="${GIT_REPO_ROOT}/.playground.lock"
+_PLAYGROUND_PIDFILE="${_PLAYGROUND_LOCKFILE}.pid"
+
+_release_playground_lock() {
+    flock -u 9 2>/dev/null || true
+    rm -f "${_PLAYGROUND_PIDFILE}"
+}
+
+acquire_lock() {
+    if command -v flock &>/dev/null; then
+        # flock(1) available (Linux / WSL) — atomically grab an exclusive lock on fd 9.
+        exec 9>"${_PLAYGROUND_LOCKFILE}"
+        if ! flock -n 9; then
+            local holder
+            holder=$(cat "${_PLAYGROUND_PIDFILE}" 2>/dev/null || echo "unknown")
+            echo "❌ Another playground script is already running (PID ${holder}). Aborting." >&2
+            exit 1
+        fi
+    else
+        # macOS fallback: PID file with staleness check (small TOCTOU window; acceptable for dev tooling).
+        if [[ -f "${_PLAYGROUND_PIDFILE}" ]]; then
+            local holder
+            holder=$(cat "${_PLAYGROUND_PIDFILE}")
+            if kill -0 "${holder}" 2>/dev/null; then
+                echo "❌ Another playground script is already running (PID ${holder}). Aborting." >&2
+                exit 1
+            fi
+            echo "⚠️  Stale lock from PID ${holder} (process gone). Reclaiming." >&2
+        fi
+    fi
+
+    echo $$ > "${_PLAYGROUND_PIDFILE}"
+
+    # EXIT fires on normal exit and signal death when INT/TERM are also trapped.
+    trap '_release_playground_lock' EXIT
+    trap '_release_playground_lock; trap - INT;  kill -INT  $$' INT
+    trap '_release_playground_lock; trap - TERM; kill -TERM $$' TERM
+}
+
 # --- Traefik Configuration ---
-TRAEFIK_VERSION="${TRAEFIK_VERSION:-v3.3.0}"
-TRAEFIK_IMAGE="${TRAEFIK_IMAGE:-traefik:v3.3}"
+TRAEFIK_VERSION="${TRAEFIK_VERSION:-v3.7.5}"
+TRAEFIK_IMAGE="${TRAEFIK_IMAGE:-traefik:v3.7.5}"
 
 # Waits up to <timeout> seconds for the Traefik LoadBalancer IP to be assigned.
 # Prints the IP on success; returns 1 on timeout.
@@ -286,10 +393,13 @@ helm_upgrade_install() {
     # stall indefinitely even when every resource is already Ready. Callers that
     # do their own explicit `kubectl wait` afterwards can pass --no-wait to skip it.
     local wait_args=(--wait)
+    local debug_args=()
     local passthrough=() arg
     for arg in "$@"; do
         if [[ "${arg}" == "--no-wait" ]]; then
             wait_args=()
+        elif [[ "${arg}" == "--debug" ]]; then
+            debug_args=(--debug)
         else
             passthrough+=("${arg}")
         fi
@@ -317,14 +427,15 @@ helm_upgrade_install() {
 
         # Wrap in `timeout` so a stuck `helm --wait` (which can blow past its own
         # --timeout) becomes a failure the retry loop can act on, not a frozen process.
-        timeout --kill-after=30s 360s helm upgrade --install "${release}" "${chart_ref}" \
+        timeout --kill-after=30s 1000s helm upgrade --install "${release}" "${chart_ref}" \
             "${repo_args[@]}" \
             --namespace "${namespace}" \
             --create-namespace \
             --kube-context "${context}" \
             --version "${version}" \
             ${wait_args[@]+"${wait_args[@]}"} \
-            --timeout 300s \
+            ${debug_args[@]+"${debug_args[@]}"} \
+            --timeout 900s \
             "$@" && return 0
         if [[ $attempt -lt $retries ]]; then
             echo "⚠️  helm install attempt $attempt/$retries failed, retrying in ${delay}s..." >&2

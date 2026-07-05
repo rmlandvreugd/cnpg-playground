@@ -3,6 +3,10 @@ server:
   tls:
     certificate: /config/tls/authelia.crt
     key: /config/tls/authelia.key
+  endpoints:
+    authz:
+      forward-auth:
+        implementation: ForwardAuth
 
 log:
   level: info
@@ -21,8 +25,8 @@ session:
   secret: '${AUTHELIA_SESSION_SECRET}'
   cookies:
     - name: authelia_session
-      domain: '${HOST_IP_DASHED}.sslip.io'
-      authelia_url: 'https://${AUTHELIA_HOST}:${AUTHELIA_PORT}'
+      domain: '${TRAEFIK_EDGE_IP_DASHED}.sslip.io'
+      authelia_url: 'https://${AUTHELIA_HOST}'
       expiration: 1h
       inactivity: 5m
 
@@ -38,6 +42,13 @@ notifier:
 access_control:
   default_policy: one_factor
   rules:
+    - domain: 'seaweedfs-admin.${TRAEFIK_EDGE_IP_DASHED}.sslip.io'
+      policy: one_factor
+      subject:
+        - 'group:seaweedfs-admin'
+        - 'group:admin'
+    - domain: 'seaweedfs-admin.${TRAEFIK_EDGE_IP_DASHED}.sslip.io'
+      policy: deny
     - domain: 'radar.${TRAEFIK_IP_DASHED}.sslip.io'
       policy: one_factor
       subject:
@@ -68,7 +79,7 @@ identity_providers:
         redirect_uris:
           - 'https://127.0.0.1:${VAULT_PORT}/ui/vault/auth/oidc/oidc/callback'
           - 'https://localhost:8250/oidc/callback'
-          - 'https://${VAULT_HOST}:${VAULT_PORT}/ui/vault/auth/oidc/oidc/callback'
+          - 'https://${VAULT_HOST}/ui/vault/auth/oidc/oidc/callback'
         scopes:
           - openid
           - email
@@ -127,3 +138,48 @@ identity_providers:
           - profile
           - groups
         claims_policy: 'default_policy'
+      - client_id: gangplank
+        client_name: Gangplank
+        client_secret: '${AUTHELIA_GANGPLANK_CLIENT_SECRET_HASH}'
+        authorization_policy: one_factor
+        token_endpoint_auth_method: 'client_secret_post'
+        # Gangplank requests `audience=gangplank` (defaults to its client_id and
+        # cannot be suppressed client-side); whitelist it or fosite rejects the
+        # authorize request with invalid_target.
+        audience:
+          - 'gangplank'
+        redirect_uris:
+          - 'https://gangplank.${TRAEFIK_IP_DASHED}.sslip.io/callback'
+        scopes:
+          - openid
+          - email
+          - profile
+          - groups
+        claims_policy: 'default_policy'
+        userinfo_signed_response_alg: none
+      - client_id: argocd
+        client_name: ArgoCD
+        client_secret: '${AUTHELIA_ARGOCD_CLIENT_SECRET_HASH}'
+        authorization_policy: one_factor
+        redirect_uris:
+          - 'https://argocd.${TRAEFIK_IP_DASHED}.sslip.io/auth/callback'
+        scopes:
+          - openid
+          - email
+          - profile
+          - groups
+        claims_policy: 'default_policy'
+        userinfo_signed_response_alg: none
+      - client_id: seaweedfs-s3
+        client_name: SeaweedFS S3
+        client_secret: '${AUTHELIA_SEAWEEDFS_S3_CLIENT_SECRET_HASH}'
+        authorization_policy: one_factor
+        redirect_uris:
+          - 'https://seaweedfs.${TRAEFIK_EDGE_IP_DASHED}.sslip.io/iam'
+        scopes:
+          - openid
+          - email
+          - profile
+          - groups
+        claims_policy: 'default_policy'
+        userinfo_signed_response_alg: none

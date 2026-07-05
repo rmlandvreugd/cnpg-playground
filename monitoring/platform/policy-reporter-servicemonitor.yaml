@@ -1,0 +1,23 @@
+# ServiceMonitor for policy-reporter core metrics (policy_report_* + kyverno-plugin).
+#
+# policy-reporter is installed by scripts/setup.sh (hub) BEFORE the Prometheus Operator
+# CRDs exist (kube-prometheus-stack is installed later by monitoring/setup.sh), so the
+# chart's built-in monitoring.enabled ServiceMonitor cannot be used at install time. This
+# standalone manifest — a faithful copy of the chart's ServiceMonitor (chart 3.7.4) — is
+# applied here, after the CRDs exist.
+#
+# Selects the core policy-reporter Service (metrics.enabled=true exposes /metrics on the
+# named "http" port, 8080). Prometheus grabs it via serviceMonitorSelector: {}.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: policy-reporter
+  namespace: policy-reporter
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: policy-reporter
+      app.kubernetes.io/instance: policy-reporter
+  endpoints:
+    - port: http
+      honorLabels: false

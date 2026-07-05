@@ -97,6 +97,27 @@ spec:
     name: verstappen
   instances: 2
   type: rw
+  template:
+    spec:
+      # The Pooler CRD embeds a core PodSpec whose structural schema marks
+      # `containers` as required: once spec.template.spec is set at all, a
+      # container named `pgbouncer` must be present. CNPG overlays the real
+      # image/command/config onto it — we only declare it to pass admission.
+      containers:
+        - name: pgbouncer
+      # Pin PgBouncer to the (untainted) app node pool, alongside the demo-app.
+      nodeSelector:
+        node-role.kubernetes.io/app: ""
+      # Prefer spreading the 2 replicas across the 2 app nodes.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  cnpg.io/poolerName: pooler-verstappen-rw
+              topologyKey: kubernetes.io/hostname
   pgbouncer:
     poolMode: session
     parameters:

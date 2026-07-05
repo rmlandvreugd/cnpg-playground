@@ -23,7 +23,10 @@ spec:
       initContainers:
       - name: db-migrate
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
-        command: ["litestar", "db", "upgrade"]
+        # --no-prompt: the migration runs non-interactively; without it `litestar
+        # db upgrade` prompts [y/n], gets no stdin, and aborts (exit 1) -> the
+        # initContainer CrashLoopBackOffs and the Service has no endpoints.
+        command: ["litestar", "db", "upgrade", "--no-prompt"]
         envFrom:
         - configMapRef:
             name: {{ include "demo-app.fullname" . }}
@@ -107,3 +110,15 @@ spec:
           periodSeconds: 2
         resources:
           {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

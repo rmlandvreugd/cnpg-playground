@@ -1,0 +1,33 @@
+# Extends the kyverno background-controller's RBAC so it can reconcile the
+# generate-tenant-rolebindings ClusterPolicy (manifests/kyverno/).
+#
+# The kyverno 3.4.2 chart's default kyverno:background-controller:core ClusterRole
+# grants only create/update/patch/delete on rbac.authorization.k8s.io
+# rolebindings/roles -- no get/list/watch. Because that policy uses
+# synchronize=true + generateExisting=true on RoleBinding targets, the
+# validate-policy.kyverno.svc webhook prechecks for `get` and denies the policy,
+# leaving the argocd kyverno-policies app permanently OutOfSync (bead anu).
+#
+# This role is aggregated into kyverno:background-controller via the chart's own
+# aggregationRule label. It is applied imperatively by scripts/setup.sh right
+# after the kyverno helm install (not via the rbr AppProject, which is scoped to
+# tenant workloads and does not whitelist ClusterRole).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno:background-controller:tenant-rolebindings
+  labels:
+    rbac.kyverno.io/aggregate-to-background-controller: "true"
+    app.kubernetes.io/part-of: kyverno
+    app.kubernetes.io/component: background-controller
+rules:
+  # Read verbs the generate/synchronize precheck requires on the target kind.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings", "roles"]
+    verbs: ["get", "list", "watch"]
+  # Permit binding the built-in admin/edit ClusterRoles from the generated
+  # RoleBindings without tripping the API server's privilege-escalation check.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    resourceNames: ["admin", "edit"]
+    verbs: ["bind"]

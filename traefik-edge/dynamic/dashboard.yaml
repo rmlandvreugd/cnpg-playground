@@ -1,0 +1,8 @@
+http:
+  routers:
+    dashboard:
+      rule: "Host(`traefik.172-18-0-250.sslip.io`) && (PathPrefix(`/dashboard`) || PathPrefix(`/api`))"
+      entryPoints:
+        - websecure
+      service: api@internal
+      tls: {}

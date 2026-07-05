@@ -1,0 +1,72 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: generate-default-networkpolicy
+  annotations:
+    policies.kyverno.io/title: Generate default-deny NetworkPolicy for tenant namespaces
+    policies.kyverno.io/description: >-
+      For every tenant namespace, generate a NetworkPolicy that denies all ingress
+      by default and selectively allows: same namespace, same tenant (cross-ns pooler→DB),
+      traefik (ingress), cnpg-system (operator), external-secrets (ESO), and monitoring.
+      Egress is unrestricted. Start in Audit; flip to Enforce once workloads are clean.
+spec:
+  generateExisting: true
+  rules:
+    - name: generate-default-deny-networkpolicy
+      match:
+        any:
+          - resources:
+              kinds:
+                - Namespace
+              selector:
+                matchExpressions:
+                  - key: capsule.clastix.io/tenant
+                    operator: Exists
+      generate:
+        synchronize: true
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        name: default-deny-with-exceptions
+        namespace: "{{request.object.metadata.name}}"
+        data:
+          metadata:
+            labels:
+              app.kubernetes.io/managed-by: kyverno
+          spec:
+            podSelector: {}
+            policyTypes:
+              - Ingress
+            ingress:
+              # Same namespace: intra-pod communication
+              - from:
+                  - podSelector: {}
+              # Same tenant: cross-namespace (e.g. demo-app rbr-ver → pooler rbr-ver-db)
+              - from:
+                  - namespaceSelector:
+                      matchLabels:
+                        capsule.clastix.io/tenant: "{{request.object.metadata.labels.\"capsule.clastix.io/tenant\"}}"
+              # Traefik ingress controller
+              - from:
+                  - namespaceSelector:
+                      matchLabels:
+                        kubernetes.io/metadata.name: traefik
+              # CNPG operator
+              - from:
+                  - namespaceSelector:
+                      matchLabels:
+                        kubernetes.io/metadata.name: cnpg-system
+              # External Secrets Operator
+              - from:
+                  - namespaceSelector:
+                      matchLabels:
+                        kubernetes.io/metadata.name: external-secrets
+              # Monitoring (Prometheus scraping)
+              - from:
+                  - namespaceSelector:
+                      matchExpressions:
+                        - key: kubernetes.io/metadata.name
+                          operator: In
+                          values:
+                            - prometheus-operator
+                            - monitoring
+                            - grafana

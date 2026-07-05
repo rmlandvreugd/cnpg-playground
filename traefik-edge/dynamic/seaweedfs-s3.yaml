@@ -1,0 +1,15 @@
+http:
+  routers:
+    seaweedfs-s3:
+      rule: "Host(`seaweedfs.172-18-0-250.sslip.io`)"
+      entryPoints:
+        - websecure
+      service: seaweedfs-s3
+      tls: {}
+
+  services:
+    seaweedfs-s3:
+      loadBalancer:
+        serversTransport: insecure-backend
+        servers:
+          - url: "https://seaweedfs:8333"

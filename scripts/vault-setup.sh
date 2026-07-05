@@ -59,7 +59,7 @@ echo "📜 Requesting Vault TLS certificate from step-ca (X5C provisioner)..."
 
 HOST_IP=$(hostname -I | awk '{print $1}')
 HOST_IP_DASHED=$(echo "$HOST_IP" | tr '.' '-')
-VAULT_HOST="vault.${HOST_IP_DASHED}.sslip.io"
+VAULT_HOST="vault.${TRAEFIK_EDGE_IP_DASHED}.sslip.io"
 STEP_CA_HOST="step-ca.${HOST_IP_DASHED}.sslip.io"
 
 # Copy intermediate CA cert+key into step-ca container for X5C signing

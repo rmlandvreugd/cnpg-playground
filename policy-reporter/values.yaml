@@ -1,0 +1,31 @@
+# policy-reporter chart values (PolicyReport UI + metrics for Kyverno).
+#
+# Watches PolicyReport/ClusterPolicyReport (produced by the kyverno engine and the
+# adopted kyverno-policies PSS bundle) and surfaces them as a UI + Prometheus metrics.
+# Installed imperatively on the hub in scripts/setup.sh (like radar/caretta): the rbr
+# AppProject restricts ArgoCD sourceRepos to this git repo, so an external helm-repo
+# source is blocked — and this is platform infra, not a tenant workload.
+
+# Core policy-reporter: expose Prometheus metrics (scraped via the ServiceMonitor below).
+metrics:
+  enabled: true
+
+# Web UI (ClusterIP service policy-reporter-ui:8080), fronted by Traefik + Authelia
+# forward-auth (ingressroute.yaml.tpl / middleware.yaml.tpl).
+ui:
+  enabled: true
+
+# Kyverno plugin: policy/rule detail + live results in the UI, and per-policy metrics.
+plugin:
+  kyverno:
+    enabled: true
+
+# ServiceMonitor is NOT rendered by the chart: policy-reporter installs (scripts/setup.sh,
+# hub) BEFORE the Prometheus Operator CRDs exist (kube-prometheus-stack comes later via
+# monitoring/setup.sh), so a chart-rendered ServiceMonitor fails "no matches for kind
+# ServiceMonitor in version monitoring.coreos.com/v1". A standalone copy is applied by
+# monitoring/setup.sh after the CRDs exist — see
+# monitoring/platform/policy-reporter-servicemonitor.yaml. (This also mirrors how the
+# repo handles Capsule/Calico/Kyverno/ArgoCD monitors — monitoring/setup.sh:321.)
+monitoring:
+  enabled: false

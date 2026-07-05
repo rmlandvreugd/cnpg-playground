@@ -1,0 +1,17 @@
+http:
+  routers:
+    seaweedfs-admin:
+      rule: "Host(`seaweedfs-admin.172-18-0-250.sslip.io`)"
+      entryPoints:
+        - websecure
+      middlewares:
+        - authelia
+      service: seaweedfs-admin
+      tls: {}
+
+  services:
+    seaweedfs-admin:
+      loadBalancer:
+        serversTransport: insecure-backend
+        servers:
+          - url: "https://seaweedfs-admin:23646"

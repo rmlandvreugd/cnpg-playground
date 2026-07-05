@@ -11,7 +11,7 @@ spec:
       match: Host(`authelia.${TRAEFIK_IP_DASHED}.sslip.io`)
       services:
         - name: authelia-backend
-          port: ${AUTHELIA_PORT}
+          port: 443
           scheme: https
           serversTransport: authelia-transport
   tls:

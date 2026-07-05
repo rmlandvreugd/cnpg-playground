@@ -5,7 +5,9 @@ metadata:
   namespace: radar
 spec:
   forwardAuth:
-    address: 'https://authelia.${HOST_IP_DASHED}.sslip.io:${AUTHELIA_PORT}/api/authz/forward-auth'
+    # In-cluster portal (via edge). Host must match the in-cluster cookie domain
+    # so Authelia resolves the right session cookie + authelia_url for the redirect.
+    address: 'https://authelia.${TRAEFIK_IP_DASHED}.sslip.io/api/authz/forward-auth'
     tls:
       insecureSkipVerify: true
     authResponseHeaders:
