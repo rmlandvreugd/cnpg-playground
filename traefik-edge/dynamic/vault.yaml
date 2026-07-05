@@ -1,4 +1,13 @@
 http:
+  serversTransports:
+    # Verified re-encrypt to Vault: serverName is a SAN on Vault's cert
+    # (scripts/vault-setup.sh), rootCAs is the step-ca chain already mounted in
+    # the edge (traefik-edge/traefik.yaml). Strict upgrade over insecureSkipVerify.
+    vault-verified:
+      serverName: vault.172-18-0-250.sslip.io
+      rootCAs:
+        - /etc/traefik/certs/step-ca-chain.pem
+
   routers:
     vault:
       rule: "Host(`vault.172-18-0-250.sslip.io`)"
@@ -10,6 +19,12 @@ http:
   services:
     vault:
       loadBalancer:
-        serversTransport: insecure-backend
+        serversTransport: vault-verified
+        # LB health check per the Raft ref-arch. standbyok=true keeps a standby
+        # node healthy; a *sealed* Vault returns 503 → edge marks the only
+        # backend down (unseal via docker exec / 127.0.0.1:8200).
+        healthCheck:
+          path: /v1/sys/health?standbyok=true
+          interval: 10s
         servers:
           - url: "https://vault:8200"

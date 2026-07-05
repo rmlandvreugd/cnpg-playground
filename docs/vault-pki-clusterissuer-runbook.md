@@ -14,7 +14,7 @@ Decide these values before starting:
 | `PARENT_CA_KEY` | `step-ca intermediate_ca_key` | Private key for the parent signing CA |
 | `PARENT_CA_CHAIN` | root + parent intermediate | CA chain trusted by clients |
 | `VAULT_ADDR` | `https://vault.example.com:8200` | Vault API address |
-| `VAULT_K8S_ADDR` | `https://vault.vault.svc.cluster.local:8200` | Vault address reachable by cert-manager |
+| `VAULT_K8S_ADDR` | `https://vault.172-18-0-250.sslip.io` | Vault address reachable by cert-manager (canonical edge-LB URL; no port) |
 | `VAULT_TOKEN` | root/bootstrap token | Token used only for PKI/bootstrap work |
 | `VAULT_PKI_MOUNT` | `pki_int` | Vault PKI mount used by cert-manager |
 | `VAULT_ROLE` | `cluster-certs` | Vault PKI role used for normal server certs |
@@ -178,7 +178,26 @@ This repo stores that combined target as `vault-pki-bundle` in each namespace.
 
 cert-manager must reach `VAULT_K8S_ADDR`.
 
-For an in-cluster Vault deployment, use the normal Vault service. For an external Vault, create a `Service` plus `Endpoints` or `EndpointSlice` that points to the external Vault IP, or use DNS that resolves from cluster pods.
+Vault (a host docker container) is fronted by **traefik-edge acting as its load
+balancer** (HashiCorp Raft reference architecture). Every in-cluster consumer —
+cert-manager's ClusterIssuer, ESO's ClusterSecretStores, the demo self-service
+stores — dials the single canonical URL:
+
+```
+https://vault.172-18-0-250.sslip.io      # <edge-ip-dashed>.sslip.io, port 443, no :8200
+```
+
+The edge terminates TLS at `:443`, then does a **verified re-encrypt** to
+`https://vault:8200` (`serverName: vault.172-18-0-250.sslip.io`, a SAN on Vault's
+cert; `rootCAs`: the step-ca chain already mounted in the edge). An LB
+**health check** on `/v1/sys/health?standbyok=true` (interval 10s) gates the
+backend. See `traefik-edge/dynamic/vault.yaml`.
+
+There is **no** in-cluster `Service`/`Endpoints` for Vault. The previous
+hand-built `Service` + `Endpoints` pair hardcoded Vault's dynamic docker IP at
+setup time and broke silently on `docker restart vault`; the edge LB removes that
+staleness entirely (`docker restart vault` → the edge health check recovers
+automatically once Vault is unsealed).
 
 Verify from inside the cluster:
 
@@ -188,7 +207,9 @@ kubectl -n cert-manager run vault-probe --rm -it --restart=Never \
   curl -sk "${VAULT_K8S_ADDR}/v1/sys/health"
 ```
 
-This verifies network reachability. For a full TLS check, run a debug pod with the Vault listener CA bundle mounted and use `curl --cacert <mounted-ca-file>`.
+This verifies network reachability. For a full TLS check, run a debug pod with the
+step-ca CA bundle mounted and use `curl --cacert <mounted-ca-file>`; the edge
+presents its own step-ca-issued cert for `vault.172-18-0-250.sslip.io`.
 
 ## 7. Create cert-manager Secrets
 
@@ -326,3 +347,5 @@ leaf certificate
 | `role requires keys of type ec` | Certificate requested RSA key but Vault role requires EC | Add `privateKey.algorithm: ECDSA` and `size: 256` |
 | CertificateRequest denied by Vault | DNS/IP SAN not allowed by Vault role | Compare requested SANs with role `allowed_domains`, `allow_ip_sans`, and hostname settings |
 | Secret never appears | CertificateRequest failed or cert-manager webhook is unhealthy | `kubectl describe certificate`, `kubectl get events`, cert-manager logs |
+| `x509: certificate is valid for …, not vault.172-18-0-250.sslip.io` on the edge→Vault hop | The edge's verified re-encrypt `serverName` is not a SAN on Vault's cert | Confirm `vault.<edge-ip-dashed>.sslip.io` is in Vault's cert SANs (`scripts/vault-setup.sh`); check `traefik-edge/dynamic/vault.yaml` `serversTransports.vault-verified.serverName` and `rootCAs` |
+| `503 Service Unavailable` from `https://vault.<edge-ip-dashed>.sslip.io` | Edge LB health check failing — Vault is **sealed** (returns 503 on `/v1/sys/health`) so the edge marks the only backend down | `docker exec vault vault status`; unseal via `docker exec` or the host-published `127.0.0.1:8200`; Traefik dashboard shows the `vault` service unhealthy |

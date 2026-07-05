@@ -177,9 +177,14 @@ metadata:
 spec:
   provider:
     vault:
-      server: "http://vault.vault.svc.cluster.local:${VAULT_HTTP_PORT}"
+      server: "https://vault.${TRAEFIK_EDGE_IP_DASHED}.sslip.io"
       path: "cnpg"
       version: "v2"
+      caProvider:
+        type: ConfigMap
+        name: vault-pki-bundle
+        namespace: ${ESO_NAMESPACE}
+        key: ca-certificates.crt
       auth:
         appRole:
           path: "approle"
@@ -203,9 +208,14 @@ metadata:
 spec:
   provider:
     vault:
-      server: "http://vault.vault.svc.cluster.local:${VAULT_HTTP_PORT}"
+      server: "https://vault.${TRAEFIK_EDGE_IP_DASHED}.sslip.io"
       path: "database"
       version: "v1"
+      caProvider:
+        type: ConfigMap
+        name: vault-pki-bundle
+        namespace: ${ESO_NAMESPACE}
+        key: ca-certificates.crt
       auth:
         appRole:
           path: "approle"

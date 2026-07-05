@@ -582,15 +582,11 @@ TOML
         < "${GIT_REPO_ROOT}/step-ca/traefik/service.yaml.tpl" \
         | kubectl --context "${CONTEXT_NAME}" apply -f -
 
-    # Wire Vault into K8s (namespace + headless Service/Endpoints)
-    echo "🔧 Wiring Vault into Kubernetes cluster '${K8S_CLUSTER_NAME}'..."
-    kubectl --context "${CONTEXT_NAME}" create ns vault --dry-run=client -o yaml \
-        | kubectl --context "${CONTEXT_NAME}" apply -f -
-    VAULT_IP=$(${CONTAINER_PROVIDER} inspect "${VAULT_CONTAINER_NAME}" \
-        --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
-    VAULT_IP="${VAULT_IP}" envsubst '${VAULT_IP}' \
-        < "${GIT_REPO_ROOT}/vault/traefik/service.yaml.tpl" \
-        | kubectl --context "${CONTEXT_NAME}" apply -f -
+    # Vault is reachable from K8s via traefik-edge as its load balancer
+    # (canonical https://vault.${TRAEFIK_EDGE_IP_DASHED}.sslip.io, verified
+    # re-encrypt + health check in traefik-edge/dynamic/vault.yaml). No
+    # in-cluster Service/Endpoints — that hardcoded Vault's dynamic docker IP
+    # and broke on `docker restart vault`. See docs/vault-edge-lb-implementation-plan.md.
 
     # cert-manager
     echo "🔧 Installing cert-manager ${CERT_MANAGER_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
@@ -692,7 +688,8 @@ ${STEP_CA_INT_CERT}" \
     VAULT_PORT="${VAULT_PORT}" \
     VAULT_APPROLE_ROLE_ID="${APPROLE_ROLE_ID}" \
     VAULT_CA_BUNDLE="${VAULT_CA_BUNDLE}" \
-    envsubst '${VAULT_PORT} ${VAULT_APPROLE_ROLE_ID} ${VAULT_CA_BUNDLE}' \
+    TRAEFIK_EDGE_IP_DASHED="${TRAEFIK_EDGE_IP_DASHED}" \
+    envsubst '${TRAEFIK_EDGE_IP_DASHED} ${VAULT_APPROLE_ROLE_ID} ${VAULT_CA_BUNDLE}' \
         < "${GIT_REPO_ROOT}/vault/cert-manager/clusterissuer.yaml.tpl" \
         | kubectl --context "${CONTEXT_NAME}" apply -f -
 

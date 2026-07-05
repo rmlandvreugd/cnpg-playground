@@ -5,7 +5,7 @@ metadata:
 spec:
   provider:
     vault:
-      server: "https://vault.vault.svc.cluster.local:8200"
+      server: "https://vault.${TRAEFIK_EDGE_IP_DASHED}.sslip.io"
       path: "cnpg"
       version: "v2"
       caProvider:

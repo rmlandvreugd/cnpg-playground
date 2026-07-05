@@ -4,7 +4,7 @@ metadata:
   name: vault-pki
 spec:
   vault:
-    server: https://vault.vault.svc.cluster.local:${VAULT_PORT}
+    server: https://vault.${TRAEFIK_EDGE_IP_DASHED}.sslip.io
     path: pki_int/sign/cluster-certs
     caBundle: ${VAULT_CA_BUNDLE}
     auth:
