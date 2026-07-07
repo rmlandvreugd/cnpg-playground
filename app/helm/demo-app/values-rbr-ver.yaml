@@ -16,7 +16,10 @@ database:
   credentialsMode: "static"
   staticSecret:
     refreshInterval: 5m
-    vaultPath: "database/static-creds/app"
+    # Same KV secret CNPG pins the 'app' role to (rbr-ver-db/verstappen-app ES,
+    # store vault-approle-rbr, key cnpg/rbr/ver/app). The app must authenticate
+    # with the password CNPG writes onto the role, not the Vault DB static-role.
+    vaultPath: "rbr/ver/app"
 
 tls:
   hostnamePrefix: "demo-rbr-ver"
@@ -35,15 +38,19 @@ migration:
   strategy: "initContainer"
 
 externalSecret:
+  # Point at the SAME Vault KV secret CNPG uses to set the 'app' role password
+  # (store vault-approle-rbr mounts KV path 'cnpg', key resolves to cnpg/rbr/ver/app).
+  # Previously this pulled the Vault DB static-role (database/static-creds/app),
+  # whose password never matches the role value CNPG reconciles -> SASL auth fail.
   secretStoreRef:
-    name: vault-approle-rbr-db
+    name: vault-approle-rbr
     kind: ClusterSecretStore
   data:
     - secretKey: username
       remoteRef:
-        key: static-creds/app
+        key: rbr/ver/app
         property: username
     - secretKey: password
       remoteRef:
-        key: static-creds/app
+        key: rbr/ver/app
         property: password
