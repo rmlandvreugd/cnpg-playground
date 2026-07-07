@@ -267,6 +267,10 @@ flowchart TD
 
 ### 3.4 `demo/eso-vault.sh setup local` — Secrets Management Demo
 
+> Full runbook (setup / verify / rotate / connect / connect-mtls / teardown) and component
+> reference: [`eso-vault-demo.md`](eso-vault-demo.md). This is the static-credential foundation
+> the self-service demo (§8) builds dynamic credentials on top of.
+
 ```mermaid
 flowchart TD
     E["demo/eso-vault.sh setup local"] --> E1["Seed Vault KV paths<br/>cnpg/pg-local/{superuser,app}"]
