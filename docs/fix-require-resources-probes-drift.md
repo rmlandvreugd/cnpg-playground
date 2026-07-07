@@ -60,7 +60,7 @@ the ArgoCD-recommended pattern for controller-defaulted fields.
   block above to the existing `ignoreDifferences[0]`.
 
 This is a GitOps manifest change, so it **requires a commit + push**; ArgoCD picks
-it up from `targetRevision: feature/self-service` on the next refresh.
+it up from `targetRevision: vault` on the next refresh.
 
 ## Verification
 1. Commit + push, then `kubectl annotate application kyverno-policies -n argocd

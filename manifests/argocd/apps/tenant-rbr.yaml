@@ -11,7 +11,7 @@ spec:
   project: rbr
   source:
     repoURL: https://github.com/rmlandvreugd/cnpg-playground.git
-    targetRevision: feature/self-service
+    targetRevision: vault
     path: manifests
     directory:
       include: 'capsule-tenant-rbr.yaml'
