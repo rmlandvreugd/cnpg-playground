@@ -1,6 +1,9 @@
 # CNPG Playground — Architecture Overview
 
 > A local learning environment for **CloudNativePG** (CNPG), the PostgreSQL operator for Kubernetes.
+>
+> For a component-by-component deep dive — every Docker container, every cluster layer, and
+> the exact container↔cluster wiring — see [`detailed-architecture.md`](detailed-architecture.md).
 
 ---
 
@@ -90,6 +93,57 @@ graph TB
     Grafana -->|queries| Prom
     Traefik -->|traces| OTel
 ```
+
+---
+
+## 2.1 How the Docker Containers Link to the Cluster
+
+The external services run as **Docker containers**, not as pods. Both the containers and
+the Kind nodes are attached to the **same `kind` Docker bridge** (`172.18.0.0/16`), so
+they share an L3 network. On top of that shared network the project uses **three distinct
+wiring mechanisms** to connect the two worlds — this is the "link" between containers and
+cluster:
+
+```mermaid
+graph LR
+    subgraph Containers["Docker containers (kind bridge 172.18.0.0/16)"]
+        StepCA["step-ca<br/>172.18.0.13:8443"]
+        RustFS["RustFS<br/>172.18.0.11:9000"]
+        Seaweed["SeaweedFS<br/>172.18.0.12:8333"]
+        Vault["Vault<br/>172.18.0.14:8200"]
+        Authelia["Authelia<br/>172.18.0.2:9091"]
+        Edge["traefik-edge<br/>172.18.0.250:443 / :9102"]
+    end
+
+    subgraph Cluster["Kind cluster (pods)"]
+        CM["cert-manager"]
+        ESO["External Secrets Operator"]
+        MimirTempo["Mimir + Tempo"]
+        LokiTenant["Loki + verstappen backups"]
+        OTel["OTel Collector<br/>ext-svc-lb 172.18.255.240:4317/4318"]
+        Consumers["ESO / cert-manager<br/>(Vault clients)"]
+    end
+
+    StepCA -. "headless Service + Endpoints" .-> Cluster
+    RustFS -- "headless Endpoints → :9000" --> MimirTempo
+    Seaweed -- "headless Endpoints → :8333" --> LokiTenant
+    Edge -- "scraped: Endpoints → :9102" --> OTel
+    Consumers == "HTTPS via sslip.io → edge" ==> Edge
+    Edge -. "routes vault.* / authelia.*" .-> Vault & Authelia
+    Edge == "OTLP push → MetalLB LB" ==> OTel
+```
+
+| Mechanism | Containers reached this way | Cluster side | How it resolves |
+|---|---|---|---|
+| **1. Direct headless `Service` + manual `Endpoints`** | step-ca, RustFS (`objectstore-local`), SeaweedFS | `step-ca/step-ca`, `mimir,tempo/objectstore-local`, `grafana,rbr-ver-db/seaweedfs` | In-cluster DNS name resolves to the container's **kind-bridge IP**; pods dial it directly on the shared bridge. |
+| **2. Via the `traefik-edge` proxy** (`*.172-18-0-250.sslip.io`) | Vault, Authelia | ESO `ClusterSecretStore` (`vault-approle*`) + cert-manager `ClusterIssuer` (`vault-pki`) → `https://vault.172-18-0-250.sslip.io`; Authelia `ExternalName` → `authelia.172-18-0-250.sslip.io` | The `sslip.io` hostname resolves to `172.18.0.250` (the **edge container**), which TLS-terminates and routes to the backend container. There is **no** in-cluster `vault` Service. |
+| **3. Reverse: cluster ← edge** | traefik-edge → cluster | MetalLB `LoadBalancer` `otel/ext-svc-lb` at `172.18.255.240:4317/4318` | The edge container pushes **OTLP traces + logs** into the cluster over the MetalLB VIP; the cluster in turn **scrapes** the edge's Prometheus metrics at `172.18.0.250:9102`. |
+
+**Why two different mechanisms?** Data-plane dependencies that need raw TCP and no auth
+edge (S3 object storage, the step-ca ACME/JWK endpoint) get **direct headless Endpoints**.
+Security-sensitive HTTP services that must be TLS-terminated and (for human traffic)
+forward-authed are fronted by the **edge proxy** under stable `sslip.io` hostnames, so the
+same URL works from inside the cluster, from other containers, and from the host browser.
 
 ---
 
@@ -388,43 +442,73 @@ flowchart LR
 | k8s-local-worker6 | worker | `node-role.kubernetes.io/postgres` (taint `NoSchedule`) |
 | k8s-local-worker7 | worker | `node-role.kubernetes.io/postgres` (taint `NoSchedule`) |
 
-### Application & Infrastructure Namespaces (18)
+### Application & Infrastructure Namespaces (25)
 
-> Excludes Kubernetes system namespaces (`kube-system`, `kube-public`, `kube-node-lease`, `local-path-storage`) and the unused `default` namespace.
+> Snapshot of a `scripts/setup.sh local --with-tenant` install (platform **and** tenant present).
+> Excludes Kubernetes system namespaces (`kube-system`, `kube-public`, `kube-node-lease`, `local-path-storage`) and the unused `default` namespace. `kubelet-csr-approver` and `metrics-server` add-ons run in `kube-system` / `metrics-server`.
 
 | Namespace | Purpose |
 |-----------|---------|
-| authelia | Authelia OIDC provider service wiring |
+| argocd | ArgoCD GitOps engine (tenant app-of-apps) |
+| authelia | Authelia OIDC provider service wiring (`ExternalName` → edge) |
 | calico-system | Calico CNI (node, typha, kube-controllers, apiserver, whisker) |
+| capsule-system | Capsule + capsule-proxy (multi-tenancy) |
 | caretta | Caretta network observability |
 | cert-manager | cert-manager + trust-manager (TLS/PKI) |
 | cnpg-system | CNPG operator + Barman Cloud Plugin |
-| demo-local-db | pg-local cluster (ESO/Vault demo) |
 | external-secrets | External Secrets Operator |
-| grafana | Grafana Operator, Grafana, Loki, Alloy |
+| gangplank | gangplank (OIDC → kubeconfig dispenser) |
+| grafana | Grafana Operator, platform Grafana, tenant Grafana, Loki, Alloy |
+| kyverno | Kyverno policy engine + kyverno-policies |
 | metallb-system | MetalLB load balancer |
-| mimir | Mimir (long-term metrics) |
-| otel | OTel Collector |
+| metrics-server | Kubernetes metrics-server |
+| mimir | Mimir (long-term metrics) + RustFS S3 wiring |
+| otel | OTel Collector (+ `ext-svc-lb` OTLP LoadBalancer) |
+| pgadmin | pgAdmin for the tenant `verstappen` database |
+| policy-reporter | Policy Reporter (Kyverno results UI) |
 | prometheus-operator | Prometheus Operator + kube-prometheus-stack |
 | radar | Radar network observability UI |
-| step-ca | step-ca service wiring |
-| tempo | Tempo (distributed tracing) |
+| rbr-ver | Tenant app namespace: `demo-app` (Litestar) |
+| rbr-ver-db | Tenant DB namespace: `verstappen` CNPG + SeaweedFS wiring |
+| step-ca | step-ca service wiring (headless Endpoints) |
+| tempo | Tempo (distributed tracing) + RustFS S3 wiring |
 | tigera-operator | Tigera Operator (manages Calico) |
 | traefik | Traefik v3 ingress controller |
-| vault | Vault service wiring |
+
+> Note: there is **no** `vault` namespace — Vault is reached through the edge proxy at
+> `vault.172-18-0-250.sslip.io` (see §2.1), not via an in-cluster Service.
 
 ### PostgreSQL Clusters (1)
 
-| Namespace | Cluster | Instances | Primary | Pooler | Credentials |
-|-----------|---------|-----------|---------|--------|-------------|
-| demo-local-db | pg-local | 3 (1P + 2R) | pg-local-1 | pooler-local-rw (1 replica) | Vault-managed via ESO (superuser, app) |
+| Namespace | Cluster | Instances | Primary | Pooler | Credentials | Backups |
+|-----------|---------|-----------|---------|--------|-------------|---------|
+| rbr-ver-db | verstappen | 3 (1P + 2R) | verstappen-1 | pooler-verstappen-rw (2 replicas, on app nodes) | Vault DB engine static role via ESO | SeaweedFS S3 (Barman Cloud Plugin) |
+
+> The legacy `demo/setup.sh` / `demo/eso-vault.sh` `pg-local` cluster (in `demo-local-db`,
+> backed by RustFS) is **not** deployed in the `--with-tenant` flow; the live database is
+> the self-service tenant cluster `verstappen`.
+
+### Tenant & Governance (live)
+
+| Object | Namespace | State |
+|--------|-----------|-------|
+| Capsule `Tenant rbr` | cluster-scoped | Active (owns `rbr-ver`, `rbr-ver-db`) |
+| ArgoCD `rbr-root` (app-of-apps) | argocd | Synced / Healthy |
+| ArgoCD `tenant-rbr` | argocd | Synced / Healthy |
+| ArgoCD `kyverno-policies` | argocd | Synced / Healthy |
+| ArgoCD `grafana-rbr-ver` | argocd | Synced / Healthy |
+| ArgoCD `demo-app` | argocd | Synced |
+| `demo-app` (Litestar) | rbr-ver | Deployment (app nodes) |
+| `pgadmin-rbr-ver` | pgadmin | Deployment |
+| Tenant Grafana `grafana-rbr-ver` | grafana | reconciled by Grafana Operator |
 
 ### Key Services (LoadBalancer)
 
-| Service | External IP | Ports |
-|---------|-------------|-------|
-| traefik | 172.18.255.200 | 80, 443 |
-| traefik-postgres | 172.18.255.210 | 5432 |
+| Service | External IP | Ports | Purpose |
+|---------|-------------|-------|---------|
+| traefik | 172.18.255.200 | 80, 443 | HTTP/HTTPS ingress |
+| traefik-postgres | 172.18.255.210 | 5432 | PostgreSQL TCP ingress |
+| otel / ext-svc-lb | 172.18.255.240 | 4317, 4318 | OTLP intake from the edge container (traces + logs) |
 
 ---
 
@@ -432,42 +516,55 @@ flowchart LR
 
 ### Helm Releases
 
+> Live snapshot (26 releases) from a `--with-tenant` install.
+
 | Release | Namespace | Chart | App Version |
 |---------|-----------|-------|-------------|
 | alloy | grafana | alloy-1.8.0 | v1.16.0 |
-| barman-cloud | cnpg-system | plugin-barman-cloud-0.6.0 | v0.12.0 |
 | argocd | argocd | argo-cd-9.7.0 | v3.4.4 |
+| barman-cloud | cnpg-system | plugin-barman-cloud-0.6.0 | v0.12.0 |
 | capsule | capsule-system | capsule-0.13.6 | 0.13.6 |
 | capsule-proxy | capsule-system | capsule-proxy-0.13.5 | 0.13.5 |
-| kyverno | kyverno | kyverno-3.4.2 | v1.14.2 |
 | caretta | caretta | caretta-0.0.16 | v0.0.16 |
 | cert-manager | cert-manager | cert-manager-v1.20.2 | v1.20.2 |
 | cnpg-operator | cnpg-system | cloudnative-pg-0.28.0 | 1.29.0 |
 | external-secrets | external-secrets | external-secrets-2.4.1 | v2.4.1 |
+| gangplank | gangplank | gangplank-0.2.1 | 1.1.0 |
 | grafana-operator | grafana | grafana-operator-5.22.2 | v5.22.2 |
 | kube-prometheus-stack | prometheus-operator | kube-prometheus-stack-86.2.3 | v0.91.0 |
+| kubelet-csr-approver | kube-system | kubelet-csr-approver-1.2.14 | v1.2.14 |
+| kyverno | kyverno | kyverno-3.8.1 | v1.18.1 |
+| kyverno-policies | kyverno | kyverno-policies-3.8.1 | v1.18.1 |
 | loki | grafana | loki-13.5.0 | 3.7.1 |
 | metallb | metallb-system | metallb-0.16.1 | v0.16.1 |
+| metrics-server | metrics-server | metrics-server-3.13.1 | 0.8.1 |
 | mimir | mimir | mimir-distributed-6.0.6 | 3.0.4 |
 | otel-collector | otel | opentelemetry-collector-0.158.2 | 0.153.0 |
+| policy-reporter | policy-reporter | policy-reporter-3.7.4 | 3.7.4 |
 | radar | radar | radar-1.7.9 | 1.7.9 |
 | tempo | tempo | tempo-distributed-2.25.2 | 2.10.7 |
 | tigera-operator | tigera-operator | tigera-operator-v3.32.0 | v3.32.0 |
-| traefik | traefik | traefik-39.0.8 | v3.6.13 |
+| traefik | traefik | traefik-41.0.1 | v3.7.5 |
 | trust-manager | cert-manager | trust-manager-v0.17.1 | v0.17.1 |
 
 ### External Docker Containers
 
-| Container | Port | Purpose |
-|-----------|------|---------|
-| step-ca | 8443 | Root CA + Intermediate CA |
-| vault | 8200 | Secrets management, PKI, AppRole auth |
-| authelia | 9091 | OIDC identity provider (replaces Dex) |
-| objectstore-local (RustFS) | 9000 | S3-compatible object storage |
-| seaweed (SeaweedFS) | 8333 | S3-compatible object storage |
-| seaweed-admin (SeaweedFS Admin) | 23646 | S3-compatible object storage |
-| revocation-exporter | — | step-ca CRL / certificate revocation metrics exporter |
-| traefik-edge | 443 | External edge reverse proxy; TLS termination, Authelia forward-auth, OTLP traces/logs export |
+All external containers share the **`kind` Docker bridge** (`172.18.0.0/16`) with the cluster
+nodes; the "IP (kind)" column is the address the cluster wires to (see §2.1). Host-published
+ports are what you reach from the laptop.
+
+| Container | Image | IP (kind) | Container port | Host port | Purpose |
+|-----------|-------|-----------|----------------|-----------|---------|
+| step-ca | smallstep/step-ca:latest | 172.18.0.13 | 8443 | 8443 | Root CA + Intermediate CA |
+| vault | hashicorp/vault:2.0 | 172.18.0.14 | 8200 (+8202 cluster) | 8200 | Secrets management, PKI, AppRole + DB engine |
+| authelia | ghcr.io/authelia/authelia:4.39.20 | 172.18.0.2 | 9091 | 9091 | OIDC identity provider (replaces Dex) |
+| objectstore-local (RustFS) | rustfs/rustfs:latest | 172.18.0.11 | 9000 | 9001 | S3 object storage (Mimir, Tempo) |
+| seaweedfs (SeaweedFS) | chrislusf/seaweedfs:latest | 172.18.0.12 | 8333 (S3) | 8333/8334 | S3 object storage (Loki, tenant backups) |
+| seaweedfs-admin | chrislusf/seaweedfs:latest | 172.18.0.15 | 23646 | 23646 | SeaweedFS admin UI |
+| seaweedfs-webdav | chrislusf/seaweedfs:latest | — (compose net) | 7333 | 7333 | SeaweedFS WebDAV gateway |
+| seaweedfs-worker | chrislusf/seaweedfs:latest | — (compose net) | 9327 | 9327 | SeaweedFS maintenance worker |
+| traefik-edge | traefik:v3.7.5 | 172.18.0.250 | 443 / 80 / 9102 | 80/443 | Edge reverse proxy: TLS termination, Authelia forward-auth, `*.sslip.io` routing, OTLP traces/logs export, Prometheus metrics on :9102 |
+| revocation-exporter | revocation-exporter:latest | (host net) | — | — | step-ca CRL / certificate revocation metrics exporter |
 
 ### Grafana Dashboards
 
@@ -492,13 +589,15 @@ flowchart LR
 
 ---
 
-## 8. Self-Service Tenancy (target state)
+## 8. Self-Service Tenancy
 
-> **Status: planned, not yet deployed.** This section describes the target architecture added by
-> `demo/self-service-setup.sh` for the **local region**. Master plan:
+> **Status: deployed (live).** This snapshot was taken with `scripts/setup.sh local --with-tenant`,
+> which runs `demo/self-service-setup.sh` — so the tenant `rbr` (namespaces `rbr-ver` / `rbr-ver-db`,
+> the `verstappen` CNPG cluster, `demo-app`, pgAdmin, and tenant Grafana) **is present** in the
+> "Current Cluster State (Live)" inventory above. On a plain `scripts/setup.sh local` (no
+> `--with-tenant`) the platform layer is installed but these tenant objects are absent. Master plan:
 > [`plan-self-service-setup-local.md`](plan-self-service-setup-local.md). Identity model:
-> [`plan-tenant-personas-authelia.md`](plan-tenant-personas-authelia.md). The components below are
-> **not** in the "Current Cluster State (Live)" inventory above until implemented.
+> [`plan-tenant-personas-authelia.md`](plan-tenant-personas-authelia.md).
 
 The self-service slice turns the demo into a Kubernetes-native multi-tenant platform: tenants
 self-provision a CNPG database (`verstappen` in `rbr-ver-db`) and run the `demo-app` (in `rbr-ver`),
@@ -578,7 +677,7 @@ components are created by `demo/self-service-setup.sh` (only when onboarding run
 |---|---|---|---|
 | Capsule | `capsule-system` | `scripts/setup.sh` | multi-tenancy engine (the `Tenant rbr` *instance* is created by self-service) |
 | capsule-proxy | `capsule-system` | `scripts/setup.sh` | tenant-scoped K8s API gateway |
-| gangplank (`sighupio/gangplank`) | `capsule-system` | `scripts/setup.sh` | OIDC → kubeconfig dispenser (fronts capsule-proxy) |
+| gangplank (`sighupio/gangplank`) | `gangplank` | `scripts/setup.sh` | OIDC → kubeconfig dispenser (fronts capsule-proxy) |
 | Kyverno | `kyverno` | `scripts/setup.sh` | generate per-driver-group RoleBindings + default NetworkPolicy; validate baseline |
 | ArgoCD | `argocd` | `scripts/setup.sh` | GitOps engine (the app-of-apps *instance* is applied by self-service) |
 | `Tenant rbr` + namespaces | `rbr-ver`, `rbr-ver-db` | `demo/self-service-setup.sh` | tenant instance + driver-group namespaces |
