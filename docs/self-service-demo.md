@@ -1,15 +1,18 @@
 # Self-Service Database Demo
 
-Demonstrates Vault-backed dynamic credentials, ESO-managed static secrets, CNPG cluster provisioning, Traefik TCP passthrough, pgAdmin, and Grafana with Dex OIDC — scoped to a single tenant (`rbr`) and group (`rbr/ver`).
+Demonstrates Vault-backed dynamic credentials, ESO-managed static secrets, CNPG cluster provisioning, Traefik TCP passthrough, pgAdmin, and Grafana with Authelia OIDC — scoped to a single tenant (`rbr`) and group (`rbr/ver`).
+
+Vault and Authelia run as **host Docker containers** and are reached in-cluster through the **`traefik-edge`** proxy (`vault.172-18-0-250.sslip.io` / `authelia.172-18-0-250.sslip.io`) — there is no in-cluster `vault` Service. The Postgres data plane, by contrast, goes through the in-cluster Traefik LoadBalancer.
 
 ## Architecture
 
 ```mermaid
 graph TB
-    subgraph host["Host containers"]
+    subgraph host["Host containers (kind bridge 172.18.0.0/16)"]
         Vault["Vault\ndev-tls :8200\nKV + DB Engine + PKI"]
-        Dex["Dex\nOIDC IDP :5556"]
-        RustFS["RustFS\nobjectstore-local :9001"]
+        Authelia["Authelia\nOIDC IDP + forward-auth"]
+        Edge["traefik-edge\n172.18.0.250:443\nTLS-terminates vault.* / authelia.*"]
+        Seaweed["SeaweedFS\nseaweedfs :8333\ns3://verstappen-backups"]
     end
 
     subgraph k8s["Kind cluster (local)"]
@@ -19,13 +22,13 @@ graph TB
 
         subgraph eso-ns["external-secrets"]
             ESO["ESO"]
-            CSS["ClusterSecretStore\nvault-approle-rbr\n(AppRole eso-rbr-local)"]
+            CSS["ClusterSecretStore\nvault-approle-rbr(+ -db)\n(AppRole eso-rbr-local)"]
         end
 
         subgraph rbr_ver_db["rbr-ver-db"]
             ES["ExternalSecrets\nverstappen-{superuser,app,readonly}"]
             CNPG["Cluster: verstappen\nPostgreSQL + pgaudit\ndatabase: max"]
-            ObjStore["objectstore-local\nService+Endpoints → RustFS"]
+            ObjStore["seaweedfs\nService+Endpoints → SeaweedFS"]
             Backup["ScheduledBackup\n+ ObjectStore CR"]
         end
 
@@ -34,26 +37,29 @@ graph TB
         end
 
         subgraph grafana_ns["grafana"]
-            GrafanaRBR["grafana-rbr-ver\nGeneric OAuth via Dex\norg: rbr"]
-            Loki["Loki\nS3 backend → RustFS"]
+            GrafanaRBR["grafana-rbr-ver\nGeneric OAuth via Authelia\norg: rbr"]
+            Loki["Loki\nS3 backend → SeaweedFS"]
             Alloy["Alloy\nCNPG pod log scraper"]
         end
     end
 
-    Vault -->|"AppRole auth"| CSS
+    CSS ==>|"AppRole auth via sslip.io"| Edge
+    Edge -->|"vault.172-18-0-250.sslip.io"| Vault
+    Edge -->|"authelia.172-18-0-250.sslip.io"| Authelia
     CSS --> ES
     ES -->|"K8s Secrets\n+ cnpg.io/reload"| CNPG
     Vault -->|"DB Engine\ndynamic creds (TTL 1h)"| CNPG
     LB -->|"IngressRouteTCP\nSNI passthrough :5432"| CNPG
     LB -->|"IngressRoute HTTP"| PgAdmin
     LB -->|"IngressRoute HTTPS"| GrafanaRBR
-    Dex -->|"OIDC token\n(groups claim)"| GrafanaRBR
+    GrafanaRBR ==>|"OIDC via sslip.io"| Edge
+    Authelia -->|"OIDC token\n(groups claim)"| GrafanaRBR
     CNPG -->|"pgaudit log lines"| Alloy
     Alloy -->|"structured logs"| Loki
     CNPG --> Backup
     Backup --> ObjStore
-    ObjStore --> RustFS
-    Loki --> RustFS
+    ObjStore --> Seaweed
+    Loki --> Seaweed
 ```
 
 ### Component Roles
@@ -62,16 +68,16 @@ graph TB
 |---|---|
 | Vault KV (`cnpg/rbr/ver/`) | Static credentials for superuser, app, readonly |
 | Vault DB Engine | Dynamic credentials: `rbr-db-admin` (1h), `rbr-ver-db-admin` (1h), `rbr-ver-db-readonly` (1h) |
-| ESO ClusterSecretStore | Syncs KV secrets to K8s Secrets; AppRole scoped to `cnpg/data/rbr/ver/*` |
+| ESO ClusterSecretStore | Syncs KV secrets to K8s Secrets; AppRole scoped to `cnpg/data/rbr/ver/*`; reaches Vault via edge `vault.172-18-0-250.sslip.io` |
 | CNPG Cluster `verstappen` | 3-replica PostgreSQL 18, database `max`, pgaudit enabled, barman backups |
 | `rbr_ver_ddl_owner` | Stable DDL owner role; all objects must be owned by this role |
 | `rbr_ver_ddl_admin` | Has `rbr_ver_ddl_owner`; VDE admin/group-admin dynamic users inherit via `IN ROLE` |
 | `rbr_ver_vde_admin` | Static VDE admin user for Vault DB Engine connection (non-rotating) |
 | Traefik TCP | SNI passthrough on port 5432; sslmode=require enforced end-to-end |
 | pgAdmin `pgadmin-rbr-ver` | Preloaded server config; credentials pasted manually from `creds` subcommand |
-| Dex | OIDC IDP; `groups` claim populated from `staticPasswords.groups` field |
-| `grafana-rbr-ver` | Grafana Operator CR; Generic OAuth; org `rbr` pre-created; `grafana-rbr-ver` Dex client |
-| Loki | Single-binary log store; S3 backend on `objectstore-local`; deployed by `monitoring/setup.sh` |
+| Authelia | OIDC IDP + forward-auth; host container fronted by `traefik-edge` (`authelia.172-18-0-250.sslip.io`); `groups` claim from `authelia/config/users_database.yml` |
+| `grafana-rbr-ver` | Grafana Operator CR; Generic OAuth; org `rbr` pre-created; `grafana-rbr-ver` Authelia OIDC client |
+| Loki | Single-binary log store; S3 backend on SeaweedFS; deployed by `monitoring/setup.sh` |
 | Alloy | Tails CNPG pod logs via K8s API; extracts pgaudit labels; pushes to Loki |
 
 ---
@@ -117,7 +123,7 @@ What it does (in order):
 4. **Vault KV seed** — `cnpg/rbr/ver/{superuser,app,readonly}` with random passwords
 5. **Tenant `rbr` pre-seed** — applies `manifests/capsule-tenant-rbr.yaml`, waits `status.state=Active` (ArgoCD's `tenant-rbr` app adopts it on later sync)
 6. **Tenant namespaces** — `rbr-ver-db`, `rbr-ver` created **as the Capsule tenant owner** (`--as=capsule-bot --as-group=oidc:rbr-db-admin …`) so Capsule injects the `ownerReference`; labelled `capsule.clastix.io/tenant=rbr`
-7. **Objectstore wiring** — `objectstore-local` Service+Endpoints in `rbr-ver-db` pointing to RustFS; objectstore Secret; ObjectStore CR + custom monitoring ConfigMap
+7. **Objectstore wiring** — `seaweedfs` Service+Endpoints in `rbr-ver-db` pointing to the SeaweedFS container; objectstore Secret; ObjectStore CR (`s3://verstappen-backups`) + custom monitoring ConfigMap
 8. **CNPG Cluster + Pooler + ScheduledBackup** — `verstappen` cluster; `pooler-verstappen-rw` (pinned to app nodes); waits up to 30m for Ready
 9. **Traefik TCP IngressRoute** — SNI passthrough on `verstappen-rbr-ver-db.<IP>.sslip.io:5432`
 10. **Stable PostgreSQL roles** — `rbr_ver_ddl_owner`, `rbr_ver_ddl_admin`, `rbr_ver_ddl_reader` with grants
@@ -193,18 +199,18 @@ Connects as superuser via internal cluster DNS and runs `SELECT current_user, ve
 
 ### Personas
 
-| Email | Dex groups | Grafana org | Role |
+| Email | Authelia groups | Grafana org | Role |
 |---|---|---|---|
 | `rbr-admin@example.com` | `rbr-db-admin`, `rbr-ver-db-admin` | `rbr` | Admin |
 | `rbr-ver-admin@example.com` | `rbr-ver-db-admin` | `rbr` | Editor |
 | `unrelated@example.com` | (none) | (none) | — |
 
-All use the default password (`password`).
+All use the default password (`password`); groups are defined in `authelia/config/users_database.yml`.
 
 ### Login Flow
 
 1. Open `https://grafana-rbr-ver.<IP>.sslip.io`
-2. Click **Sign in with Dex**
+2. Click **Sign in with Authelia** — Grafana redirects to `authelia.172-18-0-250.sslip.io` (via `traefik-edge`)
 3. Log in with one of the email/password pairs above
 4. Grafana places you in org `rbr` with the mapped role
 
@@ -243,7 +249,7 @@ The `cnpg.io/reload: "true"` label on the Secret template triggers CNPG to reloa
 ./demo/self-service-setup.sh backup local
 ```
 
-Creates a `Backup` CR in `rbr-ver-db` namespace targeting the `verstappen` cluster via the barman-cloud plugin. Backups land in `objectstore-local` (RustFS) under `s3://verstappen-backups/`.
+Creates a `Backup` CR in `rbr-ver-db` namespace targeting the `verstappen` cluster via the barman-cloud plugin. Backups land in SeaweedFS under `s3://verstappen-backups/`.
 
 Track progress:
 
@@ -329,4 +335,4 @@ vault kv delete cnpg/rbr/ver/vde-admin
 - **Grafana org-level isolation only.** Folder permissions that restrict dashboards within an org require Grafana Enterprise. This demo uses OSS.
 - **Dynamic credentials expire.** VDE leases are 1h (max 4h). Reconnect in pgAdmin after expiry by getting fresh creds with `creds local group-admin`.
 - **Loki datasource unhealthy until monitoring stack runs.** The `GrafanaDatasource` for Loki is applied by `self-service-setup.sh`. It shows as unhealthy until `monitoring/setup.sh` installs Loki in the `grafana` namespace.
-- **Dex TLS is self-signed via Vault PKI.** The CA cert is at `dex/tls/ca-chain.pem`. Browsers will warn on the Dex login page unless the CA is trusted.
+- **Authelia is reached via `traefik-edge`.** Both Grafana OIDC and human forward-auth hit `authelia.172-18-0-250.sslip.io`, TLS-terminated at the edge with a step-ca/Vault-PKI cert. Browsers warn on the login page unless the step-ca root is trusted. There is no in-cluster `authelia` or `vault` Service — the edge proxy fronts both host containers (see §2.1 of `architecture-overview.md`).

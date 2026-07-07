@@ -297,6 +297,39 @@ flowchart TD
   - **TLS passthrough**: `pg-local-demo-local-db-p.<IP>.sslip.io:5432`
 - Credential rotation workflow: update in Vault → force ESO sync → CNPG reconciles
 
+### 3.5 `demo/self-service-setup.sh setup local` — Self-Service Tenancy Demo
+
+> Full runbook (setup / verify / creds / rotate / backup / teardown), personas, and component
+> reference: [`self-service-demo.md`](self-service-demo.md). Deep dive: §8. This builds the
+> multi-tenant DBaaS story **on top of** the §3.4 ESO+Vault static-credential foundation, adding
+> Vault **dynamic** credentials, Capsule tenancy, GitOps, and Authelia OIDC across every surface.
+> **Hard requirement:** `monitoring/setup.sh local` must run first (preflight fails fast otherwise).
+
+```mermaid
+flowchart TD
+    S["demo/self-service-setup.sh setup local"] --> S0["Preflight: platform + monitoring present"]
+    S --> S1["Vault policies + ESO AppRole eso-rbr-local<br/>ClusterSecretStore vault-approle-rbr(+ -db)"]
+    S --> S2["Vault KV seed<br/>cnpg/rbr/ver/{superuser,app,readonly}"]
+    S --> S3["Capsule Tenant rbr pre-seed<br/>+ namespaces rbr-ver-db / rbr-ver<br/>(Capsule-impersonated create)"]
+    S --> S4["Objectstore wiring<br/>seaweedfs Service/Endpoints + ObjectStore CR"]
+    S --> S5["CNPG Cluster verstappen (3) + Pooler<br/>+ ScheduledBackup → SeaweedFS"]
+    S --> S6["Stable roles + VDE admin<br/>Vault DB Engine: static role app +<br/>dynamic roles (1h TTL)"]
+    S --> S7["Traefik TCP IngressRoute<br/>SNI passthrough :5432"]
+    S --> S8["demo-app build + kind load<br/>→ ArgoCD app-of-apps rbr-root (last)"]
+    S --> S9["pgAdmin pgadmin-rbr-ver"]
+    S --> S10["Grafana grafana-rbr-ver<br/>Generic OAuth via Authelia (org rbr)"]
+
+    style S fill:#4CAF50,color:white
+```
+
+**Key outcomes:**
+- A Capsule `Tenant rbr` with namespaces `rbr-ver-db` (database) + `rbr-ver` (app), created **as the tenant owner** via capsule-proxy impersonation so Capsule stamps the `ownerReference`
+- CNPG cluster `verstappen` (3 instances, database `max`, pgaudit) with static credentials via ESO and **dynamic**, 1h-TTL logins from the Vault **Database Secrets Engine** mapped to stable roles
+- `demo-app` (Litestar) deployed by **ArgoCD** (app-of-apps `rbr-root`), pgAdmin console, and a tenant Grafana (org `rbr`) — all human access fronted by **Authelia** OIDC/forward-auth via `traefik-edge`
+- External Postgres over Traefik TCP SNI passthrough at `verstappen-rbr-ver-db.<IP>.sslip.io:5432` (sslmode=require)
+- On-demand + scheduled backups to **SeaweedFS** via the Barman Cloud Plugin
+- Governed end to end by Capsule (tenancy), Kyverno (policy), and ArgoCD (GitOps)
+
 ---
 
 ## 4. PKI Trust Chain
@@ -488,9 +521,31 @@ flowchart LR
 |-----------|---------|-----------|---------|--------|-------------|---------|
 | rbr-ver-db | verstappen | 3 (1P + 2R) | verstappen-1 | pooler-verstappen-rw (2 replicas, on app nodes) | Vault DB engine static role via ESO | SeaweedFS S3 (Barman Cloud Plugin) |
 
-> The legacy `demo/setup.sh` / `demo/eso-vault.sh` `pg-local` cluster (in `demo-local-db`,
-> backed by RustFS) is **not** deployed in the `--with-tenant` flow; the live database is
-> the self-service tenant cluster `verstappen`.
+> The `verstappen` cluster above is the **only** database present in the `--with-tenant` snapshot.
+> The `demo/eso-vault.sh` `pg-local` cluster is a **separate optional overlay** (below); it is
+> **not** created by `--with-tenant`.
+
+#### ESO-Vault Demo Overlay (optional — `demo/eso-vault.sh setup local`)
+
+Not part of the `--with-tenant` snapshot. Running the ESO+Vault demo (§3.4) adds the following
+foundational-secrets components alongside the tenant stack (full reference:
+[`eso-vault-demo.md`](eso-vault-demo.md)):
+
+| Component | Namespace | Notes |
+|-----------|-----------|-------|
+| Namespace `demo-local-db` | — | Holds the entire eso-vault overlay |
+| CNPG `Cluster pg-local` | demo-local-db | 3 instances, PostgreSQL 18, database `app`; no backups (secrets/mTLS demo only) |
+| `Pooler pooler-local-rw` | demo-local-db | 1× PgBouncer, session mode, mTLS both sides |
+| `ExternalSecret pg-local-{superuser,app}` | demo-local-db | Vault KV `cnpg/pg-local/*` → K8s Secrets (`cnpg.io/reload`) |
+| `ClusterSecretStore vault-approle` | cluster-scoped | AppRole `eso-local` → Vault via edge `vault.172-18-0-250.sslip.io` (installed by `scripts/setup.sh`) |
+| 5× cert-manager `Certificate` | demo-local-db | server / replication / tls-term-server / pooler-client / pooler-server (via `vault-pki`) |
+| `TLSOption mtls-verify` | traefik | `RequireAndVerifyClientCert` for the TLS-termination endpoint |
+| 2× `IngressRouteTCP` (`-t` / `-p`) | demo-local-db | TLS-termination (password auth) + TLS-passthrough (cert auth) on the Postgres VIP `:5432` |
+
+> Vault itself is **not** in-cluster here either — the `pg-local` ExternalSecrets and cert-manager
+> `vault-pki` issuer reach Vault through the same edge proxy (`vault.172-18-0-250.sslip.io`, §2.1).
+> The Postgres data-plane endpoints, by contrast, go through the **in-cluster** Traefik (MetalLB), not
+> the edge.
 
 ### Tenant & Governance (live)
 

@@ -6,8 +6,9 @@ Demonstrates Vault-backed **static** PostgreSQL credentials, ESO-managed K8s Sec
 
 ```mermaid
 graph TB
-    subgraph host["Host containers"]
+    subgraph host["Host containers (kind bridge 172.18.0.0/16)"]
         Vault["Vault\ndev-tls :8200\nKV + PKI Engine"]
+        Edge["traefik-edge\n172.18.0.250:443\nTLS-terminates vault.*"]
     end
 
     subgraph k8s["Kind cluster (local)"]
@@ -21,6 +22,10 @@ graph TB
             CSS["ClusterSecretStore\nvault-approle\n(AppRole eso-local)"]
         end
 
+        subgraph certmgr-ns["cert-manager"]
+            Issuer["ClusterIssuer\nvault-pki"]
+        end
+
         subgraph demo_local_db["demo-local-db"]
             ES["ExternalSecrets\npg-local-{superuser,app}"]
             CNPG["Cluster: pg-local\nPostgreSQL 18\n3 instances, database: app"]
@@ -29,24 +34,33 @@ graph TB
         end
     end
 
-    Vault -->|"AppRole auth"| CSS
+    CSS ==>|"AppRole auth via sslip.io"| Edge
+    Issuer ==>|"PKI sign via sslip.io"| Edge
+    Edge -->|"vault.172-18-0-250.sslip.io"| Vault
     CSS --> ES
     ES -->|"K8s Secrets\n+ cnpg.io/reload"| CNPG
-    Vault -->|"PKI ClusterIssuer\nvault-pki"| Certs
+    Issuer --> Certs
     Certs --> CNPG
     Certs --> Pooler
-    LB -->|"IngressRouteTCP -t\nTLS termination (edge mTLS)"| CNPG
+    LB -->|"IngressRouteTCP -t\nTLS termination (Traefik mTLS)"| CNPG
     LB -->|"IngressRouteTCP -p\nSNI passthrough (cert auth)"| CNPG
     TLSOpt --> LB
 ```
+
+> **Vault is a host container, not in-cluster.** The `ClusterSecretStore vault-approle` and the
+> cert-manager `vault-pki` ClusterIssuer both reach Vault through the **`traefik-edge`** proxy at
+> `vault.172-18-0-250.sslip.io` — there is no in-cluster `vault` Service (see §2.1 of
+> `architecture-overview.md`). The **Postgres data plane** (`-t` / `-p` endpoints), by contrast, goes
+> through the **in-cluster** Traefik LoadBalancer, which is a different Traefik from the edge.
 
 ### Component Roles
 
 | Component | Role |
 |---|---|
+| Vault (host container) | Runs as a Docker container on the kind bridge, **not** in-cluster; cluster clients reach it via `traefik-edge` at `vault.172-18-0-250.sslip.io` (no in-cluster `vault` Service) |
 | Vault KV (`cnpg/pg-local/`) | Static credentials for `superuser` and `app` |
-| Vault PKI (`vault-pki` ClusterIssuer) | Issues all mTLS certs; CA bundle in Secret `vault-pki-bundle` |
-| ESO ClusterSecretStore `vault-approle` | Syncs KV secrets to K8s Secrets; AppRole `eso-local` (installed by `scripts/setup.sh`, retained across demo teardown) |
+| Vault PKI (`vault-pki` ClusterIssuer) | Issues all mTLS certs (via edge); CA bundle in Secret `vault-pki-bundle` |
+| ESO ClusterSecretStore `vault-approle` | Syncs KV secrets to K8s Secrets; AppRole `eso-local`, authenticates to Vault through the edge (installed by `scripts/setup.sh`, retained across demo teardown) |
 | ExternalSecrets `pg-local-{superuser,app}` | `refreshInterval: 15m`; render `kubernetes.io/basic-auth` Secrets labelled `cnpg.io/reload: "true"` |
 | CNPG Cluster `pg-local` | 3-instance PostgreSQL 18, database `app`, superuser access enabled; pinned to tainted **postgres** nodes |
 | Pooler `pooler-local-rw` | Single-instance PgBouncer (session mode), mTLS on both client and server sides |
