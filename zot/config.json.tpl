@@ -45,6 +45,7 @@
   "extensions": {
     "sync": {
       "enable": true,
+      "downloadDir": "/tmp/zot-sync",
       "registries": [
         { "urls": ["https://registry-1.docker.io"], "onDemand": true, "preserveDigest": true,
           "content": [{ "prefix": "**", "destination": "/docker.io" }] },
