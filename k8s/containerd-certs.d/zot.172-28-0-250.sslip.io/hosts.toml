@@ -1,3 +1,3 @@
-[host."https://zot.172-18-0-250.sslip.io"]
+[host."https://zot.172-28-0-250.sslip.io"]
   capabilities = ["pull", "resolve"]
   ca = "/etc/containerd/certs.d/step-ca-chain.pem"
