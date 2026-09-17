@@ -414,6 +414,19 @@ helm_upgrade_install() {
         shift 2
     fi
 
+    # Rewrite oci://<host>/<path> refs through the zot pull-through cache when
+    # OCI_PROXY is set (empty = pull direct). The --repo-url branch above already
+    # errors on a chart_ref containing '/', so a chart_ref starting with oci:// only
+    # ever reaches here via the OCI path — classic index.yaml repos (cloudnative-pg,
+    # calico, kyverno-policies, policy-reporter, alloy) stay untouched by design.
+    # SSL_CERT_FILE is scoped to the helm subprocess only (not exported globally),
+    # so unrelated tools in this script (kubectl, docker, curl) are unaffected.
+    local helm_env=()
+    if [[ "${chart_ref}" == oci://* && -n "${OCI_PROXY:-}" ]]; then
+        chart_ref="oci://${OCI_PROXY}/${chart_ref#oci://}"
+        helm_env=(SSL_CERT_FILE="${GIT_REPO_ROOT}/step-ca/ca-bundle.crt")
+    fi
+
     # `--no-wait` opt-out: some charts (e.g. cert-manager) make `helm --wait`
     # stall indefinitely even when every resource is already Ready. Callers that
     # do their own explicit `kubectl wait` afterwards can pass --no-wait to skip it.
@@ -452,7 +465,7 @@ helm_upgrade_install() {
 
         # Wrap in `timeout` so a stuck `helm --wait` (which can blow past its own
         # --timeout) becomes a failure the retry loop can act on, not a frozen process.
-        timeout --kill-after=30s 1000s helm upgrade --install "${release}" "${chart_ref}" \
+        timeout --kill-after=30s 1000s env ${helm_env[@]+"${helm_env[@]}"} helm upgrade --install "${release}" "${chart_ref}" \
             "${repo_args[@]}" \
             --namespace "${namespace}" \
             --create-namespace \

@@ -89,6 +89,11 @@ if [[ -f "${CONTAINERD_CA_CHAIN}" ]]; then
     echo "🗑️  Removing containerd mirror CA chain..."
     sudo rm -f "${CONTAINERD_CA_CHAIN}"
 fi
+HELM_CA_BUNDLE="${GIT_REPO_ROOT}/step-ca/ca-bundle.crt"
+if [[ -f "${HELM_CA_BUNDLE}" ]]; then
+    echo "🗑️  Removing helm OCI CA bundle..."
+    sudo rm -f "${HELM_CA_BUNDLE}"
+fi
 
 echo "--------------------------------------------------"
 echo "🔥 Tearing down shared services..."

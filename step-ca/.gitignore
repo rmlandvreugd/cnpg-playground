@@ -3,3 +3,4 @@ pki/
 secrets/
 *.json
 *.json.override
+ca-bundle.crt
