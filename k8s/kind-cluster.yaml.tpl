@@ -27,6 +27,9 @@ nodes:
     - hostPath: ${GIT_REPO_ROOT}/k8s/authn-config.yaml
       containerPath: /etc/kubernetes/authn-config.yaml
       readOnly: true
+    - hostPath: ${GIT_REPO_ROOT}/k8s/containerd-certs.d
+      containerPath: /etc/containerd/certs.d
+      readOnly: true
   kubeadmConfigPatches:
     - |
       kind: ClusterConfiguration
@@ -65,22 +68,42 @@ nodes:
 - role: worker
   labels:
     infra.node.kubernetes.io:
+  extraMounts:
+    - hostPath: ${GIT_REPO_ROOT}/k8s/containerd-certs.d
+      containerPath: /etc/containerd/certs.d
+      readOnly: true
 - role: worker
   labels:
     infra.node.kubernetes.io:
+  extraMounts:
+    - hostPath: ${GIT_REPO_ROOT}/k8s/containerd-certs.d
+      containerPath: /etc/containerd/certs.d
+      readOnly: true
 # App nodes stay untainted (nodeSelector-only pinning) so platform/monitoring
 # overflow can still schedule here; demo-app + connection poolers select them.
 - role: worker
   labels:
     app.node.kubernetes.io:
+  extraMounts:
+    - hostPath: ${GIT_REPO_ROOT}/k8s/containerd-certs.d
+      containerPath: /etc/containerd/certs.d
+      readOnly: true
 - role: worker
   labels:
     app.node.kubernetes.io:
+  extraMounts:
+    - hostPath: ${GIT_REPO_ROOT}/k8s/containerd-certs.d
+      containerPath: /etc/containerd/certs.d
+      readOnly: true
 
 # PostgreSQL nodes (3)
 - role: worker
   labels:
     postgres.node.kubernetes.io:
+  extraMounts:
+    - hostPath: ${GIT_REPO_ROOT}/k8s/containerd-certs.d
+      containerPath: /etc/containerd/certs.d
+      readOnly: true
   kubeadmConfigPatches:
   - |
     kind: JoinConfiguration
@@ -91,6 +114,10 @@ nodes:
 - role: worker
   labels:
     postgres.node.kubernetes.io:
+  extraMounts:
+    - hostPath: ${GIT_REPO_ROOT}/k8s/containerd-certs.d
+      containerPath: /etc/containerd/certs.d
+      readOnly: true
   kubeadmConfigPatches:
   - |
     kind: JoinConfiguration
@@ -101,6 +128,10 @@ nodes:
 - role: worker
   labels:
     postgres.node.kubernetes.io:
+  extraMounts:
+    - hostPath: ${GIT_REPO_ROOT}/k8s/containerd-certs.d
+      containerPath: /etc/containerd/certs.d
+      readOnly: true
   kubeadmConfigPatches:
   - |
     kind: JoinConfiguration

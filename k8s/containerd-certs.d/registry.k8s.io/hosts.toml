@@ -1,0 +1,6 @@
+server = "https://registry.k8s.io"
+
+[host."https://zot.172-18-0-250.sslip.io/v2/registry.k8s.io"]
+  capabilities = ["pull", "resolve"]
+  override_path = true
+  ca = "/etc/containerd/certs.d/step-ca-chain.pem"

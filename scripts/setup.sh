@@ -133,6 +133,16 @@ GIT_REPO_ROOT="${GIT_REPO_ROOT}" envsubst '${GIT_REPO_ROOT}' \
     < "${GIT_REPO_ROOT}/k8s/kind-cluster.yaml.tpl" \
     > "${GIT_REPO_ROOT}/k8s/kind-cluster.yaml"
 
+# Trust anchor for the containerd hosts.toml registry mirrors (k8s/containerd-certs.d/,
+# mounted into every node — see k8s/kind-cluster.yaml.tpl). Must exist before
+# `kind create cluster` below: it's a live bind-mount of the host directory, so the
+# file only needs to land before nodes actually attempt a zot-mirrored pull, but
+# writing it here (right after step-ca-setup.sh, before cluster creation) keeps the
+# ordering simple and avoids a window where mirrored pulls would fail TLS verification.
+echo "📜 Writing step-ca chain for containerd registry mirrors..."
+sudo cat "${GIT_REPO_ROOT}/step-ca/pki/intermediate_ca.crt" "${GIT_REPO_ROOT}/step-ca/pki/root_ca.crt" \
+    | sudo tee "${GIT_REPO_ROOT}/k8s/containerd-certs.d/step-ca-chain.pem" > /dev/null
+
 echo "📝 Rendering initial authn-config (will be updated post-MetalLB)..."
 STEP_CA_CHAIN_PEM=$(sudo cat "${GIT_REPO_ROOT}/step-ca/pki/root_ca.crt" "${GIT_REPO_ROOT}/step-ca/pki/intermediate_ca.crt" | sed 's/^/        /')
 # OIDC issuer is the hub in-cluster Authelia portal (fixed across all clusters,

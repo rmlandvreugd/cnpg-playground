@@ -1,3 +1,4 @@
 kube-config.yaml
 encryption/secretbox.key
 authn-config.yaml
+containerd-certs.d/step-ca-chain.pem

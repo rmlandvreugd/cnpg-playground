@@ -84,6 +84,11 @@ RENDERED_CLUSTER_CONFIG="${GIT_REPO_ROOT}/k8s/kind-cluster.yaml"
 if [[ -f "${RENDERED_CLUSTER_CONFIG}" ]]; then
     rm -f "${RENDERED_CLUSTER_CONFIG}"
 fi
+CONTAINERD_CA_CHAIN="${GIT_REPO_ROOT}/k8s/containerd-certs.d/step-ca-chain.pem"
+if [[ -f "${CONTAINERD_CA_CHAIN}" ]]; then
+    echo "🗑️  Removing containerd mirror CA chain..."
+    sudo rm -f "${CONTAINERD_CA_CHAIN}"
+fi
 
 echo "--------------------------------------------------"
 echo "🔥 Tearing down shared services..."
