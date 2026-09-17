@@ -6,9 +6,13 @@ metadata:
     policies.kyverno.io/title: Restrict image registries in tenant namespaces
     policies.kyverno.io/description: >-
       Only allow container images from approved registries: the local Kind registry
-      (localhost:5001), ghcr.io, docker.io/cloudnative-pg, and docker.io/bitnami
-      (for pgbouncer sidecar). Start in Audit; flip to Enforce after validating all
-      workloads are pulling from approved sources. Add new registries here as needed.
+      (localhost:5001), ghcr.io, docker.io/cloudnative-pg, docker.io/bitnami
+      (for pgbouncer sidecar), and zot's apps/** namespace (demo-app, published by
+      stacker — see docs/zot-registry-stacker-plan.md). The zot host is hardcoded
+      here (matches this file's existing style) and tracks TRAEFIK_EDGE_IP_DASHED's
+      default in scripts/common.sh — update both together if that ever changes.
+      Start in Audit; flip to Enforce after validating all workloads are pulling
+      from approved sources. Add new registries here as needed.
 spec:
   validationFailureAction: Audit
   background: true
@@ -26,7 +30,8 @@ spec:
       validate:
         message: >-
           Images must be from an approved registry: localhost:5001, ghcr.io,
-          docker.io/cloudnative-pg, or docker.io/bitnami.
+          docker.io/cloudnative-pg, docker.io/bitnami, or
+          zot.172-28-0-250.sslip.io/apps.
         # Two entries instead of `containers + initContainers`: the `+` operator is
         # not valid JMESPath (throws "SyntaxError: Unknown char: '+'") so the rule
         # only ever errored. initContainers is optional, so coalesce to `[]` to avoid
@@ -55,5 +60,8 @@ spec:
                   - key: "{{element.image}}"
                     operator: NotEquals
                     value: "bitnami/*"
+                  - key: "{{element.image}}"
+                    operator: NotEquals
+                    value: "zot.172-28-0-250.sslip.io/apps/*"
           - list: "request.object.spec.initContainers || `[]`"
             deny: *denyUnapprovedRegistry
