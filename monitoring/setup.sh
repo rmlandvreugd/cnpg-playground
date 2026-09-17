@@ -70,7 +70,7 @@ for region in "${REGIONS[@]}"; do
         kubectl run mimir-bucket-init --restart=Never \
             --context "${CONTEXT_NAME}" \
             -n mimir \
-            --image=minio/mc:latest \
+            --image="${MC_IMAGE}" \
             --pod-running-timeout=180s \
             --command -- sh -c "mc --insecure alias set store https://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1 \
                 && mc --insecure mb --ignore-existing store/mimir-blocks \
@@ -132,7 +132,7 @@ for region in "${REGIONS[@]}"; do
         kubectl run tempo-bucket-init --restart=Never \
             --context "${CONTEXT_NAME}" \
             -n tempo \
-            --image=minio/mc:latest \
+            --image="${MC_IMAGE}" \
             --pod-running-timeout=180s \
             --command -- sh -c "mc --insecure alias set store https://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1 \
                 && mc --insecure mb --ignore-existing store/tempo \
@@ -275,7 +275,7 @@ EOF
     kubectl run loki-bucket-init --restart=Never \
         --context "${CONTEXT_NAME}" \
         -n grafana \
-        --image=minio/mc:latest \
+        --image="${MC_IMAGE}" \
         --pod-running-timeout=180s \
         --command -- sh -c "mc --insecure alias set store https://seaweedfs:8333 '${SEAWEEDFS_ADMIN_ACCESS_KEY}' '${SEAWEEDFS_ADMIN_SECRET_KEY}' 2>&1 \
             && mc --insecure mb --ignore-existing store/loki \

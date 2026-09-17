@@ -520,7 +520,7 @@ JSON
         # Uses the bootstrap 'admin' identity (CreateBucket needs Admin); barman/loki stay least-privilege.
         echo "🪣 Creating SeaweedFS backup buckets (${SEAWEEDFS_BACKUP_BUCKET}, ${SEAWEEDFS_VER_BACKUP_BUCKET}, ${SEAWEEDFS_ZOT_BUCKET})..."
         # NB: minio/mc has ENTRYPOINT [mc], so override with --entrypoint sh to run a shell.
-        retry 12 5 ${CONTAINER_PROVIDER} run --rm --network kind --entrypoint sh "${MC_IMAGE:-minio/mc:latest}" -c "
+        retry 12 5 ${CONTAINER_PROVIDER} run --rm --network kind --entrypoint sh "${MC_IMAGE}" -c "
             mc --insecure alias set sw https://${SEAWEEDFS_IP}:8333 '${SEAWEEDFS_ADMIN_ACCESS_KEY}' '${SEAWEEDFS_ADMIN_SECRET_KEY}' \
             && mc --insecure mb --ignore-existing sw/${SEAWEEDFS_BACKUP_BUCKET} sw/${SEAWEEDFS_VER_BACKUP_BUCKET} sw/${SEAWEEDFS_ZOT_BUCKET} \
             && echo '✅ SeaweedFS backup buckets ready'" \

@@ -70,6 +70,11 @@ fi
 K8S_CONTEXT_PREFIX=${K8S_CONTEXT_PREFIX-kind-}
 K8S_BASE_NAME=${K8S_NAME-k8s-}
 
+# mc (S3 client), used for bucket bootstrap against RustFS/SeaweedFS. minio/mc was
+# pulled from Docker Hub (docker.io/minio/mc:latest now 404s — "repository does not
+# exist"); MinIO publishes it on quay.io instead.
+MC_IMAGE="${MC_IMAGE:-quay.io/minio/mc:latest}"
+
 # RustFS Configuration
 RUSTFS_IMAGE="${RUSTFS_IMAGE:-rustfs/rustfs:latest}"
 RUSTFS_BASE_NAME="${RUSTFS_BASE_NAME:-objectstore}"
