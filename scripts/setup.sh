@@ -98,19 +98,6 @@ echo "=================================================="
 echo "🔐 Phase 0: Bootstrapping external services"
 echo "=================================================="
 "${SCRIPT_DIR}/step-ca-setup.sh"
-
-# CA bundle (system CAs + step-ca chain) so `helm upgrade --install oci://...` can
-# verify zot's step-ca-issued edge cert. `helm upgrade --install` has no --ca-file
-# flag (unlike `helm pull`/`push`/`registry login`), and Go's TLS stack replaces
-# rather than augments the system trust store when SSL_CERT_FILE is set, so this
-# bundle has to carry both. Built once here (helm_upgrade_install in common.sh
-# points SSL_CERT_FILE at it for every oci:// call, scoped to that subprocess only).
-echo "📜 Building CA bundle (system + step-ca) for helm OCI pulls through zot..."
-sudo cat /etc/ssl/certs/ca-certificates.crt \
-    "${GIT_REPO_ROOT}/step-ca/pki/intermediate_ca.crt" \
-    "${GIT_REPO_ROOT}/step-ca/pki/root_ca.crt" \
-    | sudo tee "${GIT_REPO_ROOT}/step-ca/ca-bundle.crt" > /dev/null
-
 "${SCRIPT_DIR}/vault-setup.sh"
 "${SCRIPT_DIR}/vault-pki-setup.sh"
 "${SCRIPT_DIR}/vault-eso-setup.sh"
