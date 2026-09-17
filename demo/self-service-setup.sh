@@ -463,13 +463,30 @@ EOF
     # Sequenced AFTER the verstappen DB and the Vault DB engine exist: the demo-app
     # ExternalSecret reads database/static-creds/app via the vault-approle-rbr-db store,
     # so the static role 'app' (above) and the store (earlier) must already be in place —
-    # otherwise demo-app crash-loops. Build + load the image before ArgoCD syncs it.
-    echo "🐳 Building demo-app image..."
+    # otherwise demo-app crash-loops. Build + publish the image before ArgoCD syncs it.
+    echo "🐳 Building demo-app image (stacker)..."
     DEMO_APP_VERSION=$(grep '^appVersion:' "${GIT_REPO_ROOT}/app/helm/demo-app/Chart.yaml" | awk '{print $2}' | tr -d '"')
-    docker build -t "demo-app:${DEMO_APP_VERSION}" "${GIT_REPO_ROOT}/app"
-    kind load docker-image "demo-app:${DEMO_APP_VERSION}" \
-        --name "$(get_cluster_name "${MODE}")"
-    echo "✅ demo-app:${DEMO_APP_VERSION} loaded into Kind"
+
+    # stacker has no --ca-file/--insecure flag (unlike helm); it only reads the host's
+    # SSL_CERT_FILE/system trust store. Build a combined bundle so zot's step-ca-issued
+    # edge cert verifies without clobbering trust for stacker's own base-image pulls
+    # from public registries. Scoped to these two commands only, not exported globally.
+    STACKER_CA_BUNDLE="/tmp/stacker-ca-bundle.crt"
+    sudo cat /etc/ssl/certs/ca-certificates.crt \
+        "${GIT_REPO_ROOT}/step-ca/pki/intermediate_ca.crt" \
+        "${GIT_REPO_ROOT}/step-ca/pki/root_ca.crt" \
+        | sudo tee "${STACKER_CA_BUNDLE}" > /dev/null
+
+    SSL_CERT_FILE="${STACKER_CA_BUNDLE}" \
+        stacker --work-dir "${GIT_REPO_ROOT}/app" build \
+        -f "${GIT_REPO_ROOT}/app/stacker.yaml" --substitute "UV_CACHE=${HOME}/.cache/uv"
+    SSL_CERT_FILE="${STACKER_CA_BUNDLE}" \
+        stacker --work-dir "${GIT_REPO_ROOT}/app" publish \
+        -f "${GIT_REPO_ROOT}/app/stacker.yaml" \
+        --url "docker://${OCI_PROXY}/apps" --tag "${DEMO_APP_VERSION}" \
+        --username "${ZOT_CI_USER}" --password "${ZOT_CI_PASSWORD}"
+    sudo rm -f "${STACKER_CA_BUNDLE}"
+    echo "✅ demo-app:${DEMO_APP_VERSION} published to ${OCI_PROXY}/apps/demo-app"
 
     echo "🚀 Applying ArgoCD root Application (app-of-apps)..."
     kubectl apply --context "${LOCAL_CONTEXT}" \

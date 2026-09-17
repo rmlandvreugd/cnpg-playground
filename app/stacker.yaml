@@ -1,0 +1,43 @@
+uv:
+  from:
+    type: docker
+    url: "docker://zot.172-28-0-250.sslip.io/ghcr.io/astral-sh/uv:latest"
+  build_only: true
+
+builder:
+  from:
+    type: docker
+    url: "docker://zot.172-28-0-250.sslip.io/docker.io/library/python:3.12-slim"
+  build_only: true
+  imports:
+    - stacker://uv/uv
+    - path: pyproject.toml
+    - path: uv.lock
+    - path: src
+  binds:
+    - ${{UV_CACHE}} -> /root/.cache/uv
+  run: |
+    cp /stacker/imports/uv /bin/uv
+    mkdir -p /app
+    cp /stacker/imports/pyproject.toml /stacker/imports/uv.lock /app/
+    cp -r /stacker/imports/src /app/src
+    cd /app
+    UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=0 uv sync --locked --no-dev
+
+demo-app:
+  from:
+    type: docker
+    url: "docker://zot.172-28-0-250.sslip.io/docker.io/library/python:3.12-slim"
+  imports:
+    - stacker://builder/app
+  run: |
+    groupadd --system --gid 1000 appuser
+    useradd --system --gid 1000 --uid 1000 --create-home appuser
+    cp -a /stacker/imports/app /app && chown -R 1000:1000 /app
+  environment:
+    PATH: "/app/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    PYTHONUNBUFFERED: "1"
+    OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_LEVEL: info
+  working_dir: /app
+  runtime_user: "1000"
+  full_command: [litestar, run, --host, 0.0.0.0, --port, "8000"]

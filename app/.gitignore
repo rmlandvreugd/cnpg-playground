@@ -12,3 +12,8 @@ build/
 
 # Docker Compose volumes
 pgdata/
+
+# stacker build artifacts (demo/self-service-setup.sh --work-dir app)
+oci/
+roots/
+.stacker/

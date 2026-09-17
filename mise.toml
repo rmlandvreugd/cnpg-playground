@@ -1,5 +1,7 @@
 [tools]
 "aqua:theseus-rs/postgresql-binaries" = "latest"
+# Pinned: v1.2.1 has no binary release assets (see docs/zot-registry-stacker-plan.md).
+"github:project-stacker/stacker" = "1.2.0"
 argo = "latest"
 envsubst = "latest"
 kind = "latest"

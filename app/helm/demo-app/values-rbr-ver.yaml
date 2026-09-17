@@ -6,7 +6,8 @@ global:
 replicaCount: 1
 
 image:
-  pullPolicy: Never  # image is loaded into Kind by setup.sh via kind load docker-image
+  repository: zot.172-28-0-250.sslip.io/apps/demo-app  # published by stacker via demo/self-service-setup.sh
+  pullPolicy: IfNotPresent
 
 database:
   host: "pooler-verstappen-rw.rbr-ver-db.svc.cluster.local"
