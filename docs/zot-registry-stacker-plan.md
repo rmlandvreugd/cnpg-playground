@@ -57,6 +57,7 @@ GitHub releases. Stacker is not indexed on deepwiki.
 | Dedupe | `dedupe: true` + `remoteCache: true` with no `cacheDriver` → startup error (`root.go:438`). Remote cache must be redis/dynamodb. `dedupe: true` + `remoteCache: false` → **local boltdb** under `storage.rootDirectory` (valid) |
 | CVE scanning | **Any S3 `storageDriver` + CVE enabled → startup error** "failed to enable cve scanning due to incompatibility with remote storage" (`root.go:681`, also for subPaths) |
 | Endpoint TLS | No per-driver CA option; use SeaweedFS plain-HTTP S3 port `8334` on the internal `kind` network (`secure: false`) |
+| Sync + remote storage | **S3 `storageDriver` + `extensions.sync` enabled requires `extensions.sync.downloadDir`** → startup error "using both sync and remote storage features needs config.Extensions.Sync.DownloadDir to be specified" otherwise (`root.go:729`). Not caught by source review — found running spike 1 live; fixed with `downloadDir: /tmp/zot-sync` |
 
 ### Auth — verified in source
 
@@ -238,6 +239,7 @@ SEAWEEDFS_ZOT_SECRET_KEY="${SEAWEEDFS_ZOT_SECRET_KEY:-zotS3secret}"
     "metrics": { "enable": true, "prometheus": { "path": "/metrics" } },
     "sync": {
       "enable": true,
+      "downloadDir": "/tmp/zot-sync",
       "credentialsFile": "/etc/zot/sync-auth.json",
       "registries": [
         { "urls": ["https://registry-1.docker.io"], "onDemand": true, "preserveDigest": true,
