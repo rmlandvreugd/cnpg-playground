@@ -471,7 +471,10 @@ EOF
     # SSL_CERT_FILE/system trust store. Build a combined bundle so zot's step-ca-issued
     # edge cert verifies without clobbering trust for stacker's own base-image pulls
     # from public registries. Scoped to these two commands only, not exported globally.
-    STACKER_CA_BUNDLE="/tmp/stacker-ca-bundle.crt"
+    # mktemp (not a fixed /tmp path) so a pre-planted symlink at a predictable name
+    # can't turn the `sudo tee` below into an arbitrary-file overwrite as root.
+    STACKER_CA_BUNDLE=$(mktemp)
+    trap 'sudo rm -f "${STACKER_CA_BUNDLE}"' EXIT
     sudo cat /etc/ssl/certs/ca-certificates.crt \
         "${GIT_REPO_ROOT}/step-ca/pki/intermediate_ca.crt" \
         "${GIT_REPO_ROOT}/step-ca/pki/root_ca.crt" \
@@ -485,7 +488,6 @@ EOF
         -f "${GIT_REPO_ROOT}/app/stacker.yaml" \
         --url "docker://${OCI_PROXY}/apps" --tag "${DEMO_APP_VERSION}" \
         --username "${ZOT_CI_USER}" --password "${ZOT_CI_PASSWORD}"
-    sudo rm -f "${STACKER_CA_BUNDLE}"
     echo "✅ demo-app:${DEMO_APP_VERSION} published to ${OCI_PROXY}/apps/demo-app"
 
     echo "🚀 Applying ArgoCD root Application (app-of-apps)..."
