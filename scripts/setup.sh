@@ -424,6 +424,7 @@ EOF
         #   admin  — full Admin, used only to bootstrap buckets during setup (not handed to any workload)
         #   loki   — RW on the 'loki' bucket only (blanket Admin removed)
         #   barman — RW/List on the backup buckets (CNPG/Barman, migrated off RustFS)
+        #   zot    — RW/List/Tagging on the 'zot' bucket only (registry blob storage)
         sudo tee "${SEAWEEDFS_CFG_DIR}/identities.json" > /dev/null <<JSON
 {
   "identities": [
@@ -444,6 +445,11 @@ EOF
         "Read:${SEAWEEDFS_BACKUP_BUCKET}", "Write:${SEAWEEDFS_BACKUP_BUCKET}", "List:${SEAWEEDFS_BACKUP_BUCKET}", "Tagging:${SEAWEEDFS_BACKUP_BUCKET}",
         "Read:${SEAWEEDFS_VER_BACKUP_BUCKET}", "Write:${SEAWEEDFS_VER_BACKUP_BUCKET}", "List:${SEAWEEDFS_VER_BACKUP_BUCKET}", "Tagging:${SEAWEEDFS_VER_BACKUP_BUCKET}"
       ]
+    },
+    {
+      "name": "zot",
+      "credentials": [{"accessKey": "${SEAWEEDFS_ZOT_ACCESS_KEY}", "secretKey": "${SEAWEEDFS_ZOT_SECRET_KEY}"}],
+      "actions": ["Read:${SEAWEEDFS_ZOT_BUCKET}", "Write:${SEAWEEDFS_ZOT_BUCKET}", "List:${SEAWEEDFS_ZOT_BUCKET}", "Tagging:${SEAWEEDFS_ZOT_BUCKET}"]
     }
   ]
 }
@@ -480,11 +486,11 @@ JSON
 
         # Pre-create Barman backup buckets (CNPG backups migrated off RustFS onto SeaweedFS).
         # Uses the bootstrap 'admin' identity (CreateBucket needs Admin); barman/loki stay least-privilege.
-        echo "🪣 Creating SeaweedFS backup buckets (${SEAWEEDFS_BACKUP_BUCKET}, ${SEAWEEDFS_VER_BACKUP_BUCKET})..."
+        echo "🪣 Creating SeaweedFS backup buckets (${SEAWEEDFS_BACKUP_BUCKET}, ${SEAWEEDFS_VER_BACKUP_BUCKET}, ${SEAWEEDFS_ZOT_BUCKET})..."
         # NB: minio/mc has ENTRYPOINT [mc], so override with --entrypoint sh to run a shell.
         retry 12 5 ${CONTAINER_PROVIDER} run --rm --network kind --entrypoint sh "${MC_IMAGE:-minio/mc:latest}" -c "
             mc --insecure alias set sw https://${SEAWEEDFS_IP}:8333 '${SEAWEEDFS_ADMIN_ACCESS_KEY}' '${SEAWEEDFS_ADMIN_SECRET_KEY}' \
-            && mc --insecure mb --ignore-existing sw/${SEAWEEDFS_BACKUP_BUCKET} sw/${SEAWEEDFS_VER_BACKUP_BUCKET} \
+            && mc --insecure mb --ignore-existing sw/${SEAWEEDFS_BACKUP_BUCKET} sw/${SEAWEEDFS_VER_BACKUP_BUCKET} sw/${SEAWEEDFS_ZOT_BUCKET} \
             && echo '✅ SeaweedFS backup buckets ready'" \
             || echo "  ⚠️  Backup bucket init failed — verify SeaweedFS S3 gateway is up and 'admin' identity is valid"
 
@@ -571,6 +577,11 @@ TOML
         --restart unless-stopped \
         "${TRAEFIK_EDGE_IMAGE}"
     echo "✅ Edge Traefik: https://*.${TRAEFIK_EDGE_IP_DASHED}.sslip.io"
+
+    # zot pull-through registry cache + push target (SeaweedFS S3 storage).
+    # Depends on SeaweedFS (up above), traefik-edge (just started) and its TLS
+    # cert (issued by traefik-edge-setup.sh, called above).
+    "${SCRIPT_DIR}/zot-setup.sh"
 
     # Wire step-ca into K8s (namespace + headless Service/Endpoints)
     echo "🔧 Wiring step-ca into Kubernetes cluster '${K8S_CLUSTER_NAME}'..."

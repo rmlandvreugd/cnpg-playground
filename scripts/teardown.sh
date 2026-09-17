@@ -124,6 +124,20 @@ else
     echo "🔷 Revocation exporter container '${REVOCATION_EXPORTER_CONTAINER_NAME}' not found, skipping."
 fi
 
+# Tear down zot registry (blobs live in SeaweedFS, not this volume)
+if $CONTAINER_PROVIDER ps -a --format '{{.Names}}' | grep -q "^${ZOT_CONTAINER_NAME}$"; then
+    echo "🗑️  Removing zot container '${ZOT_CONTAINER_NAME}'..."
+    $CONTAINER_PROVIDER rm -f "${ZOT_CONTAINER_NAME}" > /dev/null
+else
+    echo "🔷 zot container '${ZOT_CONTAINER_NAME}' not found, skipping."
+fi
+if $CONTAINER_PROVIDER volume inspect zot-meta > /dev/null 2>&1; then
+    echo "🗑️  Removing zot metadata volume 'zot-meta'..."
+    $CONTAINER_PROVIDER volume rm zot-meta > /dev/null
+else
+    echo "🔷 zot metadata volume 'zot-meta' not found, skipping."
+fi
+
 # Tear down edge Traefik (host container, no volume — certs live in traefik-edge/certs/ on the host FS)
 if $CONTAINER_PROVIDER ps -a --format '{{.Names}}' | grep -q "^${TRAEFIK_EDGE_CONTAINER_NAME}$"; then
     echo "🗑️  Removing edge Traefik container '${TRAEFIK_EDGE_CONTAINER_NAME}'..."

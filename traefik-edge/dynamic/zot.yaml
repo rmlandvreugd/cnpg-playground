@@ -1,0 +1,18 @@
+http:
+  routers:
+    zot:
+      # /metrics is scraped in-network (172.18.0.251:5000), never via the edge.
+      rule: "Host(`zot.172-18-0-250.sslip.io`) && !PathPrefix(`/metrics`)"
+      entryPoints:
+        - websecure
+      service: zot
+      tls: {}
+
+  services:
+    zot:
+      loadBalancer:
+        servers:
+          - url: "http://zot:5000"
+        healthCheck:
+          path: /v2/
+          interval: 10s

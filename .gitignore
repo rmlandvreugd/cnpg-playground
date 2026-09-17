@@ -55,6 +55,8 @@ k8s/kind-cluster.yaml
 .beads-credential-key
 rustfs/
 seaweedfs/
+zot/config.json
+zot/htpasswd
 
 graphify-out/cost.json        # local only
 graphify-out/cache/           # optional: commit for speed, skip to keep repo small

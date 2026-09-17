@@ -10,3 +10,5 @@ tls:
       keyFile: /etc/traefik/certs/seaweedfs-admin.key
     - certFile: /etc/traefik/certs/traefik.crt
       keyFile: /etc/traefik/certs/traefik.key
+    - certFile: /etc/traefik/certs/zot.crt
+      keyFile: /etc/traefik/certs/zot.key

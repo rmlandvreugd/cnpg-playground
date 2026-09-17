@@ -177,6 +177,22 @@ TRAEFIK_EDGE_HTTP_PORT="${TRAEFIK_EDGE_HTTP_PORT:-80}"
 TRAEFIK_EDGE_HTTPS_PORT="${TRAEFIK_EDGE_HTTPS_PORT:-443}"
 TRAEFIK_EDGE_METRICS_PORT="${TRAEFIK_EDGE_METRICS_PORT:-9102}"
 
+# zot registry (host container on kind network, fronted by traefik-edge).
+# Static IP so kind containerd hosts.toml / Prometheus Endpoints can target it directly.
+ZOT_IMAGE="${ZOT_IMAGE:-ghcr.io/project-zot/zot-linux-amd64:v2.1.21}"
+ZOT_CONTAINER_NAME="${ZOT_CONTAINER_NAME:-zot}"
+ZOT_IP="${ZOT_IP:-172.18.0.251}"
+ZOT_PORT="${ZOT_PORT:-5000}"
+ZOT_HOST="zot.${TRAEFIK_EDGE_IP_DASHED}.sslip.io"
+# OCI proxy host used by helm/stacker chart-ref rewriting; empty = pull direct (unset by spike 3).
+OCI_PROXY="${OCI_PROXY:-${ZOT_HOST}}"
+ZOT_CI_USER="${ZOT_CI_USER:-ci}"
+ZOT_CI_PASSWORD="${ZOT_CI_PASSWORD:-zotCIsecret}"
+# SeaweedFS identity for zot blob storage (S3 storageDriver; dedupe stays local boltdb).
+SEAWEEDFS_ZOT_BUCKET="${SEAWEEDFS_ZOT_BUCKET:-zot}"
+SEAWEEDFS_ZOT_ACCESS_KEY="${SEAWEEDFS_ZOT_ACCESS_KEY:-zot}"
+SEAWEEDFS_ZOT_SECRET_KEY="${SEAWEEDFS_ZOT_SECRET_KEY:-zotS3secret}"
+
 # cert-manager
 CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION:-v1.20.2}"
 

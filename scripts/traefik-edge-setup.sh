@@ -93,6 +93,10 @@ _issue_cert "seaweedfs-admin" \
     "seaweedfs-admin.${TRAEFIK_EDGE_IP_DASHED}.sslip.io" \
     "seaweedfs-admin" "localhost" "127.0.0.1"
 
+_issue_cert "zot" \
+    "zot.${TRAEFIK_EDGE_IP_DASHED}.sslip.io" \
+    "zot" "localhost" "127.0.0.1"
+
 # Traefik dashboard/API host (dynamic/dashboard.yaml -> api@internal).
 _issue_cert "traefik" \
     "traefik.${TRAEFIK_EDGE_IP_DASHED}.sslip.io" \

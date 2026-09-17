@@ -33,6 +33,10 @@ entryPoints:
       trustedIPs:
         - 172.18.0.0/16
         - 10.244.0.0/16
+    # v3 default readTimeout is 60s, too short for large zot blob pushes (stacker/skopeo push).
+    transport:
+      respondingTimeouts:
+        readTimeout: 30m
   metrics:
     address: ":9102"
 
