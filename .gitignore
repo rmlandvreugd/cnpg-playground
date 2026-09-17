@@ -57,6 +57,8 @@ rustfs/
 seaweedfs/
 zot/config.json
 zot/htpasswd
+zot/session-keys.json
+zot/ca-bundle.crt
 
 graphify-out/cost.json        # local only
 graphify-out/cache/           # optional: commit for speed, skip to keep repo small

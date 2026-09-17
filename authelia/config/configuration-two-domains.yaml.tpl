@@ -193,3 +193,15 @@ identity_providers:
           - profile
           - groups
         claims_policy: 'default_policy'
+      - client_id: zot
+        client_name: zot
+        client_secret: '${AUTHELIA_ZOT_CLIENT_SECRET_HASH}'
+        authorization_policy: one_factor
+        redirect_uris:
+          - 'https://zot.${TRAEFIK_EDGE_IP_DASHED}.sslip.io/zot/auth/callback/oidc'
+        scopes:
+          - openid
+          - email
+          - profile
+          - groups
+        claims_policy: 'default_policy'

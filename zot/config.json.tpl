@@ -25,7 +25,21 @@
     "externalUrl": "https://${ZOT_HOST}",
     "compat": ["docker2s2"],
     "auth": {
-      "htpasswd": { "path": "/etc/zot/htpasswd" }
+      "htpasswd": { "path": "/etc/zot/htpasswd" },
+      "openid": {
+        "providers": {
+          "oidc": {
+            "name": "Authelia",
+            "issuer": "https://authelia.${TRAEFIK_EDGE_IP_DASHED}.sslip.io",
+            "clientid": "zot",
+            "clientsecret": "${AUTHELIA_ZOT_CLIENT_SECRET}",
+            "scopes": ["openid", "profile", "email", "groups"],
+            "claimMapping": { "username": "preferred_username", "groups": "groups" }
+          }
+        }
+      },
+      "sessionKeysFile": "/etc/zot/session-keys.json",
+      "secureSession": true
     },
     "accessControl": {
       "repositories": {
@@ -39,10 +53,16 @@
             { "users": ["${ZOT_CI_USER}"], "actions": ["read", "create", "update"] }
           ]
         }
+      },
+      "adminPolicy": {
+        "groups": ["zot-admin"],
+        "actions": ["read", "create", "update", "delete"]
       }
     }
   },
   "extensions": {
+    "search": { "enable": true },
+    "ui": { "enable": true },
     "sync": {
       "enable": true,
       "downloadDir": "/tmp/zot-sync",

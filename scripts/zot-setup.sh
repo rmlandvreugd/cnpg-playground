@@ -36,6 +36,28 @@ ${CONTAINER_PROVIDER} run --rm httpd:2.4-alpine \
     htpasswd -Bbn "${ZOT_CI_USER}" "${ZOT_CI_PASSWORD}" \
     | sudo tee "${ZOT_DIR}/htpasswd" > /dev/null
 
+# Session signing/encryption keys for the UI's cookie store. Generated once and
+# reused across setup runs — regenerating on every run would invalidate every
+# active UI session (matches authelia-setup.sh's JWKS pattern).
+if [ ! -f "${ZOT_DIR}/session-keys.json" ]; then
+    echo "🔑 Generating zot session keys..."
+    SESSION_HASH_KEY=$(openssl rand -hex 32)
+    SESSION_ENCRYPT_KEY=$(openssl rand -hex 16)
+    sudo tee "${ZOT_DIR}/session-keys.json" > /dev/null <<JSON
+{"hashKey": "${SESSION_HASH_KEY}", "encryptKey": "${SESSION_ENCRYPT_KEY}"}
+JSON
+fi
+
+# CA bundle (system CAs + step-ca chain) so zot can verify Authelia's
+# step-ca-issued edge cert during OIDC discovery/token exchange, without losing
+# trust for its own sync targets (public registries) — SSL_CERT_FILE replaces
+# rather than augments the default trust store, so both have to be in one file.
+echo "📜 Building zot CA bundle (system + step-ca) for Authelia OIDC..."
+sudo cat /etc/ssl/certs/ca-certificates.crt \
+    "${GIT_REPO_ROOT}/step-ca/pki/intermediate_ca.crt" \
+    "${GIT_REPO_ROOT}/step-ca/pki/root_ca.crt" \
+    | sudo tee "${ZOT_DIR}/ca-bundle.crt" > /dev/null
+
 echo "📝 Rendering zot config..."
 SEAWEEDFS_ZOT_BUCKET="${SEAWEEDFS_ZOT_BUCKET}" \
 SEAWEEDFS_ZOT_ACCESS_KEY="${SEAWEEDFS_ZOT_ACCESS_KEY}" \
@@ -43,7 +65,9 @@ SEAWEEDFS_ZOT_SECRET_KEY="${SEAWEEDFS_ZOT_SECRET_KEY}" \
 ZOT_PORT="${ZOT_PORT}" \
 ZOT_HOST="${ZOT_HOST}" \
 ZOT_CI_USER="${ZOT_CI_USER}" \
-envsubst '${SEAWEEDFS_ZOT_BUCKET} ${SEAWEEDFS_ZOT_ACCESS_KEY} ${SEAWEEDFS_ZOT_SECRET_KEY} ${ZOT_PORT} ${ZOT_HOST} ${ZOT_CI_USER}' \
+TRAEFIK_EDGE_IP_DASHED="${TRAEFIK_EDGE_IP_DASHED}" \
+AUTHELIA_ZOT_CLIENT_SECRET="${AUTHELIA_ZOT_CLIENT_SECRET}" \
+envsubst '${SEAWEEDFS_ZOT_BUCKET} ${SEAWEEDFS_ZOT_ACCESS_KEY} ${SEAWEEDFS_ZOT_SECRET_KEY} ${ZOT_PORT} ${ZOT_HOST} ${ZOT_CI_USER} ${TRAEFIK_EDGE_IP_DASHED} ${AUTHELIA_ZOT_CLIENT_SECRET}' \
     < "${ZOT_DIR}/config.json.tpl" \
     | sudo tee "${ZOT_DIR}/config.json" > /dev/null
 
@@ -55,6 +79,9 @@ ${CONTAINER_PROVIDER} run -d --name "${ZOT_CONTAINER_NAME}" \
     --network kind --ip "${ZOT_IP}" \
     -v "${ZOT_DIR}/config.json:/etc/zot/config.json:ro" \
     -v "${ZOT_DIR}/htpasswd:/etc/zot/htpasswd:ro" \
+    -v "${ZOT_DIR}/session-keys.json:/etc/zot/session-keys.json:ro" \
+    -v "${ZOT_DIR}/ca-bundle.crt:/etc/zot/ca-bundle.crt:ro" \
+    -e SSL_CERT_FILE=/etc/zot/ca-bundle.crt \
     -v zot-meta:/var/lib/zot \
     --restart unless-stopped \
     "${ZOT_IMAGE}"

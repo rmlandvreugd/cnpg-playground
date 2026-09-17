@@ -14,6 +14,7 @@ users:
       - capsule-admin
       - argocd-admin
       - seaweedfs-admin
+      - zot-admin
   authuser:
     displayname: "Authelia User"
     password: "${AUTHELIA_STATIC_PASSWORD_HASH}"
