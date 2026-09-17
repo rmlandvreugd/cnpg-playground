@@ -6,7 +6,7 @@ experimental:
   otlpLogs: true
 
 # Traefik dashboard/API, served by the internal api@internal service. Exposed
-# via a dynamic router (dynamic/dashboard.yaml) on traefik.172-18-0-250.sslip.io
+# via a dynamic router (dynamic/dashboard.yaml) on traefik.172-28-0-250.sslip.io
 # over TLS (no forward-auth, mirroring the in-cluster dashboard). `insecure` is
 # intentionally NOT set (that would also publish it unauthenticated on :8080).
 api:
@@ -28,11 +28,11 @@ entryPoints:
     # reaches Authelia intact. Without this, Traefik strips X-Forwarded-Method
     # from the untrusted source and Authelia rejects forward-auth with a bare
     # 400 ("header 'X-Forwarded-Method' is empty") — breaking auth on
-    # in-cluster services like radar.172-18-255-200.sslip.io.
+    # in-cluster services like radar.172-28-255-200.sslip.io.
     forwardedHeaders:
       trustedIPs:
-        - 172.18.0.0/16
-        - 10.244.0.0/16
+        - 172.28.0.0/16
+        - 10.220.0.0/16
     # v3 default readTimeout is 60s, too short for large zot blob pushes (stacker/skopeo push).
     transport:
       respondingTimeouts:
@@ -56,7 +56,7 @@ tracing:
   serviceName: traefik-edge
   otlp:
     grpc:
-      endpoint: "172.18.255.240:4317"
+      endpoint: "172.28.255.240:4317"
       tls:
         ca: /etc/traefik/certs/step-ca-chain.pem
         cert: /etc/traefik/certs/otlp-client.crt
@@ -67,7 +67,7 @@ log:
   otlp:
     serviceName: traefik-edge
     grpc:
-      endpoint: "172.18.255.240:4317"
+      endpoint: "172.28.255.240:4317"
       tls:
         ca: /etc/traefik/certs/step-ca-chain.pem
         cert: /etc/traefik/certs/otlp-client.crt
@@ -77,7 +77,7 @@ accessLog:
   otlp:
     serviceName: traefik-edge
     grpc:
-      endpoint: "172.18.255.240:4317"
+      endpoint: "172.28.255.240:4317"
       tls:
         ca: /etc/traefik/certs/step-ca-chain.pem
         cert: /etc/traefik/certs/otlp-client.crt

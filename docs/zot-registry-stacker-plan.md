@@ -6,7 +6,7 @@ Status: plan — nothing implemented yet. Tracked as beads epic
 ## Goals
 
 1. Run **zot** as a separate host container ("node") on the `kind` docker
-   network, fronted by **traefik-edge** (`zot.172-18-0-250.sslip.io`), same
+   network, fronted by **traefik-edge** (`zot.172-28-0-250.sslip.io`), same
    pattern as Vault / SeaweedFS.
 2. Use zot as an **on-demand pull-through cache** for container images
    (docker.io, ghcr.io, quay.io, registry.k8s.io) used by the kind nodes.
@@ -112,10 +112,10 @@ alloy.
 
 ```
 kind nodes (containerd hosts.toml) ──┐
-helm / stacker / trivy (WSL host) ───┼─> traefik-edge 172.18.0.250 ──> zot 172.18.0.251:5000
-browser (UI) ────────────────────────┘      zot.172-18-0-250.sslip.io     │  ├─ S3 ──> seaweedfs:8334 (bucket zot)
-                                                                          │  ├─ OIDC ─> authelia.172-18-0-250.sslip.io (via edge)
-Prometheus (otel ns) ── Endpoints 172.18.0.251:5000/metrics ──────────────┘  └─ sync ─> docker.io / ghcr.io / quay.io / registry.k8s.io
+helm / stacker / trivy (WSL host) ───┼─> traefik-edge 172.28.0.250 ──> zot 172.28.0.251:5000
+browser (UI) ────────────────────────┘      zot.172-28-0-250.sslip.io     │  ├─ S3 ──> seaweedfs:8334 (bucket zot)
+                                                                          │  ├─ OIDC ─> authelia.172-28-0-250.sslip.io (via edge)
+Prometheus (otel ns) ── Endpoints 172.28.0.251:5000/metrics ──────────────┘  └─ sync ─> docker.io / ghcr.io / quay.io / registry.k8s.io
 ```
 
 ### Setup sequencing
@@ -131,7 +131,7 @@ upstream through containerd's `server` entry — not fatal, just not cached.
 # zot registry (host container on kind network, fronted by traefik-edge)
 ZOT_IMAGE="${ZOT_IMAGE:-ghcr.io/project-zot/zot-linux-amd64:v2.1.21}"
 ZOT_CONTAINER_NAME="${ZOT_CONTAINER_NAME:-zot}"
-ZOT_IP="${ZOT_IP:-172.18.0.251}"          # static: metrics Endpoints target
+ZOT_IP="${ZOT_IP:-172.28.0.251}"          # static: metrics Endpoints target
 ZOT_PORT="${ZOT_PORT:-5000}"
 ZOT_HOST="zot.${TRAEFIK_EDGE_IP_DASHED}.sslip.io"
 OCI_PROXY="${OCI_PROXY:-${ZOT_HOST}}"     # empty = pull helm charts direct
@@ -297,8 +297,8 @@ Teardown (`scripts/teardown.sh`) removes the container and volume.
   http:
     routers:
       zot:
-        # /metrics is scraped in-network (172.18.0.251:5000), never via the edge.
-        rule: "Host(`zot.172-18-0-250.sslip.io`) && !PathPrefix(`/metrics`)"
+        # /metrics is scraped in-network (172.28.0.251:5000), never via the edge.
+        rule: "Host(`zot.172-28-0-250.sslip.io`) && !PathPrefix(`/metrics`)"
         entryPoints:
           - websecure
         service: zot
@@ -329,13 +329,13 @@ Mount a repo dir (e.g. `k8s/containerd-certs.d/`) into every node via
 # k8s/containerd-certs.d/docker.io/hosts.toml
 server = "https://registry-1.docker.io"
 
-[host."https://zot.172-18-0-250.sslip.io/v2/docker.io"]
+[host."https://zot.172-28-0-250.sslip.io/v2/docker.io"]
   capabilities = ["pull", "resolve"]
   override_path = true
   ca = "/etc/containerd/certs.d/step-ca-chain.pem"
 ```
 
-Plus `k8s/containerd-certs.d/zot.172-18-0-250.sslip.io/hosts.toml` (just `ca`)
+Plus `k8s/containerd-certs.d/zot.172-28-0-250.sslip.io/hosts.toml` (just `ca`)
 for images pulled directly from zot (demo-app). If zot is down containerd falls
 back to `server`.
 
@@ -358,13 +358,13 @@ Helm has no mirror config; chart refs are rewritten.
 uv:
   from:
     type: docker
-    url: "docker://zot.172-18-0-250.sslip.io/ghcr.io/astral-sh/uv:latest"
+    url: "docker://zot.172-28-0-250.sslip.io/ghcr.io/astral-sh/uv:latest"
   build_only: true
 
 builder:
   from:
     type: docker
-    url: "docker://zot.172-18-0-250.sslip.io/docker.io/library/python:3.12-slim"
+    url: "docker://zot.172-28-0-250.sslip.io/docker.io/library/python:3.12-slim"
   build_only: true
   imports:
     - stacker://uv/uv
@@ -381,7 +381,7 @@ builder:
 demo-app:
   from:
     type: docker
-    url: "docker://zot.172-18-0-250.sslip.io/docker.io/library/python:3.12-slim"
+    url: "docker://zot.172-28-0-250.sslip.io/docker.io/library/python:3.12-slim"
   imports:
     - stacker://builder/app
   run: |
@@ -407,7 +407,7 @@ stacker publish -f "${GIT_REPO_ROOT}/app/stacker.yaml" \
 ```
 
 `app/helm/demo-app/values-rbr-ver.yaml`:
-`image.repository: zot.172-18-0-250.sslip.io/apps/demo-app`,
+`image.repository: zot.172-28-0-250.sslip.io/apps/demo-app`,
 `pullPolicy: IfNotPresent` (was `Never`). Anonymous read → no imagePullSecret.
 
 Gotchas:
@@ -425,7 +425,7 @@ Gotchas:
 
 - zot: `extensions.search` + `extensions.ui` enabled, `openid.providers.oidc`,
   `sessionKeysFile`, `secureSession`, `adminPolicy.groups: [zot-admin]` (see
-  config above). Browse `https://zot.172-18-0-250.sslip.io` → "Sign in with
+  config above). Browse `https://zot.172-28-0-250.sslip.io` → "Sign in with
   Authelia".
 - Authelia client, added to **both** `authelia/config/configuration.yaml.tpl`
   and `authelia/config/configuration-two-domains.yaml.tpl`:
@@ -453,7 +453,7 @@ Gotchas:
   `zot/config.json.tpl` rendering.
 - `authelia/config/users_database.yml.tpl`: add `zot-admin` to the `admin` user
   (other personas get anonymous read only via the UI session).
-- Network path: zot resolves `authelia.172-18-0-250.sslip.io` → edge on the
+- Network path: zot resolves `authelia.172-28-0-250.sslip.io` → edge on the
   `kind` network; TLS verified via `SSL_CERT_FILE` bundle incl. step-ca chain.
 - API keys (`apikey: true`): a signed-in `zot-admin` can mint a `zak_…` key and
   use it as a basic-auth password for pushes, as an alternative to the shared
@@ -487,14 +487,14 @@ configured**, so scanning moves to the trivy CLI.
 ## Design E — zot metrics in Prometheus
 
 - zot: `extensions.metrics.enable`, `accessControl.metrics.anonymousPolicy: ["read"]`
-  (config above). Endpoint `http://172.18.0.251:5000/metrics`; not exposed via
+  (config above). Endpoint `http://172.28.0.251:5000/metrics`; not exposed via
   the edge (`!PathPrefix(/metrics)` in the router rule).
 - `monitoring/platform/zot-servicemonitor.yaml`, same pattern as
   `traefik-edge-servicemonitor.yaml`:
 
   ```yaml
   # Static Service + Endpoints for zot Prometheus metrics (host container).
-  # zot exposes /metrics at 172.18.0.251:5000 (ZOT_IP:ZOT_PORT), anonymous read.
+  # zot exposes /metrics at 172.28.0.251:5000 (ZOT_IP:ZOT_PORT), anonymous read.
   apiVersion: v1
   kind: Service
   metadata:
@@ -517,7 +517,7 @@ configured**, so scanning moves to the trivy CLI.
     namespace: otel
   subsets:
     - addresses:
-        - ip: 172.18.0.251
+        - ip: 172.28.0.251
       ports:
         - name: metrics
           port: 5000

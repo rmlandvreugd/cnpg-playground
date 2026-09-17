@@ -101,7 +101,7 @@ Claims unchanged: `groups`, `email`, `preferred_username`, `name` via the defaul
 | SeaweedFS admin UI | **no native OIDC** (OSS `weed admin` has no OIDC code path) — edge-fronted (`seaweedfs-admin.<EDGE_IP>.sslip.io`, `traefik-edge`, host Docker container) behind an Authelia **forward-auth** middleware; `-adminUser`/`-adminPassword` remains as a behind-proxy backstop | `access_control`: `group:seaweedfs-admin`/`group:admin` only |
 | SeaweedFS S3 API | real OIDC/STS (`-s3.iam.config`, `AssumeRoleWithWebIdentity`), edge-fronted (`seaweedfs.<EDGE_IP>.sslip.io`, `traefik-edge`) | `groups` → `roleMapping` (see §2 note); no `defaultRole`, so unmapped groups are denied |
 
-`<EDGE_IP>` is the `traefik-edge` host (`172-18-0-250` locally), separate from the in-cluster
+`<EDGE_IP>` is the `traefik-edge` host (`172-28-0-250` locally), separate from the in-cluster
 Traefik IP used by ArgoCD/Grafana/gangplank. Route definitions live in
 `traefik-edge/dynamic/*.yaml`.
 

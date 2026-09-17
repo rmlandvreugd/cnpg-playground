@@ -11,7 +11,7 @@ The k8s→Vault connection currently uses a manual `Service` + `Endpoints` pair
 (`scripts/setup.sh:589-593`) — a container recreate silently breaks cert-manager/ESO. The original
 question was whether an `ExternalName` Service to traefik-edge could replace it; the reframed goal:
 **traefik-edge is Vault's reverse-proxy/LB outright**, end state being *no direct access to
-vault:8200 — only `https://vault.172-18-0-250.sslip.io` (via the edge) from the k8s side*, per the
+vault:8200 — only `https://vault.172-28-0-250.sslip.io` (via the edge) from the k8s side*, per the
 [HashiCorp Raft reference architecture](https://developer.hashicorp.com/vault/tutorials/day-one-raft/raft-reference-architecture).
 
 The reference architecture validates this exactly:
@@ -29,11 +29,11 @@ Service (of any type) is needed at all** — the ExternalName question becomes m
 
 1. **LB model: terminate at edge + verified re-encrypt.** Edge terminates on 443 (existing
    `vault` HTTP router), re-encrypts to `https://vault:8200` with a **verifying**
-   `serversTransport` (rootCAs = step-ca chain, `serverName: vault.172-18-0-250.sslip.io`) —
+   `serversTransport` (rootCAs = step-ca chain, `serverName: vault.172-28-0-250.sslip.io`) —
    replacing `insecure-backend` on this route — plus `healthCheck` on `/v1/sys/health`.
    Accepted cost: edge sees plaintext Vault traffic (ref-arch-sanctioned for an LB).
 2. **Service fate: delete it, migrate all URLs.** Remove Service+Endpoints; point ClusterIssuer,
-   the ESO ClusterSecretStore, and the two demo stores at `https://vault.172-18-0-250.sslip.io`.
+   the ESO ClusterSecretStore, and the two demo stores at `https://vault.172-28-0-250.sslip.io`.
    One canonical URL for pods, host, and browsers. `caBundle` stays the step-ca chain — verified:
    `VAULT_CA_BUNDLE` (= `vault/certs/vault-ca.pem`) and the edge certs share the same step-ca root.
 3. **8202 plain HTTP: migrate stores, keep listener.** Both `demo/self-service-setup.sh` stores
@@ -43,10 +43,10 @@ Service (of any type) is needed at all** — the ExternalName question becomes m
    edge dual-homed, drop the `-p 8200:8200` host publish) is a standalone change with its own
    blast radius. Until then "no direct access" is config-level, not network-level.
 5. **PKI URLs: fix to 443.** `scripts/vault-pki-setup.sh:98-100` AIA/CRL/OCSP →
-   `https://vault.172-18-0-250.sslip.io/v1/pki_int/{ca,crl,ocsp}` (dead today: they point at
+   `https://vault.172-28-0-250.sslip.io/v1/pki_int/{ca,crl,ocsp}` (dead today: they point at
    edge:8200 where nothing listens). Only newly issued certs embed the fixed URLs — fine, nothing
    validates CRL/OCSP here yet.
-6. **Audit fidelity: wire up XFF.** Add `x_forwarded_for_authorized_addrs = ["172.18.0.250"]` to
+6. **Audit fidelity: wire up XFF.** Add `x_forwarded_for_authorized_addrs = ["172.28.0.250"]` to
    the 8200 listener so Vault's audit log records real client IPs from Traefik's X-Forwarded-For
    instead of the edge IP for every caller.
 
@@ -57,7 +57,7 @@ Service (of any type) is needed at all** — the ExternalName question becomes m
    http:
      serversTransports:
        vault-verified:
-         serverName: vault.172-18-0-250.sslip.io   # must match a SAN on Vault's cert
+         serverName: vault.172-28-0-250.sslip.io   # must match a SAN on Vault's cert
          rootCAs:
            - /etc/traefik/certs/step-ca-chain.pem
      services:
@@ -83,7 +83,7 @@ Service (of any type) is needed at all** — the ExternalName question becomes m
    → `https://vault.${TRAEFIK_EDGE_IP_DASHED}.sslip.io` + step-ca `caBundle`.
 6. **`scripts/vault-pki-setup.sh:98-100`** — AIA/CRL/OCSP URLs to the portless https form.
 7. **`vault/config/vault-config.hcl`** — add to the 8200 listener:
-   `x_forwarded_for_authorized_addrs = ["172.18.0.250"]`. Keep the 8202 listener (escape hatch).
+   `x_forwarded_for_authorized_addrs = ["172.28.0.250"]`. Keep the 8202 listener (escape hatch).
 8. **`docs/vault-pki-clusterissuer-runbook.md`** — rewrite §6 (Service+Endpoints was *the*
    documented pattern) to the edge-LB pattern; add troubleshooting rows: x509 SAN mismatch on the
    re-encrypt hop, and 503-from-edge = health check failing (sealed Vault).
@@ -100,19 +100,19 @@ Service (of any type) is needed at all** — the ExternalName question becomes m
 - **Edge sees plaintext secrets** — sanctioned by the ref arch for LBs; the verified re-encrypt
   hop is the required mitigation (and an upgrade over today's `insecure-backend`).
 - **sslip.io DNS dependency** now applies to the in-cluster path too (previously svc-DNS only).
-  Offline fallback if ever needed: CoreDNS rewrite/hosts entry for `vault.172-18-0-250.sslip.io`.
+  Offline fallback if ever needed: CoreDNS rewrite/hosts entry for `vault.172-28-0-250.sslip.io`.
 
 ## Verification
 
 1. Recreate traefik-edge; `docker logs traefik-edge` clean; Traefik dashboard shows the vault
    service healthy (health check green).
 2. `kubectl delete svc,endpoints vault -n vault`; apply updated ClusterIssuer + stores.
-3. From a debug pod: `curl -sv https://vault.172-18-0-250.sslip.io/v1/sys/health --cacert <step-ca-chain>`
+3. From a debug pod: `curl -sv https://vault.172-28-0-250.sslip.io/v1/sys/health --cacert <step-ca-chain>`
    → edge cert presented, 200 body from Vault, and Vault audit log shows the pod IP (XFF working).
 4. `kubectl get clusterissuer vault-pki` → Ready; all ClusterSecretStores (incl. the two migrated
    demo stores) → Ready.
 5. Force a cert renewal; confirm reissue through the edge. New cert's AIA/CRL URLs show the
-   portless https form; `curl https://vault.172-18-0-250.sslip.io/v1/pki_int/ca` returns the CA.
+   portless https form; `curl https://vault.172-28-0-250.sslip.io/v1/pki_int/ca` returns the CA.
 6. `docker restart vault` → Endpoints-staleness failure mode gone; edge health check recovers
    automatically once Vault is unsealed.
 7. Negative check: `docker stop traefik-edge` → ClusterIssuer/stores degrade with clear errors

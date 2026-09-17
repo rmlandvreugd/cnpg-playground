@@ -26,11 +26,11 @@ Two use cases:
 ## Architecture
 
 ```
-Kind network (shared Docker bridge): 172.18.0.0/16
+Kind network (shared Docker bridge): 172.28.0.0/16
   MetalLB pool per cluster (single /32):
-    eu    → 172.18.255.200
-    us    → 172.18.255.201
-    local → 172.18.255.202
+    eu    → 172.28.255.200
+    us    → 172.28.255.201
+    local → 172.28.255.202
 
 Traefik entrypoints:
   web        :80   → HTTP routes (Grafana, dashboard)
@@ -135,7 +135,7 @@ get_traefik_lb_ip() {
     return 1
 }
 
-# Converts an IP address to dashed notation: 172.18.255.200 → 172-18-255-200
+# Converts an IP address to dashed notation: 172.28.255.200 → 172-28-255-200
 ip_to_dashed() {
     echo "$1" | tr '.' '-'
 }

@@ -1,7 +1,7 @@
 http:
   routers:
     seaweedfs-s3:
-      rule: "Host(`seaweedfs.172-18-0-250.sslip.io`)"
+      rule: "Host(`seaweedfs.172-28-0-250.sslip.io`)"
       entryPoints:
         - websecure
       service: seaweedfs-s3

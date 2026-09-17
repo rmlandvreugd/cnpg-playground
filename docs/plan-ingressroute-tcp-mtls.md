@@ -6,21 +6,21 @@
 ┌────────────────────────────────────────────────────────────────────────────────┐
 │                              CLIENT (psql)                                     │
 │                                                                                │
-│  Route 1: psql "host=pg-local-demo-local-db-t.172-18-255-210.sslip.io"         │
+│  Route 1: psql "host=pg-local-demo-local-db-t.172-28-255-210.sslip.io"         │
 │            sslmode=verify-ca sslrootcert=vault-pki-ca.crt                      │
 │            sslcert=client.crt sslkey=client.key  ← mTLS via Vault PKI          │
 │            → Traefik terminates TLS, forwards plaintext to pg-local-rw         │
 │                                                                                │
-│  Route 2: psql "host=pg-local-demo-local-db-p.172-18-255-210.sslip.io"         │
+│  Route 2: psql "host=pg-local-demo-local-db-p.172-28-255-210.sslip.io"         │
 │            sslmode=verify-full sslrootcert=vault-pki-ca.crt                    │
 │            sslcert=client.crt sslkey=client.key  ← mTLS via Vault PKI          │
 │            → Traefik passes TLS through to PostgreSQL                          │
 └──────────────────────────────┬─────────────────────────────────────────────────┘
                                │
-                               │  172.18.255.210:5432
+                               │  172.28.255.210:5432
                                ▼
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│  MetalLB LoadBalancer  172.18.255.210  (NEW Service: traefik-postgres)          │
+│  MetalLB LoadBalancer  172.28.255.210  (NEW Service: traefik-postgres)          │
 │  Port 5432 → Traefik entrypoint "postgres"                                      │
 └──────────────────────────────┬──────────────────────────────────────────────────┘
                                │
@@ -30,11 +30,11 @@
 │                                                                                 │
 │  ┌─────────────────────────────────────────────────────────────────────────┐    │
 │  │  IngressRouteTCP: pg-local-tls-term                                     │    │
-│  │  match: HostSNI(`pg-local-demo-local-db-t.172-18-255-210.sslip.io`)     │    │
+│  │  match: HostSNI(`pg-local-demo-local-db-t.172-28-255-210.sslip.io`)     │    │
 │  │                                                                         │    │
 │  │  🔒 Traefik TERMINATES TLS                                              │    │
 │  │  Server cert: pg-local-tls-term-server-tls (Vault PKI)                  │    │
-│  │    CN=pg-local-demo-local-db-t.172-18-255-210.sslip.io                  │    │
+│  │    CN=pg-local-demo-local-db-t.172-28-255-210.sslip.io                  │    │
 │  │  mTLS: TLSOption mtls-verify                                            │    │
 │  │    clientAuth: RequireAndVerifyClientCert                               │    │
 │  │    CA: vault-pki-bundle (Root + Int CA 1 + Int CA 2)                    │    │
@@ -44,7 +44,7 @@
 │                                                                                 │
 │  ┌─────────────────────────────────────────────────────────────────────────┐    │
 │  │  IngressRouteTCP: pg-local-tls-passthrough                              │    │
-│  │  match: HostSNI(`pg-local-demo-local-db-p.172-18-255-210.sslip.io`)     │    │
+│  │  match: HostSNI(`pg-local-demo-local-db-p.172-28-255-210.sslip.io`)     │    │
 │  │                                                                         │    │
 │  │  🔓 Traefik DOES NOT terminate TLS (passthrough)                        │    │
 │  │  SNI peek only → forward encrypted stream                               │    │
@@ -68,7 +68,7 @@
 │  │                                                                         │    │
 │  │  Server cert: pg-local-server-tls (Vault PKI)                           │    │
 │  │    SANs: pg-local-rw, *.demo-local-db.svc.cluster.local,                │    │
-│  │          pg-local-demo-local-db-p.172-18-255-210.sslip.io               │    │
+│  │          pg-local-demo-local-db-p.172-28-255-210.sslip.io               │    │
 │  │                                                                         │    │
 │  │  Client CA: vault-pki-bundle (Root + Int CA 1 + Int CA 2)               │    │
 │  │  Replication cert: pg-local-replication-tls (Vault PKI)                 │    │
@@ -193,7 +193,7 @@
 | 7   | pg-local-pooler-client-tls | demo-local-db | Certificate      | PgBouncer client-facing cert                   |
 | 8   | pg-local-pooler-server-tls | demo-local-db | Certificate      | PgBouncer server-facing cert                   |
 | 9   | mtls-verify                | traefik       | TLSOption        | mTLS enforcement                               |
-| 10  | traefik-postgres           | traefik       | Service          | Second LB on 172.18.255.210                    |
+| 10  | traefik-postgres           | traefik       | Service          | Second LB on 172.28.255.210                    |
 | 11  | pg-local-tls-term          | demo-local-db | IngressRouteTCP  | Route 1: TLS termination                       |
 | 12  | pg-local-tls-passthrough   | demo-local-db | IngressRouteTCP  | Route 2: TLS passthrough                       |
 | 13  | pg-local                   | demo-local-db | Cluster (update) | Switch to cert-manager certs + pg_hba          |
@@ -310,7 +310,7 @@ spec:
     - pg-local-ro.demo-local-db
     - pg-local-ro.demo-local-db.svc
     - pg-local-ro.demo-local-db.svc.cluster.local
-    - pg-local-demo-local-db-p.172-18-255-210.sslip.io
+    - pg-local-demo-local-db-p.172-28-255-210.sslip.io
   issuerRef:
     kind: ClusterIssuer
     name: vault-pki
@@ -354,9 +354,9 @@ metadata:
   name: pg-local-tls-term-server
   namespace: demo-local-db
 spec:
-  commonName: pg-local-demo-local-db-t.172-18-255-210.sslip.io
+  commonName: pg-local-demo-local-db-t.172-28-255-210.sslip.io
   dnsNames:
-    - pg-local-demo-local-db-t.172-18-255-210.sslip.io
+    - pg-local-demo-local-db-t.172-28-255-210.sslip.io
   issuerRef:
     kind: ClusterIssuer
     name: vault-pki
@@ -449,7 +449,7 @@ metadata:
   namespace: traefik
 spec:
   type: LoadBalancer
-  loadBalancerIP: 172.18.255.210
+  loadBalancerIP: 172.28.255.210
   selector:
     app.kubernetes.io/instance: traefik-traefik
     app.kubernetes.io/name: traefik
@@ -472,7 +472,7 @@ spec:
   entryPoints:
     - postgres
   routes:
-    - match: HostSNI(`pg-local-demo-local-db-t.172-18-255-210.sslip.io`)
+    - match: HostSNI(`pg-local-demo-local-db-t.172-28-255-210.sslip.io`)
       services:
         - name: pg-local-rw
           port: 5432
@@ -496,7 +496,7 @@ spec:
   entryPoints:
     - postgres
   routes:
-    - match: HostSNI(`pg-local-demo-local-db-p.172-18-255-210.sslip.io`)
+    - match: HostSNI(`pg-local-demo-local-db-p.172-28-255-210.sslip.io`)
       services:
         - name: pg-local-rw
           port: 5432
@@ -574,7 +574,7 @@ Phase 2: Certificate Infrastructure (no disruption)
 
 Phase 3: Traefik Configuration (no disruption)
   ├── 9. Create TLSOption mtls-verify
-  ├── 10. Create Service traefik-postgres (LoadBalancer 172.18.255.210)
+  ├── 10. Create Service traefik-postgres (LoadBalancer 172.28.255.210)
   ├── 11. Create IngressRouteTCP pg-local-tls-term
   └── 12. Create IngressRouteTCP pg-local-tls-passthrough
 
@@ -701,7 +701,7 @@ kubectl get secret vault-pki-bundle -n demo-local-db \
   -o jsonpath='{.data.ca\.crt}' | base64 -d > /tmp/vault-pki-ca.crt
 
 # Test Route 1: TLS termination (Traefik verifies client cert, forwards plaintext to PG)
-psql "host=pg-local-demo-local-db-t.172-18-255-210.sslip.io \
+psql "host=pg-local-demo-local-db-t.172-28-255-210.sslip.io \
       port=5432 \
       dbname=app \
       user=app \
@@ -719,7 +719,7 @@ psql "host=pg-local-demo-local-db-t.172-18-255-210.sslip.io \
 
 ```bash
 # Test Route 2: TLS passthrough (client connects directly to PostgreSQL over TLS)
-psql "host=pg-local-demo-local-db-p.172-18-255-210.sslip.io \
+psql "host=pg-local-demo-local-db-p.172-28-255-210.sslip.io \
       port=5432 \
       dbname=app \
       user=app \
@@ -730,7 +730,7 @@ psql "host=pg-local-demo-local-db-p.172-18-255-210.sslip.io \
 ```
 
 > PostgreSQL verifies the client cert against Vault PKI CA chain (via `hostssl all all all cert`
-> pg_hba rule). The server cert SAN includes `pg-local-demo-local-db-p.172-18-255-210.sslip.io`,
+> pg_hba rule). The server cert SAN includes `pg-local-demo-local-db-p.172-28-255-210.sslip.io`,
 > so `verify-full` will match the hostname.
 
 ## Client Certificate Issuance
@@ -832,7 +832,7 @@ vault write pki_int/issue/cluster-certs \
 ### Route 1 — TLS Termination (Traefik terminates TLS)
 
 ```bash
-psql "host=pg-local-demo-local-db-t.172-18-255-210.sslip.io \
+psql "host=pg-local-demo-local-db-t.172-28-255-210.sslip.io \
       port=5432 \
       dbname=app \
       user=app \
@@ -847,7 +847,7 @@ psql "host=pg-local-demo-local-db-t.172-18-255-210.sslip.io \
 ### Route 2 — TLS Passthrough (end-to-end TLS)
 
 ```bash
-psql "host=pg-local-demo-local-db-p.172-18-255-210.sslip.io \
+psql "host=pg-local-demo-local-db-p.172-28-255-210.sslip.io \
       port=5432 \
       dbname=app \
       user=app \
@@ -857,7 +857,7 @@ psql "host=pg-local-demo-local-db-p.172-18-255-210.sslip.io \
       sslkey=client.key"
 ```
 
-> PostgreSQL verifies the client cert against Vault PKI CA chain (via `hostssl all all all cert` pg_hba rule). The server cert SAN includes `pg-local-demo-local-db-p.172-18-255-210.sslip.io`, so `verify-full` will match.
+> PostgreSQL verifies the client cert against Vault PKI CA chain (via `hostssl all all all cert` pg_hba rule). The server cert SAN includes `pg-local-demo-local-db-p.172-28-255-210.sslip.io`, so `verify-full` will match.
 
 ## Restricting Plaintext Access (Documentation Only — Not Implemented)
 
@@ -894,7 +894,7 @@ spec:
 Restrict plaintext rule to Traefik's pod CIDR:
 
 ```
-host all all 10.244.0.0/16 scram-sha-256
+host all all 10.220.0.0/16 scram-sha-256
 ```
 
 ### Option C: Separate listener
@@ -913,6 +913,6 @@ Use PgBouncer with TLS on a separate port for internal traffic, removing the pla
 | `vault-pki-int-ca` Secret in cert-manager ns       | trust-manager can only read Secrets in its trust namespace (`cert-manager`); this stores the Vault PKI Intermediate CA 2 |
 | CNPG/PgBouncer reference `vault-pki-bundle` Secret | Contains full chain (Root + Int CA 1 + Int CA 2); works for both server and client verification                          |
 | Traefik TLSOption references `vault-pki-bundle`    | Same full chain; trust-manager creates this Secret in the `traefik` namespace automatically                              |
-| Separate LB IP (172.18.255.210)                    | Isolates postgres traffic from HTTP/HTTPS on 172.18.255.200; both routes share the same entrypoint differentiated by SNI |
+| Separate LB IP (172.28.255.210)                    | Isolates postgres traffic from HTTP/HTTPS on 172.28.255.200; both routes share the same entrypoint differentiated by SNI |
 | `hostssl all all all cert` pg_hba rule             | Enforces mTLS on all TLS connections to PostgreSQL; plaintext still allowed for Route 1                                  |
 | ECDSA 256-bit keys                                 | Matches Vault PKI's ECDSA P-256 root; consistent algorithm across the chain                                              |

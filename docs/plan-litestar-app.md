@@ -1052,7 +1052,7 @@ docker_build(
 # Deploy via Helm
 helm_values = [
     './helm/demo-app/values-dev.yaml',
-    '--set', 'global.traefikIpDashed=' + os.environ.get('TRAEFIK_IP_DASHED', '172-18-255-200'),
+    '--set', 'global.traefikIpDashed=' + os.environ.get('TRAEFIK_IP_DASHED', '172-28-255-200'),
     '--set', 'image.tag=dev',
     '--set', 'image.pullPolicy=Always',
 ]
@@ -1345,7 +1345,7 @@ spec:
     kind: ClusterIssuer
     name: vault-pki
   dnsNames:
-    - demo-demo.172-18-255-200.sslip.io
+    - demo-demo.172-28-255-200.sslip.io
 ```
 
 ---
@@ -1557,7 +1557,7 @@ kubectl wait cluster/demo -n demo-db --for=condition=Ready --timeout=300s
 # 4. Deploy app via Helm (v1)
 helm upgrade --install demo-app ./helm/demo-app \
   --namespace demo \
-  --set global.traefikIpDashed=172-18-255-200 \
+  --set global.traefikIpDashed=172-28-255-200 \
   --set image.tag=v1 \
   --set migration.strategy=initContainer \
   --set observability.tracing.enabled=false
@@ -1569,7 +1569,7 @@ helm upgrade --install demo-app ./helm/demo-app \
 # Upgrade to v2 with tracing enabled
 helm upgrade demo-app ./helm/demo-app \
   --namespace demo \
-  --set global.traefikIpDashed=172-18-255-200 \
+  --set global.traefikIpDashed=172-28-255-200 \
   --set image.tag=v2 \
   --set migration.strategy=startup \
   --set observability.tracing.enabled=true

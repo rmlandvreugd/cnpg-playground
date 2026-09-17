@@ -108,8 +108,8 @@ Commands run from `app/`:
 uv run ruff check .
 uv run mypy src
 uv run pytest
-helm lint app/helm/demo-app --set global.traefikIpDashed=172-18-255-200
-helm template demo-app app/helm/demo-app --set global.traefikIpDashed=172-18-255-200
+helm lint app/helm/demo-app --set global.traefikIpDashed=172-28-255-200
+helm template demo-app app/helm/demo-app --set global.traefikIpDashed=172-28-255-200
 ```
 
 Results:

@@ -99,7 +99,7 @@ The dispensed ID token's `aud` is `["gangplank"]`, which the API server accepts
 
 ## Verification (COMPLETE — 2026-07-04)
 
-Live Playwright flow against `https://gangplank.172-18-255-200.sslip.io`:
+Live Playwright flow against `https://gangplank.172-28-255-200.sslip.io`:
 - **admin**: login → consent → kubeconfig page rendered. `kubectl auth whoami` through
   capsule-proxy → `Username oidc:admin@example.com`, groups include `oidc:capsule-admin`,
   `oidc:k8s-admin` (full access).

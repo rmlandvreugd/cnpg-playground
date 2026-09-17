@@ -163,16 +163,25 @@ AUTHELIA_STORAGE_ENCRYPTION_KEY="${AUTHELIA_STORAGE_ENCRYPTION_KEY:-authelia-sto
 AUTHELIA_OIDC_HMAC_SECRET="${AUTHELIA_OIDC_HMAC_SECRET:-authelia-oidc-hmac-secret-dev}"
 AUTHELIA_JWT_SECRET="${AUTHELIA_JWT_SECRET:-authelia-jwt-secret-dev}"
 
+# Docker network kind create/uses for the cluster + all host containers (traefik-edge,
+# zot, seaweedfs, vault, step-ca, authelia). Pre-created explicitly in setup.sh with this
+# subnet instead of letting kind auto-allocate one, since the auto-picked range can
+# collide with routes to other networks reachable from this host (e.g. another kind/
+# KubeVirt cluster's pod or node CIDR). Also drives every other 172.x default below and
+# the K8s podSubnet/serviceSubnet in k8s/kind-cluster.yaml.tpl — keep those consistent
+# if this ever changes.
+KIND_NETWORK_SUBNET="${KIND_NETWORK_SUBNET:-172.28.0.0/16}"
+
 # External Edge Traefik (host container on kind network — fronts vault/authelia/seaweedfs)
 TRAEFIK_EDGE_IMAGE="${TRAEFIK_EDGE_IMAGE:-traefik:v3.7.5}"
 TRAEFIK_EDGE_CONTAINER_NAME="${TRAEFIK_EDGE_CONTAINER_NAME:-traefik-edge}"
-TRAEFIK_EDGE_IP="${TRAEFIK_EDGE_IP:-172.18.0.250}"
-TRAEFIK_EDGE_IP_DASHED="${TRAEFIK_EDGE_IP_DASHED:-172-18-0-250}"
+TRAEFIK_EDGE_IP="${TRAEFIK_EDGE_IP:-172.28.0.250}"
+TRAEFIK_EDGE_IP_DASHED="${TRAEFIK_EDGE_IP_DASHED:-172-28-0-250}"
 # Hub cluster Traefik LB IP is deterministic: hub is region_index 0, so on the
 # kind /16 network MetalLB hands out X.X.255.200 first (see get_ip_range in
 # setup.sh). Used as the single, cross-cluster kube-apiserver OIDC issuer host
 # (must match gangplank's login portal), known before MetalLB is up.
-HUB_TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED:-172-18-255-200}"
+HUB_TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED:-172-28-255-200}"
 TRAEFIK_EDGE_HTTP_PORT="${TRAEFIK_EDGE_HTTP_PORT:-80}"
 TRAEFIK_EDGE_HTTPS_PORT="${TRAEFIK_EDGE_HTTPS_PORT:-443}"
 TRAEFIK_EDGE_METRICS_PORT="${TRAEFIK_EDGE_METRICS_PORT:-9102}"
@@ -181,7 +190,7 @@ TRAEFIK_EDGE_METRICS_PORT="${TRAEFIK_EDGE_METRICS_PORT:-9102}"
 # Static IP so kind containerd hosts.toml / Prometheus Endpoints can target it directly.
 ZOT_IMAGE="${ZOT_IMAGE:-ghcr.io/project-zot/zot-linux-amd64:v2.1.21}"
 ZOT_CONTAINER_NAME="${ZOT_CONTAINER_NAME:-zot}"
-ZOT_IP="${ZOT_IP:-172.18.0.251}"
+ZOT_IP="${ZOT_IP:-172.28.0.251}"
 ZOT_PORT="${ZOT_PORT:-5000}"
 ZOT_HOST="zot.${TRAEFIK_EDGE_IP_DASHED}.sslip.io"
 # OCI proxy host used by helm/stacker chart-ref rewriting; empty = pull direct (unset by spike 3).
@@ -350,7 +359,7 @@ get_traefik_lb_ip() {
 }
 
 # Converts dotted IP to dashed notation for sslip.io hostnames.
-# Example: 172.18.255.200 → 172-18-255-200
+# Example: 172.28.255.200 → 172-28-255-200
 ip_to_dashed() {
     echo "$1" | tr '.' '-'
 }

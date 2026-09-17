@@ -44,7 +44,7 @@ the workflow does not actually function.
 - **A dedicated dev LoadBalancer IP fronts the same Traefik.** setup.sh creates a
   second `LoadBalancer` Service (`traefik-dev`, namespace `traefik`) that selects
   the existing Traefik pods and draws a fresh MetalLB IP from `kind-pool`
-  (`172.18.255.200-.250`; Traefik's primary is `.200`). Dev traffic still
+  (`172.28.255.200-.250`; Traefik's primary is `.200`). Dev traffic still
   terminates at Traefik, so the chart's IngressRoute + cert-manager TLS keep
   working — only the IP in the hostname differs: dev is served at
   `demo-dev-demo.<DEV_IP_DASHED>.sslip.io`. `teardown.sh` deletes that service.
@@ -238,9 +238,9 @@ the rest).
 ## Verification
 
 1. **Render check (no cluster):**
-   `helm template demo-app app/helm/demo-app -f app/helm/demo-app/values-dev.yaml --set global.traefikIpDashed=172-18-255-201 -n demo-dev`
+   `helm template demo-app app/helm/demo-app -f app/helm/demo-app/values-dev.yaml --set global.traefikIpDashed=172-28-255-201 -n demo-dev`
    → container command ends with `--reload`; ConfigMap has `DEMO_APP_DB_SCHEMA: "dev"`;
-   IngressRoute/Certificate host = `demo-dev-demo.172-18-255-201.sslip.io`. Render
+   IngressRoute/Certificate host = `demo-dev-demo.172-28-255-201.sslip.io`. Render
    prod `values.yaml` → command has **no** `--reload`.
 2. **`setup.sh` (DB-only):** `demo` cluster `Ready`; `kubectl get svc traefik-dev -n
    traefik` shows a distinct external IP from `traefik`; **no** `demo-app` release in

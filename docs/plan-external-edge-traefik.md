@@ -40,26 +40,26 @@ observability. The in-cluster Traefik keeps only in-cluster apps.
 - **yt4 folded in.** The admin-UI forward-auth is implemented on this external Traefik.
   Admin-UI policy: `one_factor` + group `seaweedfs-admin`/`admin`.
 - **Authelia moves to the edge (confirmed).** Authelia is fronted by the external edge, so
-  its OIDC issuer becomes `https://authelia.172-18-0-250.sslip.io`. Because issuer is pinned
+  its OIDC issuer becomes `https://authelia.172-28-0-250.sslip.io`. Because issuer is pinned
   in every OIDC client, this forces a **full re-bootstrap of OIDC trust** — but the clean
   rebuild makes that a fresh `setup.sh` bootstrap, not a live migration. (Considered keeping
   Authelia in-cluster-fronted like step-ca for issuer stability; rejected in favour of full
   decoupling from the cluster.)
-- **Two Authelia session cookie domains.** Moving some surfaces to `172-18-0-250.sslip.io`
-  while others (grafana, argocd, gangplank, kubernetes) stay on `172-18-255-200.sslip.io`
+- **Two Authelia session cookie domains.** Moving some surfaces to `172-28-0-250.sslip.io`
+  while others (grafana, argocd, gangplank, kubernetes) stay on `172-28-255-200.sslip.io`
   splits the cookie scope. Authelia must register **both** as session cookie domains (use the
   existing `authelia/config/configuration-two-domains.yaml.tpl` scaffolding). SSO works via the
   portal; a user re-authenticates once per domain on first hit. Acceptable for the playground.
 - **Observability addressing — shared `ext-svc-lb` LoadBalancer.** The edge cannot reach a
-  ClusterIP from a host container. A single reusable LB IP **`172.18.255.240`** (named
+  ClusterIP from a host container. A single reusable LB IP **`172.28.255.240`** (named
   `ext-svc-lb`) carries all o11y ingest from the edge (and any future external→cluster o11y
   traffic). It is pinned + made shareable with the repo's annotation namespace:
-  `metallb.universe.tf/loadBalancerIPs: 172.18.255.240` and
+  `metallb.universe.tf/loadBalancerIPs: 172.28.255.240` and
   `metallb.universe.tf/allow-shared-ip: ext-svc-lb` (constraints: non-overlapping ports +
   `externalTrafficPolicy: Cluster` across all sharing Services). `.240` is inside `kind-pool`
   (`.200–.250`), so MetalLB allocates it — distinct mechanism from the edge's Docker static IP
-  `172.18.0.250`. First consumer: a `LoadBalancer` Service in front of the OTel collector
-  (gRPC :4317 / HTTP :4318). The edge exports **traces and logs** to `172.18.255.240:4317`.
+  `172.28.0.250`. First consumer: a `LoadBalancer` Service in front of the OTel collector
+  (gRPC :4317 / HTTP :4318). The edge exports **traces and logs** to `172.28.255.240:4317`.
 - **Edge → collector hop is gated with mTLS** (step-ca client cert), since the LB exposes an
   otherwise-unauthenticated OTLP ingest endpoint. The edge gets a client cert from step-ca;
   the collector OTLP receiver requires + verifies it (`tls.client_ca_file` + `cert/key`).
@@ -71,8 +71,8 @@ observability. The in-cluster Traefik keeps only in-cluster apps.
   has only `traces→Tempo` and Loki's OTLP path is off.
 - **Edge TLS — per-service multi-SAN certs.** Mirror the existing per-service `step ca
   certificate` (x5c provisioner) pattern; one cert per backend hostname under
-  `*.172-18-0-250.sslip.io` (no wildcard dependency).
-- **Metrics scrape uses a selector-less Service + manual Endpoints** at `172.18.0.250:<metrics
+  `*.172-28-0-250.sslip.io` (no wildcard dependency).
+- **Metrics scrape uses a selector-less Service + manual Endpoints** at `172.28.0.250:<metrics
   port>` + ServiceMonitor (the calico ServiceMonitor uses a pod selector, which does not apply
   to a non-pod host target). Human-facing o11y UIs (Grafana) stay on the in-cluster Traefik.
 - **rustfs descoped from this pass.** Only vault, authelia, and seaweedfs (S3 + admin) move
@@ -82,11 +82,11 @@ observability. The in-cluster Traefik keeps only in-cluster apps.
   (`watch: true`); setup drops one dynamic config file per backend ("triggers on files
   placed in the config folder").
 - **Addressing — one pinned IP, on the `kind` network.** Only the **edge** gets a static
-  IP, and it must be on the **`kind`** network (`172.18.0.0/16`) — the cluster lives there
+  IP, and it must be on the **`kind`** network (`172.28.0.0/16`) — the cluster lives there
   and cannot route to the default `bridge` (`172.17.0.0/16`). Reserve a slot **below** the
   MetalLB pool and clear of node/host-container IPs and Docker's dynamic range — target
-  `172.18.0.250`. **Confirmed clear:** the only MetalLB pool is `kind-pool`
-  = `172.18.255.200-172.18.255.250` (top of the /16); Docker IPAM allocates sequentially from
+  `172.28.0.250`. **Confirmed clear:** the only MetalLB pool is `kind-pool`
+  = `172.28.255.200-172.28.255.250` (top of the /16); Docker IPAM allocates sequentially from
   the low end (nodes `.0.2-.0.9`, host containers `.0.10-.0.13`, current high-water `.0.13`),
   so `.0.250` is unused and far from both. Re-confirm at build. The edge's IP is what gets encoded into every
   `*.sslip.io` hostname (and thus OIDC issuer URLs + S3 endpoints), so it must be
@@ -138,7 +138,7 @@ S3 API — these authenticate with their own tokens / access keys / OIDC-STS.
    file provider `directory: /etc/traefik/dynamic` `watch: true`, `metrics.prometheus`,
    `tracing.otlp`), plus a `dynamic/` dir populated at setup. Run block in
    `scripts/setup.sh` mirrors the seaweedfs-admin run block (`scripts/setup.sh` ~L498-528);
-   `--network kind --ip 172.18.0.250` (the one pinned IP — confirm free); mount config + cert
+   `--network kind --ip 172.28.0.250` (the one pinned IP — confirm free); mount config + cert
    dirs; publish
    :443/:80. Add `TRAEFIK_EDGE_*` vars to `scripts/common.sh` (incl. `TRAEFIK_EDGE_IP` /
    `TRAEFIK_EDGE_IP_DASHED`) following the `SEAWEEDFS_ADMIN_*`/`AUTHELIA_*` var conventions.
@@ -195,19 +195,19 @@ S3 API — these authenticate with their own tokens / access keys / OIDC-STS.
    dead `AUTHELIA_SEAWEEDFS_ADMIN_CLIENT_SECRET` (`scripts/common.sh`).
 6. **Observability.**
    - **Metrics** — `metrics.prometheus` on the edge, scraped via a **selector-less Service +
-     manual Endpoints** at `172.18.0.250:<metricsport>` + a ServiceMonitor (the calico
+     manual Endpoints** at `172.28.0.250:<metricsport>` + a ServiceMonitor (the calico
      ServiceMonitor uses a pod selector, inapplicable to a host target; reuse the Service/
      ServiceMonitor *shape* from `monitoring/platform/calico-*`). No LB needed — Prometheus pods
      reach the edge kind IP directly.
    - **`ext-svc-lb` shared LoadBalancer** — new `LoadBalancer` Service for the OTel collector,
-     `metallb.universe.tf/loadBalancerIPs: 172.18.255.240` +
+     `metallb.universe.tf/loadBalancerIPs: 172.28.255.240` +
      `metallb.universe.tf/allow-shared-ip: ext-svc-lb`, `externalTrafficPolicy: Cluster`, ports
      4317(grpc)/4318(http) → `otel-collector-opentelemetry-collector.otel` (real helm service
      name, per the known service-name fix).
-   - **Traces** — `tracing.otlp.grpc.endpoint: 172.18.255.240:4317` on the edge (mTLS client
+   - **Traces** — `tracing.otlp.grpc.endpoint: 172.28.255.240:4317` on the edge (mTLS client
      cert).
    - **Logs (new pipeline)** — edge `experimental.otlpLogs: true`, `accesslog.otlp.grpc` +
-     `log.otlp.grpc` → `172.18.255.240:4317` (mTLS), `accesslog.dualOutput: true`. Add to
+     `log.otlp.grpc` → `172.28.255.240:4317` (mTLS), `accesslog.dualOutput: true`. Add to
      `monitoring/otel-collector/otel-collector-values.yaml` a `logs` pipeline + `otlphttp/logs`
      exporter → Loki `/otlp`; enable OTLP ingestion in `monitoring/loki/loki-values.yaml`
      (`allow_structured_metadata` already true). Decide which resource attrs become Loki stream
@@ -241,7 +241,7 @@ S3 API — these authenticate with their own tokens / access keys / OIDC-STS.
 
 ## Resolved (decided)
 
-- **Edge address** — one pinned IP on the `kind` network (`172.18.0.250`, confirm free);
+- **Edge address** — one pinned IP on the `kind` network (`172.28.0.250`, confirm free);
   backends unpinned, routed by container name. See Decisions. (Not the default `bridge`:
   wrong network for the cluster, and `--ip` is rejected there anyway.)
 - **step-ca** — stays in-cluster-fronted, out of the edge (trust-anchor bootstrap +
@@ -249,9 +249,9 @@ S3 API — these authenticate with their own tokens / access keys / OIDC-STS.
 
 ## Resolved during planning (2026-06-29)
 
-1. **Edge IP free-slot** — `172.18.0.250` confirmed clear (pool `kind-pool`
-   = `172.18.255.200-250`; Docker high-water `.0.13`). Re-confirm at build.
-2. **OTLP reachability** — shared `ext-svc-lb` `LoadBalancer` pinned to `172.18.255.240`
+1. **Edge IP free-slot** — `172.28.0.250` confirmed clear (pool `kind-pool`
+   = `172.28.255.200-250`; Docker high-water `.0.13`). Re-confirm at build.
+2. **OTLP reachability** — shared `ext-svc-lb` `LoadBalancer` pinned to `172.28.255.240`
    (reusable for future external→cluster o11y traffic); edge exports traces + logs to that
    IP:4317 over mTLS. See Decisions / item 6.
 3. **Authelia placement** — moves to the edge (full OIDC re-bootstrap), executed as a fresh
@@ -264,7 +264,7 @@ S3 API — these authenticate with their own tokens / access keys / OIDC-STS.
 1. **Loki stream-label mapping** — which OTLP resource attributes get promoted to Loki labels
    (keep low-cardinality: `service.name`, maybe `host.name`); rely on structured metadata for
    the rest.
-2. **Re-confirm `172.18.0.250` (Docker static) + `172.18.255.240` (`ext-svc-lb`, in `kind-pool`)**
+2. **Re-confirm `172.28.0.250` (Docker static) + `172.28.255.240` (`ext-svc-lb`, in `kind-pool`)**
    free at build time.
 3. **mTLS plumbing** — confirm Traefik's `otlp.grpc.tls` (client cert) config keys for
    tracing/log/accesslog all accept the step-ca-issued client cert + CA.
@@ -285,7 +285,7 @@ S3 API — these authenticate with their own tokens / access keys / OIDC-STS.
    step-ca provisioner, seaweedfs-s3 STS. Both cookie domains issue valid sessions.
 5. Prometheus shows the `traefik-edge` target UP; edge-route traces appear in Tempo; **edge
    access/app logs appear in Loki** (`{service_name="traefik-edge"}`); the `ext-svc-lb` Service
-   has EXTERNAL-IP `172.18.255.240` and the collector receives over mTLS (handshake succeeds;
+   has EXTERNAL-IP `172.28.255.240` and the collector receives over mTLS (handshake succeeds;
    a cert-less client is rejected); (optional) Traefik dashboard renders.
 6. Direct host-port access (`:23646`, `:8200`, …) still works (debug).
 

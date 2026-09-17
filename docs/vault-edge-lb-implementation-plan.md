@@ -15,19 +15,19 @@ silently breaks cert-manager + ESO. The design doc (grilled, v2) resolves this b
 **traefik-edge Vault's official load balancer**, per the HashiCorp Raft reference architecture:
 clients → edge:443 (TLS terminate) → **verified re-encrypt** → `https://vault:8200`, with an
 LB health check on `/v1/sys/health`. Every in-cluster consumer then dials one canonical URL
-(`https://vault.172-18-0-250.sslip.io`) and the in-cluster Service disappears entirely.
+(`https://vault.172-28-0-250.sslip.io`) and the in-cluster Service disappears entirely.
 
 **Confirmed during exploration (grounding the doc):**
-- Vault's cert already carries the SAN `vault.172-18-0-250.sslip.io` **and**
+- Vault's cert already carries the SAN `vault.172-28-0-250.sslip.io` **and**
   `vault.vault.svc.cluster.local` (`scripts/vault-setup.sh:83,86`) → the verified re-encrypt
-  hop (`serverName: vault.172-18-0-250.sslip.io`) will pass x509.
+  hop (`serverName: vault.172-28-0-250.sslip.io`) will pass x509.
 - `/etc/traefik/certs/step-ca-chain.pem` is already mounted in the edge (used for OTLP TLS in
   `traefik-edge/traefik.yaml:57`) → `rootCAs` path is valid with no new mount.
 - **New finding not in the doc:** the ClusterIssuer and ESO templates are rendered with
   *restricted* `envsubst` allowlists (`setup.sh:695` = `'${VAULT_PORT} ${VAULT_APPROLE_ROLE_ID}
   ${VAULT_CA_BUNDLE}'`; `eso-setup.sh:72` = `'${ESO_NAMESPACE}'`). Switching their URLs to
   `${TRAEFIK_EDGE_IP_DASHED}` requires adding that var to each allowlist. Both scripts already
-  `source common.sh`, which sets `TRAEFIK_EDGE_IP_DASHED` (default `172-18-0-250`), so the value
+  `source common.sh`, which sets `TRAEFIK_EDGE_IP_DASHED` (default `172-28-0-250`), so the value
   is in scope — only the allowlist needs widening.
 - The two demo stores (`demo/self-service-setup.sh:180,206`) currently use **plain HTTP:8202 with
   no `caProvider`**, so HTTPS migration must add a CA reference.
@@ -52,12 +52,12 @@ other 3 services still use it):
 http:
   serversTransports:
     vault-verified:
-      serverName: vault.172-18-0-250.sslip.io
+      serverName: vault.172-28-0-250.sslip.io
       rootCAs:
         - /etc/traefik/certs/step-ca-chain.pem
   routers:
     vault:            # unchanged
-      rule: "Host(`vault.172-18-0-250.sslip.io`)"
+      rule: "Host(`vault.172-28-0-250.sslip.io`)"
       entryPoints: [websecure]
       service: vault
       tls: {}
@@ -112,12 +112,12 @@ existing bundle ConfigMap (mirror `vault/eso/clustersecretstore.yaml.tpl:11-15`)
 ### 6. PKI AIA/CRL/OCSP URLs — `scripts/vault-pki-setup.sh:98-100`
 Drop `:${VAULT_PORT}` from the three URLs → portless
 `https://${VAULT_HOST}/v1/pki_int/{ca,crl,ocsp}` (`VAULT_HOST` is already
-`vault.172-18-0-250.sslip.io`). Only newly issued certs embed these; nothing validates CRL/OCSP
+`vault.172-28-0-250.sslip.io`). Only newly issued certs embed these; nothing validates CRL/OCSP
 here yet, so no reissue urgency.
 
 ### 7. Audit XFF — `vault/config/vault-config.hcl`
 Add to the `0.0.0.0:8200` TLS listener block:
-`x_forwarded_for_authorized_addrs = ["172.18.0.250"]` so Vault's audit log records the real client
+`x_forwarded_for_authorized_addrs = ["172.28.0.250"]` so Vault's audit log records the real client
 pod IP from Traefik's `X-Forwarded-For` instead of the edge IP for every caller.
 
 ### 8. Runbook — `docs/vault-pki-clusterissuer-runbook.md`
@@ -146,7 +146,7 @@ This plan implements a design doc, not an existing bead, so it closes nothing di
 
 | Bead | Relationship to this plan |
 |---|---|
-| **`cnpg-playground-i23`** — P2 Phase 10: NetworkPolicy allow-list + ingress default-deny flip | **Adjacent, coordinate.** The new bead (§10) is docker-network isolation of the Vault *container*; i23 is in-cluster Calico policy. After this change, pods reach Vault via **egress** to the edge IP `172.18.0.250:443` (sslip.io) — the ingress default-deny flip won't block that, but whoever executes i23 must keep pod egress to the edge open. `relate` the new isolation bead to i23. |
+| **`cnpg-playground-i23`** — P2 Phase 10: NetworkPolicy allow-list + ingress default-deny flip | **Adjacent, coordinate.** The new bead (§10) is docker-network isolation of the Vault *container*; i23 is in-cluster Calico policy. After this change, pods reach Vault via **egress** to the edge IP `172.28.0.250:443` (sslip.io) — the ingress default-deny flip won't block that, but whoever executes i23 must keep pod egress to the edge open. `relate` the new isolation bead to i23. |
 | **`cnpg-playground-8ct`** — P3 SeaweedFS S3 roleMapping (its correction note: "Vault/SeaweedFS are edge-fronted, not in-cluster") | **Corroborating, not resolved.** 8ct's note is the authoritative confirmation of the exact edge-fronting topology (`vault.<edge-ip>.sslip.io`, native OIDC, no forward-auth) this plan builds on. This plan does **not** touch SeaweedFS roleMapping. |
 | **`cnpg-playground-lhj`** — P1 epic: Self-service setup | The `demo/self-service-setup.sh` store migration (§5) falls under this epic's surface. The new isolation bead (§10) is standalone infra — file it top-level (or under the vault/edge area), **not** under lhj. |
 | a7o (P0 Gangplank OIDC), 6b6 / s6j (P1 Grafana RBAC), 727 (P3 Barman RustFS→SeaweedFS) | Unrelated to the Vault edge-LB path. No interaction. |
@@ -170,14 +170,14 @@ This plan implements a design doc, not an existing bead, so it closes nothing di
 
 ## Verification (against the post-change full recreate)
 1. Recreate the environment. `docker logs traefik-edge` clean; Traefik dashboard
-   (`traefik.172-18-0-250.sslip.io`) shows the `vault` service **healthy** (health check green).
+   (`traefik.172-28-0-250.sslip.io`) shows the `vault` service **healthy** (health check green).
 2. `kubectl get clusterissuer vault-pki` → Ready; all ClusterSecretStores (main + the two migrated
    demo stores `vault-approle-rbr`, `vault-approle-rbr-db`) → Ready.
 3. Debug pod:
-   `curl -sv https://vault.172-18-0-250.sslip.io/v1/sys/health --cacert <step-ca-chain>` →
+   `curl -sv https://vault.172-28-0-250.sslip.io/v1/sys/health --cacert <step-ca-chain>` →
    edge cert presented, 200 body from Vault, and Vault's audit log shows the **pod** IP (XFF works).
 4. Force a Certificate renewal → reissues through the edge; the new cert's AIA/CRL URLs show the
-   portless https form; `curl https://vault.172-18-0-250.sslip.io/v1/pki_int/ca` returns the CA.
+   portless https form; `curl https://vault.172-28-0-250.sslip.io/v1/pki_int/ca` returns the CA.
 5. `docker restart vault` → the old Endpoints-staleness failure is gone; edge health check recovers
    automatically once Vault is unsealed (unseal via `docker exec` / `127.0.0.1:8200`).
 6. Negative (SPOF) check: `docker stop traefik-edge` → ClusterIssuer/stores degrade with clear
@@ -189,4 +189,4 @@ This plan implements a design doc, not an existing bead, so it closes nothing di
 - **Edge sees plaintext Vault traffic** — ref-arch-sanctioned for an LB; the verified re-encrypt
   hop is the required mitigation and is a strict upgrade over today's `insecure-backend`.
 - **sslip.io DNS now on the in-cluster path** too. Offline fallback if ever needed: CoreDNS
-  rewrite/hosts entry for `vault.172-18-0-250.sslip.io`.
+  rewrite/hosts entry for `vault.172-28-0-250.sslip.io`.

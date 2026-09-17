@@ -6,9 +6,9 @@ Demonstrates Vault-backed **static** PostgreSQL credentials, ESO-managed K8s Sec
 
 ```mermaid
 graph TB
-    subgraph host["Host containers (kind bridge 172.18.0.0/16)"]
+    subgraph host["Host containers (kind bridge 172.28.0.0/16)"]
         Vault["Vault\ndev-tls :8200\nKV + PKI Engine"]
-        Edge["traefik-edge\n172.18.0.250:443\nTLS-terminates vault.*"]
+        Edge["traefik-edge\n172.28.0.250:443\nTLS-terminates vault.*"]
     end
 
     subgraph k8s["Kind cluster (local)"]
@@ -36,7 +36,7 @@ graph TB
 
     CSS ==>|"AppRole auth via sslip.io"| Edge
     Issuer ==>|"PKI sign via sslip.io"| Edge
-    Edge -->|"vault.172-18-0-250.sslip.io"| Vault
+    Edge -->|"vault.172-28-0-250.sslip.io"| Vault
     CSS --> ES
     ES -->|"K8s Secrets\n+ cnpg.io/reload"| CNPG
     Issuer --> Certs
@@ -49,7 +49,7 @@ graph TB
 
 > **Vault is a host container, not in-cluster.** The `ClusterSecretStore vault-approle` and the
 > cert-manager `vault-pki` ClusterIssuer both reach Vault through the **`traefik-edge`** proxy at
-> `vault.172-18-0-250.sslip.io` — there is no in-cluster `vault` Service (see §2.1 of
+> `vault.172-28-0-250.sslip.io` — there is no in-cluster `vault` Service (see §2.1 of
 > `architecture-overview.md`). The **Postgres data plane** (`-t` / `-p` endpoints), by contrast, goes
 > through the **in-cluster** Traefik LoadBalancer, which is a different Traefik from the edge.
 
@@ -57,7 +57,7 @@ graph TB
 
 | Component | Role |
 |---|---|
-| Vault (host container) | Runs as a Docker container on the kind bridge, **not** in-cluster; cluster clients reach it via `traefik-edge` at `vault.172-18-0-250.sslip.io` (no in-cluster `vault` Service) |
+| Vault (host container) | Runs as a Docker container on the kind bridge, **not** in-cluster; cluster clients reach it via `traefik-edge` at `vault.172-28-0-250.sslip.io` (no in-cluster `vault` Service) |
 | Vault KV (`cnpg/pg-local/`) | Static credentials for `superuser` and `app` |
 | Vault PKI (`vault-pki` ClusterIssuer) | Issues all mTLS certs (via edge); CA bundle in Secret `vault-pki-bundle` |
 | ESO ClusterSecretStore `vault-approle` | Syncs KV secrets to K8s Secrets; AppRole `eso-local`, authenticates to Vault through the edge (installed by `scripts/setup.sh`, retained across demo teardown) |

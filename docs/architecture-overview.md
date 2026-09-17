@@ -19,7 +19,7 @@ CNPG Playground creates a **fully functional Kubernetes-based PostgreSQL platfor
 graph TB
     subgraph Host["Host Machine (Docker)"]
         subgraph External["External Services (Docker Containers)"]
-            TraefikEdge["🔀 Traefik Edge<br/>Reverse Proxy<br/>172.18.0.250:443"]
+            TraefikEdge["🔀 Traefik Edge<br/>Reverse Proxy<br/>172.28.0.250:443"]
             StepCA["🔐 step-ca<br/>Root CA<br/>:8443"]
             Vault["🗝️ Vault<br/>Secrets & PKI<br/>:8200"]
             Authelia["👤 Authelia<br/>OIDC Provider<br/>:9091"]
@@ -99,20 +99,20 @@ graph TB
 ## 2.1 How the Docker Containers Link to the Cluster
 
 The external services run as **Docker containers**, not as pods. Both the containers and
-the Kind nodes are attached to the **same `kind` Docker bridge** (`172.18.0.0/16`), so
+the Kind nodes are attached to the **same `kind` Docker bridge** (`172.28.0.0/16`), so
 they share an L3 network. On top of that shared network the project uses **three distinct
 wiring mechanisms** to connect the two worlds — this is the "link" between containers and
 cluster:
 
 ```mermaid
 graph LR
-    subgraph Containers["Docker containers (kind bridge 172.18.0.0/16)"]
-        StepCA["step-ca<br/>172.18.0.13:8443"]
-        RustFS["RustFS<br/>172.18.0.11:9000"]
-        Seaweed["SeaweedFS<br/>172.18.0.12:8333"]
-        Vault["Vault<br/>172.18.0.14:8200"]
-        Authelia["Authelia<br/>172.18.0.2:9091"]
-        Edge["traefik-edge<br/>172.18.0.250:443 / :9102"]
+    subgraph Containers["Docker containers (kind bridge 172.28.0.0/16)"]
+        StepCA["step-ca<br/>172.28.0.13:8443"]
+        RustFS["RustFS<br/>172.28.0.11:9000"]
+        Seaweed["SeaweedFS<br/>172.28.0.12:8333"]
+        Vault["Vault<br/>172.28.0.14:8200"]
+        Authelia["Authelia<br/>172.28.0.2:9091"]
+        Edge["traefik-edge<br/>172.28.0.250:443 / :9102"]
     end
 
     subgraph Cluster["Kind cluster (pods)"]
@@ -120,7 +120,7 @@ graph LR
         ESO["External Secrets Operator"]
         MimirTempo["Mimir + Tempo"]
         LokiTenant["Loki + verstappen backups"]
-        OTel["OTel Collector<br/>ext-svc-lb 172.18.255.240:4317/4318"]
+        OTel["OTel Collector<br/>ext-svc-lb 172.28.255.240:4317/4318"]
         Consumers["ESO / cert-manager<br/>(Vault clients)"]
     end
 
@@ -136,8 +136,8 @@ graph LR
 | Mechanism | Containers reached this way | Cluster side | How it resolves |
 |---|---|---|---|
 | **1. Direct headless `Service` + manual `Endpoints`** | step-ca, RustFS (`objectstore-local`), SeaweedFS | `step-ca/step-ca`, `mimir,tempo/objectstore-local`, `grafana,rbr-ver-db/seaweedfs` | In-cluster DNS name resolves to the container's **kind-bridge IP**; pods dial it directly on the shared bridge. |
-| **2. Via the `traefik-edge` proxy** (`*.172-18-0-250.sslip.io`) | Vault, Authelia | ESO `ClusterSecretStore` (`vault-approle*`) + cert-manager `ClusterIssuer` (`vault-pki`) → `https://vault.172-18-0-250.sslip.io`; Authelia `ExternalName` → `authelia.172-18-0-250.sslip.io` | The `sslip.io` hostname resolves to `172.18.0.250` (the **edge container**), which TLS-terminates and routes to the backend container. There is **no** in-cluster `vault` Service. |
-| **3. Reverse: cluster ← edge** | traefik-edge → cluster | MetalLB `LoadBalancer` `otel/ext-svc-lb` at `172.18.255.240:4317/4318` | The edge container pushes **OTLP traces + logs** into the cluster over the MetalLB VIP; the cluster in turn **scrapes** the edge's Prometheus metrics at `172.18.0.250:9102`. |
+| **2. Via the `traefik-edge` proxy** (`*.172-28-0-250.sslip.io`) | Vault, Authelia | ESO `ClusterSecretStore` (`vault-approle*`) + cert-manager `ClusterIssuer` (`vault-pki`) → `https://vault.172-28-0-250.sslip.io`; Authelia `ExternalName` → `authelia.172-28-0-250.sslip.io` | The `sslip.io` hostname resolves to `172.28.0.250` (the **edge container**), which TLS-terminates and routes to the backend container. There is **no** in-cluster `vault` Service. |
+| **3. Reverse: cluster ← edge** | traefik-edge → cluster | MetalLB `LoadBalancer` `otel/ext-svc-lb` at `172.28.255.240:4317/4318` | The edge container pushes **OTLP traces + logs** into the cluster over the MetalLB VIP; the cluster in turn **scrapes** the edge's Prometheus metrics at `172.28.0.250:9102`. |
 
 **Why two different mechanisms?** Data-plane dependencies that need raw TCP and no auth
 edge (S3 object storage, the step-ca ACME/JWK endpoint) get **direct headless Endpoints**.
@@ -513,7 +513,7 @@ flowchart LR
 | traefik | Traefik v3 ingress controller |
 
 > Note: there is **no** `vault` namespace — Vault is reached through the edge proxy at
-> `vault.172-18-0-250.sslip.io` (see §2.1), not via an in-cluster Service.
+> `vault.172-28-0-250.sslip.io` (see §2.1), not via an in-cluster Service.
 
 ### PostgreSQL Clusters (1)
 
@@ -537,13 +537,13 @@ foundational-secrets components alongside the tenant stack (full reference:
 | CNPG `Cluster pg-local` | demo-local-db | 3 instances, PostgreSQL 18, database `app`; no backups (secrets/mTLS demo only) |
 | `Pooler pooler-local-rw` | demo-local-db | 1× PgBouncer, session mode, mTLS both sides |
 | `ExternalSecret pg-local-{superuser,app}` | demo-local-db | Vault KV `cnpg/pg-local/*` → K8s Secrets (`cnpg.io/reload`) |
-| `ClusterSecretStore vault-approle` | cluster-scoped | AppRole `eso-local` → Vault via edge `vault.172-18-0-250.sslip.io` (installed by `scripts/setup.sh`) |
+| `ClusterSecretStore vault-approle` | cluster-scoped | AppRole `eso-local` → Vault via edge `vault.172-28-0-250.sslip.io` (installed by `scripts/setup.sh`) |
 | 5× cert-manager `Certificate` | demo-local-db | server / replication / tls-term-server / pooler-client / pooler-server (via `vault-pki`) |
 | `TLSOption mtls-verify` | traefik | `RequireAndVerifyClientCert` for the TLS-termination endpoint |
 | 2× `IngressRouteTCP` (`-t` / `-p`) | demo-local-db | TLS-termination (password auth) + TLS-passthrough (cert auth) on the Postgres VIP `:5432` |
 
 > Vault itself is **not** in-cluster here either — the `pg-local` ExternalSecrets and cert-manager
-> `vault-pki` issuer reach Vault through the same edge proxy (`vault.172-18-0-250.sslip.io`, §2.1).
+> `vault-pki` issuer reach Vault through the same edge proxy (`vault.172-28-0-250.sslip.io`, §2.1).
 > The Postgres data-plane endpoints, by contrast, go through the **in-cluster** Traefik (MetalLB), not
 > the edge.
 
@@ -565,9 +565,9 @@ foundational-secrets components alongside the tenant stack (full reference:
 
 | Service | External IP | Ports | Purpose |
 |---------|-------------|-------|---------|
-| traefik | 172.18.255.200 | 80, 443 | HTTP/HTTPS ingress |
-| traefik-postgres | 172.18.255.210 | 5432 | PostgreSQL TCP ingress |
-| otel / ext-svc-lb | 172.18.255.240 | 4317, 4318 | OTLP intake from the edge container (traces + logs) |
+| traefik | 172.28.255.200 | 80, 443 | HTTP/HTTPS ingress |
+| traefik-postgres | 172.28.255.210 | 5432 | PostgreSQL TCP ingress |
+| otel / ext-svc-lb | 172.28.255.240 | 4317, 4318 | OTLP intake from the edge container (traces + logs) |
 
 ---
 
@@ -608,21 +608,21 @@ foundational-secrets components alongside the tenant stack (full reference:
 
 ### External Docker Containers
 
-All external containers share the **`kind` Docker bridge** (`172.18.0.0/16`) with the cluster
+All external containers share the **`kind` Docker bridge** (`172.28.0.0/16`) with the cluster
 nodes; the "IP (kind)" column is the address the cluster wires to (see §2.1). Host-published
 ports are what you reach from the laptop.
 
 | Container | Image | IP (kind) | Container port | Host port | Purpose |
 |-----------|-------|-----------|----------------|-----------|---------|
-| step-ca | smallstep/step-ca:latest | 172.18.0.13 | 8443 | 8443 | Root CA + Intermediate CA |
-| vault | hashicorp/vault:2.0 | 172.18.0.14 | 8200 (+8202 cluster) | 8200 | Secrets management, PKI, AppRole + DB engine |
-| authelia | ghcr.io/authelia/authelia:4.39.20 | 172.18.0.2 | 9091 | 9091 | OIDC identity provider (replaces Dex) |
-| objectstore-local (RustFS) | rustfs/rustfs:latest | 172.18.0.11 | 9000 | 9001 | S3 object storage (Mimir, Tempo) |
-| seaweedfs (SeaweedFS) | chrislusf/seaweedfs:latest | 172.18.0.12 | 8333 (S3) | 8333/8334 | S3 object storage (Loki, tenant backups) |
-| seaweedfs-admin | chrislusf/seaweedfs:latest | 172.18.0.15 | 23646 | 23646 | SeaweedFS admin UI |
+| step-ca | smallstep/step-ca:latest | 172.28.0.13 | 8443 | 8443 | Root CA + Intermediate CA |
+| vault | hashicorp/vault:2.0 | 172.28.0.14 | 8200 (+8202 cluster) | 8200 | Secrets management, PKI, AppRole + DB engine |
+| authelia | ghcr.io/authelia/authelia:4.39.20 | 172.28.0.2 | 9091 | 9091 | OIDC identity provider (replaces Dex) |
+| objectstore-local (RustFS) | rustfs/rustfs:latest | 172.28.0.11 | 9000 | 9001 | S3 object storage (Mimir, Tempo) |
+| seaweedfs (SeaweedFS) | chrislusf/seaweedfs:latest | 172.28.0.12 | 8333 (S3) | 8333/8334 | S3 object storage (Loki, tenant backups) |
+| seaweedfs-admin | chrislusf/seaweedfs:latest | 172.28.0.15 | 23646 | 23646 | SeaweedFS admin UI |
 | seaweedfs-webdav | chrislusf/seaweedfs:latest | — (compose net) | 7333 | 7333 | SeaweedFS WebDAV gateway |
 | seaweedfs-worker | chrislusf/seaweedfs:latest | — (compose net) | 9327 | 9327 | SeaweedFS maintenance worker |
-| traefik-edge | traefik:v3.7.5 | 172.18.0.250 | 443 / 80 / 9102 | 80/443 | Edge reverse proxy: TLS termination, Authelia forward-auth, `*.sslip.io` routing, OTLP traces/logs export, Prometheus metrics on :9102 |
+| traefik-edge | traefik:v3.7.5 | 172.28.0.250 | 443 / 80 / 9102 | 80/443 | Edge reverse proxy: TLS termination, Authelia forward-auth, `*.sslip.io` routing, OTLP traces/logs export, Prometheus metrics on :9102 |
 | revocation-exporter | revocation-exporter:latest | (host net) | — | — | step-ca CRL / certificate revocation metrics exporter |
 
 ### Grafana Dashboards

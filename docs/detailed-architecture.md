@@ -17,13 +17,13 @@ The playground runs in two cooperating planes on a single laptop:
 | **Kubernetes plane** | Everything else: CNI, ingress, cert-manager, ESO, governance (Capsule/Kyverno/ArgoCD), the CNPG database, and the full observability stack | Kind + Helm/manifests |
 
 The reason the split works cleanly is that **both planes sit on the same Docker bridge
-network `kind` (`172.18.0.0/16`)**. Kind attaches every node container to it; the
+network `kind` (`172.28.0.0/16`)**. Kind attaches every node container to it; the
 `scripts/setup.sh` external-services step attaches the support containers to the *same*
 bridge. That shared L3 fabric is what makes the cross-plane wiring in §5 possible.
 
 ```mermaid
 graph TB
-    subgraph Bridge["Docker bridge network: kind — 172.18.0.0/16"]
+    subgraph Bridge["Docker bridge network: kind — 172.28.0.0/16"]
         subgraph HostPlane["Docker host plane (support containers)"]
             SC["step-ca .13"]
             VA["vault .14"]
@@ -43,7 +43,7 @@ graph TB
 ```
 
 > The support containers are additionally attached to Docker's **default bridge**
-> (`172.17.0.0/16`); the `172.18.x` (kind) address is the one used for all cluster wiring.
+> (`172.17.0.0/16`); the `172.28.x` (kind) address is the one used for all cluster wiring.
 > `seaweedfs-webdav` and `seaweedfs-worker` stay on the SeaweedFS compose network only —
 > they are internal to the SeaweedFS deployment and never contacted by the cluster.
 
@@ -55,21 +55,21 @@ graph TB
 
 | IP (kind bridge) | Container / Node | Role |
 |---|---|---|
-| 172.18.0.2 | authelia | OIDC provider |
-| 172.18.0.3 | k8s-local-worker2 | infra node |
-| 172.18.0.4 | k8s-local-worker3 | app node |
-| 172.18.0.5 | k8s-local-worker5 | postgres node |
-| 172.18.0.6 | k8s-local-control-plane | control plane |
-| 172.18.0.7 | k8s-local-worker4 | app node |
-| 172.18.0.8 | k8s-local-worker7 | postgres node |
-| 172.18.0.9 | k8s-local-worker | infra node |
-| 172.18.0.10 | k8s-local-worker6 | postgres node |
-| 172.18.0.11 | objectstore-local (RustFS) | S3 store |
-| 172.18.0.12 | seaweedfs | S3 store |
-| 172.18.0.13 | step-ca | Root/Intermediate CA |
-| 172.18.0.14 | vault | Secrets/PKI |
-| 172.18.0.15 | seaweedfs-admin | SeaweedFS admin UI |
-| 172.18.0.250 | traefik-edge | Edge reverse proxy |
+| 172.28.0.2 | authelia | OIDC provider |
+| 172.28.0.3 | k8s-local-worker2 | infra node |
+| 172.28.0.4 | k8s-local-worker3 | app node |
+| 172.28.0.5 | k8s-local-worker5 | postgres node |
+| 172.28.0.6 | k8s-local-control-plane | control plane |
+| 172.28.0.7 | k8s-local-worker4 | app node |
+| 172.28.0.8 | k8s-local-worker7 | postgres node |
+| 172.28.0.9 | k8s-local-worker | infra node |
+| 172.28.0.10 | k8s-local-worker6 | postgres node |
+| 172.28.0.11 | objectstore-local (RustFS) | S3 store |
+| 172.28.0.12 | seaweedfs | S3 store |
+| 172.28.0.13 | step-ca | Root/Intermediate CA |
+| 172.28.0.14 | vault | Secrets/PKI |
+| 172.28.0.15 | seaweedfs-admin | SeaweedFS admin UI |
+| 172.28.0.250 | traefik-edge | Edge reverse proxy |
 
 ### 2.2 MetalLB LoadBalancer VIPs (cluster → host reachable)
 
@@ -78,14 +78,14 @@ container can reach cluster Services directly:
 
 | VIP | Service | Ports | Consumed by |
 |---|---|---|---|
-| 172.18.255.200 | `traefik` | 80, 443 | Host browser, other containers (HTTP/HTTPS ingress) |
-| 172.18.255.210 | `traefik-postgres` | 5432 | psql clients (PostgreSQL TCP ingress) |
-| 172.18.255.240 | `otel/ext-svc-lb` | 4317, 4318 | **traefik-edge** (OTLP traces + logs push) |
+| 172.28.255.200 | `traefik` | 80, 443 | Host browser, other containers (HTTP/HTTPS ingress) |
+| 172.28.255.210 | `traefik-postgres` | 5432 | psql clients (PostgreSQL TCP ingress) |
+| 172.28.255.240 | `otel/ext-svc-lb` | 4317, 4318 | **traefik-edge** (OTLP traces + logs push) |
 
 ### 2.3 The `sslip.io` hostname trick
 
-Hostnames of the form `<name>.172-18-0-250.sslip.io` resolve (via public sslip.io DNS)
-to `172.18.0.250` — the **edge container**. This gives every plane the same URL:
+Hostnames of the form `<name>.172-28-0-250.sslip.io` resolve (via public sslip.io DNS)
+to `172.28.0.250` — the **edge container**. This gives every plane the same URL:
 
 - Host browser → sslip.io → edge → backend container/Service.
 - In-cluster pod (ESO, cert-manager) → sslip.io → edge → Vault container.
@@ -98,16 +98,16 @@ front door, and the URL is stable across all three planes.
 
 ## 3. Docker Host Plane — Component Detail
 
-### 3.1 step-ca (172.18.0.13:8443, `smallstep/step-ca`)
+### 3.1 step-ca (172.28.0.13:8443, `smallstep/step-ca`)
 
 The **root of trust**. Runs a two-tier CA (Root → Intermediate) plus an OIDC provisioner.
 - Signs the **Vault intermediate CA** (making Vault's PKI chain to step-ca).
 - Issues edge/TLS certs for the support containers (Vault, Authelia, SeaweedFS, OTLP client).
 - Wired into the cluster by a **headless `Service` + `Endpoints`** in the `step-ca`
-  namespace → `172.18.0.13:8443`, so pods (and trust-manager's CA distribution) can reach it.
+  namespace → `172.28.0.13:8443`, so pods (and trust-manager's CA distribution) can reach it.
 - `revocation-exporter` sidecar container publishes CRL / revocation metrics.
 
-### 3.2 Vault (172.18.0.14:8200, `hashicorp/vault`)
+### 3.2 Vault (172.28.0.14:8200, `hashicorp/vault`)
 
 The **secrets + dynamic-credential engine**. Backends in use:
 - **PKI**: an intermediate signed by step-ca; cert-manager's `ClusterIssuer vault-pki`
@@ -117,16 +117,16 @@ The **secrets + dynamic-credential engine**. Backends in use:
 - **AppRole auth**: how ESO authenticates (three `ClusterSecretStore`s: `vault-approle`,
   `vault-approle-rbr`, `vault-approle-rbr-db`).
 - **OIDC auth**: Authelia-fronted human login.
-- Reached from the cluster **through the edge** at `https://vault.172-18-0-250.sslip.io`
+- Reached from the cluster **through the edge** at `https://vault.172-28-0-250.sslip.io`
   (there is no `vault` namespace Service). Cluster port 8202 is Vault's internal cluster port.
 
-### 3.3 Authelia (172.18.0.2:9091, `authelia:4.39.20`)
+### 3.3 Authelia (172.28.0.2:9091, `authelia:4.39.20`)
 
 The **OIDC identity provider** (replaces Dex). Single IdP for every surface: Grafana,
 Vault, ArgoCD, gangplank/kubectl, SeaweedFS admin. Group claims (`rbr-db-admin`,
 `rbr-ver-dev`, `rbr-po`, …) drive both K8s RBAC and DB credential issuance.
 - Cluster wiring: an `ExternalName` Service `authelia/authelia-backend` →
-  `authelia.172-18-0-250.sslip.io` (routed through the edge).
+  `authelia.172-28-0-250.sslip.io` (routed through the edge).
 - The edge uses Authelia as a **forward-auth** middleware for human-facing routes.
 
 ### 3.4 Object stores — RustFS & SeaweedFS
@@ -135,23 +135,23 @@ Two S3-compatible stores split by workload:
 
 | Store | IP:port | Cluster consumers (headless Endpoints) |
 |---|---|---|
-| **RustFS** (`objectstore-local`) | 172.18.0.11:9000 (host 9001) | `mimir/objectstore-local`, `tempo/objectstore-local` — Mimir blocks/alertmanager/ruler + Tempo traces |
-| **SeaweedFS** (`seaweedfs`) | 172.18.0.12:8333 | `grafana/seaweedfs` (Loki), `rbr-ver-db/seaweedfs` (verstappen backups) |
+| **RustFS** (`objectstore-local`) | 172.28.0.11:9000 (host 9001) | `mimir/objectstore-local`, `tempo/objectstore-local` — Mimir blocks/alertmanager/ruler + Tempo traces |
+| **SeaweedFS** (`seaweedfs`) | 172.28.0.12:8333 | `grafana/seaweedfs` (Loki), `rbr-ver-db/seaweedfs` (verstappen backups) |
 
 SeaweedFS also runs `seaweedfs-admin` (UI :23646), `seaweedfs-webdav` (:7333) and
 `seaweedfs-worker` (:9327). Human access to the admin UI + S3 is OIDC-gated via Authelia;
 machine keys stay static.
 
-### 3.5 traefik-edge (172.18.0.250, `traefik:v3.7.5`)
+### 3.5 traefik-edge (172.28.0.250, `traefik:v3.7.5`)
 
 The **external edge reverse proxy** — the front door for host/browser traffic and the
 bridge for cross-plane security services. Responsibilities:
 - TLS termination using step-ca-issued x5c certs (`:443`, `:80`).
-- Routes `*.172-18-0-250.sslip.io` hostnames to backend containers (Vault, Authelia,
+- Routes `*.172-28-0-250.sslip.io` hostnames to backend containers (Vault, Authelia,
   SeaweedFS) **and** to in-cluster Services via the MetalLB VIPs.
 - Applies **Authelia forward-auth** on human routes.
 - Exports its own **OTLP traces + logs** into the cluster via `otel/ext-svc-lb`
-  (172.18.255.240:4317/4318, mTLS).
+  (172.28.255.240:4317/4318, mTLS).
 - Exposes Prometheus metrics on `:9102`, scraped by the cluster via
   `otel/traefik-edge-metrics` Endpoints.
 
@@ -179,7 +179,7 @@ bridge for cross-plane security services. Responsibilities:
 
 ### 4.3 Ingress & load balancing
 
-- **MetalLB** (`metallb-system`) — L2 LoadBalancer, hands out the `172.18.255.x` VIPs.
+- **MetalLB** (`metallb-system`) — L2 LoadBalancer, hands out the `172.28.255.x` VIPs.
 - **Traefik** (`traefik`, v3.7.5) — in-cluster ingress controller: HTTP(S) IngressRoutes
   and PostgreSQL `IngressRouteTCP` (TLS passthrough + termination). Distinct from the
   **edge** Traefik container; the in-cluster one gets certs from cert-manager (Vault PKI).
@@ -244,17 +244,17 @@ directly over the shared bridge — no proxy, raw TCP.
 ```mermaid
 flowchart LR
     Pod["Pod (e.g. Mimir ingester)"] -->|"DNS: objectstore-local.mimir.svc"| Svc["Service (ClusterIP, no selector)"]
-    Svc -->|"Endpoints → 172.18.0.11:9000"| RustFS["RustFS container"]
+    Svc -->|"Endpoints → 172.28.0.11:9000"| RustFS["RustFS container"]
 ```
 
 | Service (ns/name) | → Container | Port |
 |---|---|---|
-| `step-ca/step-ca` | step-ca | 172.18.0.13:8443 |
-| `mimir/objectstore-local` | RustFS | 172.18.0.11:9000 |
-| `tempo/objectstore-local` | RustFS | 172.18.0.11:9000 |
-| `grafana/seaweedfs` | SeaweedFS | 172.18.0.12:8333 |
-| `rbr-ver-db/seaweedfs` | SeaweedFS | 172.18.0.12:8333 |
-| `otel/traefik-edge-metrics` | traefik-edge | 172.18.0.250:9102 |
+| `step-ca/step-ca` | step-ca | 172.28.0.13:8443 |
+| `mimir/objectstore-local` | RustFS | 172.28.0.11:9000 |
+| `tempo/objectstore-local` | RustFS | 172.28.0.11:9000 |
+| `grafana/seaweedfs` | SeaweedFS | 172.28.0.12:8333 |
+| `rbr-ver-db/seaweedfs` | SeaweedFS | 172.28.0.12:8333 |
+| `otel/traefik-edge-metrics` | traefik-edge | 172.28.0.250:9102 |
 
 ### 5.2 Mechanism B — Through the edge via `sslip.io` (cluster → edge → container)
 
@@ -266,10 +266,10 @@ backend container.
 sequenceDiagram
     participant ESO as ESO / cert-manager (pod)
     participant DNS as sslip.io DNS
-    participant Edge as traefik-edge (172.18.0.250)
-    participant Vault as Vault container (172.18.0.14)
-    ESO->>DNS: resolve vault.172-18-0-250.sslip.io
-    DNS-->>ESO: 172.18.0.250
+    participant Edge as traefik-edge (172.28.0.250)
+    participant Vault as Vault container (172.28.0.14)
+    ESO->>DNS: resolve vault.172-28-0-250.sslip.io
+    DNS-->>ESO: 172.28.0.250
     ESO->>Edge: HTTPS (AppRole login / PKI sign)
     Edge->>Vault: route to Vault backend
     Vault-->>Edge: token / signed cert
@@ -278,9 +278,9 @@ sequenceDiagram
 
 | Cluster client | Hostname | Backend |
 |---|---|---|
-| ESO `ClusterSecretStore vault-approle*` | `vault.172-18-0-250.sslip.io` | Vault |
-| cert-manager `ClusterIssuer vault-pki` | `vault.172-18-0-250.sslip.io` | Vault |
-| `authelia/authelia-backend` (`ExternalName`) | `authelia.172-18-0-250.sslip.io` | Authelia |
+| ESO `ClusterSecretStore vault-approle*` | `vault.172-28-0-250.sslip.io` | Vault |
+| cert-manager `ClusterIssuer vault-pki` | `vault.172-28-0-250.sslip.io` | Vault |
+| `authelia/authelia-backend` (`ExternalName`) | `authelia.172-28-0-250.sslip.io` | Authelia |
 
 ### 5.3 Mechanism C — Reverse, edge → cluster (via MetalLB VIP)
 
@@ -289,7 +289,7 @@ over a MetalLB LoadBalancer VIP, and the cluster scrapes the edge's metrics endp
 
 ```mermaid
 flowchart LR
-    Edge["traefik-edge (172.18.0.250)"] -->|"OTLP mTLS 4317/4318"| LB["otel/ext-svc-lb 172.18.255.240"]
+    Edge["traefik-edge (172.28.0.250)"] -->|"OTLP mTLS 4317/4318"| LB["otel/ext-svc-lb 172.28.255.240"]
     LB --> OTel["OTel Collector pods"]
     OTelScrape["OTel / Prometheus"] -.->|"scrape :9102"| Edge
 ```
@@ -331,7 +331,7 @@ Grafana`. Edge access logs follow the same OTLP path; edge metrics are scraped a
 
 ### 6.4 PostgreSQL client connection
 
-`psql → traefik-postgres VIP (172.18.255.210:5432) → in-cluster Traefik IngressRouteTCP →
+`psql → traefik-postgres VIP (172.28.255.210:5432) → in-cluster Traefik IngressRouteTCP →
 pooler-verstappen-rw (PgBouncer, app nodes) → verstappen-1 primary (postgres nodes)`.
 Replication streams primary → 2 replicas; scheduled backups go primary → SeaweedFS.
 

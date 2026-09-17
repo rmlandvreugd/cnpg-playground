@@ -1,4 +1,4 @@
-# Shared LoadBalancer at 172.18.255.240 for external→cluster OTLP ingest.
+# Shared LoadBalancer at 172.28.255.240 for external→cluster OTLP ingest.
 # MetalLB allow-shared-ip key lets future Services share this IP on non-overlapping ports.
 # externalTrafficPolicy: Cluster required for shared-IP Services.
 apiVersion: v1
@@ -7,7 +7,7 @@ metadata:
   name: ext-svc-lb
   namespace: otel
   annotations:
-    metallb.universe.tf/loadBalancerIPs: "172.18.255.240"
+    metallb.universe.tf/loadBalancerIPs: "172.28.255.240"
     metallb.universe.tf/allow-shared-ip: "ext-svc-lb"
 spec:
   type: LoadBalancer
@@ -42,12 +42,12 @@ spec:
   dnsNames:
     - otel-collector-opentelemetry-collector.otel.svc.cluster.local
     - otel-collector-opentelemetry-collector.otel
-  # The external edge Traefik dials the LB by IP (172.18.255.240:4317), so the
+  # The external edge Traefik dials the LB by IP (172.28.255.240:4317), so the
   # server cert MUST carry a matching IP SAN — Go's gRPC/TLS client verifies the
   # dialed IP against the cert SANs (DNS names alone fail with "cannot validate
-  # certificate for 172.18.255.240 because it doesn't contain any IP SANs").
+  # certificate for 172.28.255.240 because it doesn't contain any IP SANs").
   ipAddresses:
-    - 172.18.255.240
+    - 172.28.255.240
   duration: 720h
   renewBefore: 24h
   privateKey:

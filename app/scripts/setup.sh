@@ -17,7 +17,7 @@ echo "DB provisioning: always"
 echo "App install (--with-app): $INSTALL_APP"
 
 # Get prod Traefik IP (primary .200)
-TRAEFIK_IP=$(kubectl get svc -n traefik traefik -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "172.18.255.200")
+TRAEFIK_IP=$(kubectl get svc -n traefik traefik -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "172.28.255.200")
 TRAEFIK_IP_DASHED=$(echo "$TRAEFIK_IP" | tr '.' '-')
 echo "Prod Traefik IP: $TRAEFIK_IP (dashed: $TRAEFIK_IP_DASHED)"
 

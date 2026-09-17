@@ -60,8 +60,8 @@ graph TB
     RustFS -->|9000| LokiPod
     RustFS -->|9000| TempoPods
 
-    TraefikPod -->|LB 172.18.255.200| GrafanaPod
-    TraefikPod -->|LB 172.18.255.210:5432| PG1Pod
+    TraefikPod -->|LB 172.28.255.200| GrafanaPod
+    TraefikPod -->|LB 172.28.255.210:5432| PG1Pod
 
     style DockerHost fill:#f5f5f5
     style KindCluster fill:#e8f5e9
@@ -75,10 +75,10 @@ graph TB
 
 ```mermaid
 graph LR
-    subgraph KindNetwork["Kind Network (172.18.0.0/16)"]
+    subgraph KindNetwork["Kind Network (172.28.0.0/16)"]
         subgraph MetalLBPool["MetalLB IP Pool"]
-            TraefikIP["172.18.255.200<br/>HTTP/HTTPS"]
-            PGIP["172.18.255.210<br/>PostgreSQL TCP"]
+            TraefikIP["172.28.255.200<br/>HTTP/HTTPS"]
+            PGIP["172.28.255.210<br/>PostgreSQL TCP"]
         end
     end
 
@@ -98,9 +98,9 @@ graph LR
 
 **Key networking details:**
 - MetalLB provides LoadBalancer IPs from the Kind network subnet
-- Traefik gets two IPs: `172.18.255.200` (HTTP/HTTPS) and `172.18.255.210` (PostgreSQL TCP)
+- Traefik gets two IPs: `172.28.255.200` (HTTP/HTTPS) and `172.28.255.210` (PostgreSQL TCP)
 - External containers (step-ca, Vault, Dex, RustFS) are connected to the Kind network and wired via headless K8s Services/Endpoints
-- sslip.io DNS pattern used for TLS certificates (e.g., `grafana.172-18-255-200.sslip.io`)
+- sslip.io DNS pattern used for TLS certificates (e.g., `grafana.172-28-255-200.sslip.io`)
 
 ---
 
@@ -534,7 +534,7 @@ kubectl port-forward service/grafana-service 3000:3000 -n grafana
 kubectl port-forward service/pooler-local-rw 5432:5432 -n default
 
 # Direct psql via Traefik TCP (ESO demo)
-psql "host=172.18.255.210 port=5432 user=app dbname=app sslmode=require"
+psql "host=172.28.255.210 port=5432 user=app dbname=app sslmode=require"
 ```
 
 ---

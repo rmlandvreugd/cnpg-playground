@@ -53,6 +53,28 @@ fi
 echo "✅ No existing clusters found. Proceeding with setup."
 echo
 
+# --- Pre-create the 'kind' docker network ---
+# kind auto-creates a network named 'kind' on first `kind create cluster` if one
+# doesn't already exist, letting docker's IPAM pick whatever subnet is free — which
+# can collide with routes to other networks reachable from this host (VPNs, other
+# kind/KubeVirt clusters, etc). Creating it ourselves first, with an explicit
+# subnet, makes kind reuse it as-is instead. Every host container that later joins
+# 'kind' (traefik-edge, zot, seaweedfs, vault, step-ca, authelia) and MetalLB's pool
+# (derived at runtime from the network's actual subnet — see get_kind_ipv4_subnet)
+# then land on this range instead of whatever was auto-picked.
+if $CONTAINER_PROVIDER network inspect kind &>/dev/null; then
+    existing_subnet=$(get_kind_ipv4_subnet kind)
+    if [ "${existing_subnet}" != "${KIND_NETWORK_SUBNET}" ]; then
+        echo "❌ Error: docker network 'kind' already exists with subnet ${existing_subnet}, expected ${KIND_NETWORK_SUBNET}."
+        echo "Run './scripts/teardown.sh' (or 'docker network rm kind' if no cluster is using it) and re-run setup."
+        exit 1
+    fi
+    echo "✅ Docker network 'kind' already exists with the expected subnet ${KIND_NETWORK_SUBNET}."
+else
+    echo "🌐 Creating docker network 'kind' with subnet ${KIND_NETWORK_SUBNET}..."
+    $CONTAINER_PROVIDER network create --driver bridge --subnet "${KIND_NETWORK_SUBNET}" kind > /dev/null
+fi
+
 # --- Script Setup ---
 # Parse flags out of the positional args before region parsing.
 #   --with-tenant : after the cluster + platform are up, chain monitoring and the

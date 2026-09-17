@@ -3,7 +3,10 @@ apiVersion: kind.x-k8s.io/v1alpha4
 name: cnpg
 networking:
   disableDefaultCNI: true
-  podSubnet: "10.244.0.0/16"
+  # Both explicit (not kind's 10.244.0.0/16 / 10.96.0.0/16 defaults): this host also
+  # routes to another kind/KubeVirt cluster using those exact ranges for pods/services.
+  podSubnet: "10.220.0.0/16"
+  serviceSubnet: "10.221.0.0/16"
 # Kubelets request serving certs from the cluster CA (with IP SANs) instead of
 # self-signing, so metrics-server can verify kubelet TLS on :10250. The resulting
 # kubernetes.io/kubelet-serving CSRs are auto-approved by kubelet-csr-approver

@@ -4,13 +4,13 @@ http:
     # (scripts/vault-setup.sh), rootCAs is the step-ca chain already mounted in
     # the edge (traefik-edge/traefik.yaml). Strict upgrade over insecureSkipVerify.
     vault-verified:
-      serverName: vault.172-18-0-250.sslip.io
+      serverName: vault.172-28-0-250.sslip.io
       rootCAs:
         - /etc/traefik/certs/step-ca-chain.pem
 
   routers:
     vault:
-      rule: "Host(`vault.172-18-0-250.sslip.io`)"
+      rule: "Host(`vault.172-28-0-250.sslip.io`)"
       entryPoints:
         - websecure
       service: vault
