@@ -119,6 +119,7 @@ CHART_REGISTRY: dict[str, ChartEntry] = {
     "TIGERA_OPERATOR_CHART_VERSION": ChartEntry("TIGERA_OPERATOR_CHART_VERSION", "tigera-operator", ah_slug="projectcalico/tigera-operator", repo_url="https://docs.projectcalico.org/charts"),
     "CARETTA_CHART_VERSION": ChartEntry("CARETTA_CHART_VERSION", "caretta", ah_slug="groundcover/caretta", repo_url="https://caretta.app/charts"),
     "RADAR_CHART_VERSION": ChartEntry("RADAR_CHART_VERSION", "radar", ah_slug="skyhook/radar", repo_url="https://radar-team.github.io/charts"),
+    "RELOADER_CHART_VERSION": ChartEntry("RELOADER_CHART_VERSION", "reloader", ah_slug="stakater/reloader", repo_url="https://stakater.github.io/stakater-charts"),
     # In-repo chart: no env-var in common.sh — keyed by chart name, reported as
     # "missing in common.sh" until a version variable is added.
     "demo-app": ChartEntry("demo-app", "demo-app", local_path="app/helm/demo-app"),
