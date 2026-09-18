@@ -10,7 +10,7 @@ ArtifactHub-latest stable release.
 
 Source data: `helm-diff.log`, produced by
 `uv run scripts/check-helm-versions.py --diff-values`. The log is **not committed**
-(ANSI-coloured, ~4.3k lines); regenerate it in tier 0 and keep it at the repo root
+(ANSI-coloured, ~1 MB); regenerate it in tier 0 and keep it at the repo root
 of the working tree for the final comparison.
 
 Status snapshot (run 2026-09-18):
@@ -57,7 +57,7 @@ installs them. Same-tier charts ship together. Crossing a tier boundary needs a
 ### Pin-only — declared but never installed (no smoke test possible)
 
 `ARGO_WORKFLOWS_CHART_VERSION`, `ARGO_EVENTS_CHART_VERSION` and
-`ARGO_ROLLOUTS_CHART_VERSION` (`common.sh:250-252`) are not installed by any
+`ARGO_ROLLOUTS_CHART_VERSION` (`common.sh:247-249`) are not installed by any
 script (only `mise.toml` installs the argo-rollouts **CLI**). Bump the pins in the
 tier-1 commit so the checker stays green. Deleting them instead is an open
 decision: cnpg-playground-u9n0.2.
@@ -93,7 +93,7 @@ uv run scripts/check-helm-versions.py --diff-values --rendered \
 | Chart | From → To | Notes |
 |---|---|---|
 | trust-manager | **0.17.1** → 0.25.0 | 8 minors. Pre-condition: tier 1 cert-manager applied; u9n0.1 dedupe done. |
-| capsule | 0.13.6 → 0.14.6 | minor. API-version change claims are unverified — check release notes. |
+| capsule | 0.13.6 → 0.14.6 | minor. Values diff: no apiVersion change; optional TenantResources/ResourcePoolClaims/CustomQuotas ClusterRoles no longer carry `aggregate-to-admin` by default — no impact (`capsule/values.yaml` leaves them `create: false`). Confirm CRD versions in the `--rendered` diff. |
 | capsule-proxy | 0.13.5 → 0.14.1 | minor; ship with capsule. |
 | kyverno | 3.8.1 → 3.9.1 | minor. |
 | kyverno-policies | 3.8.1 → 3.9.1 | ship with kyverno (same app version). |
@@ -108,7 +108,7 @@ uv run scripts/check-helm-versions.py --diff-values --rendered \
 | radar | 1.7.9 → 1.14.1 | 7 minors. |
 
 **otel-collector image exception.** `OTEL_COLLECTOR_IMAGE_TAG=0.153.0`
-(`common.sh:265`) is forced through `--set image.tag` (`monitoring/setup.sh:175`).
+(`common.sh:262`) is forced through `--set image.tag` (`monitoring/setup.sh:175`).
 The new chart defaults `rewriteDeprecatedComponentNames: true`, which renames
 `k8sattributes` → `k8s_attributes` and `k8snode` → `k8s_api` in the generated
 config. The chart notes older collector images don't know the new names. So move
