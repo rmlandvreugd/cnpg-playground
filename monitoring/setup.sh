@@ -357,6 +357,10 @@ fi
     kubectl --context "${CONTEXT_NAME}" apply \
         -f "${GIT_REPO_ROOT}/monitoring/platform/traefik-edge-servicemonitor.yaml"
 
+    echo "📊 Applying zot ServiceMonitor (static external target)..."
+    kubectl --context "${CONTEXT_NAME}" apply \
+        -f "${GIT_REPO_ROOT}/monitoring/platform/zot-servicemonitor.yaml"
+
     # Wire revocation-exporter (host container) into monitoring namespace — hub only
     if [[ "${region}" == "${HUB_REGION}" ]]; then
         echo "🔍 Wiring revocation exporter into monitoring namespace..."

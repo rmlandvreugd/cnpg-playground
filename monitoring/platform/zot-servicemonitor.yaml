@@ -1,0 +1,46 @@
+# Static Service + Endpoints for zot Prometheus metrics (host container).
+# zot exposes /metrics at 172.28.0.251:5000 (ZOT_IP:ZOT_PORT), anonymous read.
+# Headless + manual Endpoints pattern for external (non-k8s) targets, mirrors
+# traefik-edge-servicemonitor.yaml. /metrics is never exposed via the edge
+# (excluded in traefik-edge/dynamic/zot.yaml's router rule) — scraped in-network.
+apiVersion: v1
+kind: Service
+metadata:
+  name: zot-metrics
+  namespace: otel
+  labels:
+    app.kubernetes.io/name: zot-metrics
+spec:
+  clusterIP: None
+  ports:
+    - name: metrics
+      port: 5000
+      targetPort: 5000
+      protocol: TCP
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: zot-metrics
+  namespace: otel
+subsets:
+  - addresses:
+      - ip: 172.28.0.251
+    ports:
+      - name: metrics
+        port: 5000
+        protocol: TCP
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: zot
+  namespace: otel
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: zot-metrics
+  endpoints:
+    - port: metrics
+      path: /metrics
+      scheme: http

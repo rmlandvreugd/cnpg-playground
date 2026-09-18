@@ -57,12 +57,14 @@
       "adminPolicy": {
         "groups": ["zot-admin"],
         "actions": ["read", "create", "update", "delete"]
-      }
+      },
+      "metrics": { "anonymousPolicy": ["read"] }
     }
   },
   "extensions": {
     "search": { "enable": true },
     "ui": { "enable": true },
+    "metrics": { "enable": true, "prometheus": { "path": "/metrics" } },
     "sync": {
       "enable": true,
       "downloadDir": "/tmp/zot-sync",
