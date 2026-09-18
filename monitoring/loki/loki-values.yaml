@@ -1,7 +1,12 @@
 deploymentMode: SingleBinary
 
 loki:
-  auth_enabled: false
+  # Per-tenant isolation: writers set X-Scope-OrgID from the Capsule tenant label of
+  # the source namespace ('platform' otherwise); tenant Grafana queries only its own.
+  auth_enabled: true
+  querier:
+    # Platform Grafana reads 'platform|<tenant>...' in one query.
+    multi_tenant_queries_enabled: true
   commonConfig:
     replication_factor: 1
   storage:

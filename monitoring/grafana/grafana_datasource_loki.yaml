@@ -16,8 +16,12 @@ spec:
     url: http://loki.grafana.svc.cluster.local:3100
     jsonData:
       tlsSkipVerify: true
+      # Loki multi-tenant read: platform plus every Capsule tenant (extend per tenant).
+      httpHeaderName1: X-Scope-OrgID
       derivedFields:
         - matcherRegex: '"traceID":"(\w+)"'
           name: TraceID
           url: '${__value.raw}'
           datasourceUid: tempo
+    secureJsonData:
+      httpHeaderValue1: platform|rbr

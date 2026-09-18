@@ -61,6 +61,9 @@ config:
         insecure: true
     otlphttp/logs:
       endpoint: http://loki.grafana.svc.cluster.local:3100/otlp
+      # Loki runs with auth_enabled; OTLP logs arrive from platform components.
+      headers:
+        X-Scope-OrgID: platform
       tls:
         insecure: true
     debug:
