@@ -235,10 +235,10 @@ GANGPLANK_CHART_VERSION="${GANGPLANK_CHART_VERSION:-0.2.1}"
 # 3.8.1 is still a v3 chart (CRDs at apiVersion v1), so no `upgrade.fromV2`; the
 # chart's default `crds.migration.enabled=true` runs a post-upgrade Job that
 # migrates CRD stored versions automatically. Requires Kubernetes >= 1.25.
-KYVERNO_CHART_VERSION="${KYVERNO_CHART_VERSION:-3.8.1}"
+KYVERNO_CHART_VERSION="${KYVERNO_CHART_VERSION:-3.9.1}"
 # kyverno-policies bundle (Pod Security Standards). Only in the https helm repo,
 # not the ghcr OCI registry, so it is installed via --repo-url.
-KYVERNO_POLICIES_CHART_VERSION="${KYVERNO_POLICIES_CHART_VERSION:-3.8.1}"
+KYVERNO_POLICIES_CHART_VERSION="${KYVERNO_POLICIES_CHART_VERSION:-3.9.1}"
 # policy-reporter: PolicyReport UI + Prometheus metrics for Kyverno. Installed on the
 # hub via --repo-url and fronted by Traefik + Authelia (see scripts/setup.sh).
 POLICY_REPORTER_CHART_VERSION="${POLICY_REPORTER_CHART_VERSION:-3.7.4}"
