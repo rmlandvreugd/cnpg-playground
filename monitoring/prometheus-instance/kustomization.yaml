@@ -3,4 +3,5 @@ kind: Kustomization
 resources:
   - prometheus-rbac.yaml
   - prometheus-token.yaml
+  - prometheus-self-podmonitor.yaml
 namespace: prometheus-operator

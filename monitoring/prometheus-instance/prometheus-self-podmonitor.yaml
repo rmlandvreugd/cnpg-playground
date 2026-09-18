@@ -1,0 +1,15 @@
+# Self-scrape: the chart's own Prometheus (and its self ServiceMonitor) is disabled,
+# so without this our Prometheus exports no prometheus_* health metrics.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: prometheus-self
+spec:
+  selector:
+    matchLabels:
+      operator.prometheus.io/name: prometheus
+  podMetricsEndpoints:
+    - port: web
+      path: /metrics
+    - port: reloader-web
+      path: /metrics
