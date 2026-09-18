@@ -1,346 +1,297 @@
-# Loki S3 Storage via in-cluster SeaweedFS with DR Fan-out to External SeaweedFS + RustFS
+# Loki S3 Storage A/B/C: RustFS-direct vs in-cluster SeaweedFS (+ RustFS mirror) vs host SeaweedFS
 
-**Date:** 2026-09-17
-**Status:** Design — pending decision on operator deployment + topology contradiction flagged below
+**Date:** 2026-09-17 (rev 2: 2026-09-18, after adversarial review)
+**Status:** Design — decisions closed, ready to implement
 **Owner:** monitoring stack
-**Scope:** `monitoring/` (Loki + SeaweedFS fan-out). Mimir/Tempo untouched.
+**Tracking:** epic `cnpg-playground-t9p7` → `.1` operator → `8ti` Seaweed CR + mirror → `dfe` Lokis → `.2` k8s-monitoring → `.3` benchmark; bug `eff0` (Reloader) blocks `dfe`
+**Target environment:** a cluster built with `./scripts/setup.sh local` (single region `local` = hub, one RustFS `objectstore-local`, host SeaweedFS container) followed by `./monitoring/setup.sh`.
+
+> Rev 1 of this doc proposed one in-cluster SeaweedFS fanning out to two DR sinks (external SeaweedFS + RustFS) via two `weed filer.remote.gateway` sidecars. That mechanism does not work (see §9). Rev 2 records the reworked design and the decisions from the 2026-09-18 review.
 
 ---
 
 ## 1. Goal
 
-Replace the current Loki → SeaweedFS direct dependency with an architecture where:
+Measure how Loki performs against S3 storage **outside** the cluster versus **inside** the cluster, with the in-cluster store also mirroring to the outside store for DR.
 
-- An **in-cluster SeaweedFS cluster** is the source of truth for Loki chunks/rules/admin.
-- A **one-way fan-out** mirrors the bucket set to two DR sinks:
-  - An **external SeaweedFS cluster** (off-cluster, geo-redundant copy).
-  - The existing **RustFS cluster** (off-cluster, separate S3-compatible storage).
-- Loki remains the only reader of these buckets.
-- Driver is **disaster recovery**, not multi-region read locality or cost tiering.
+- Node logs and pod logs are collected by Alloy (Grafana **k8s-monitoring** chart, features `nodeLogs` + `podLogsViaLoki`) and pushed to every Loki.
+- Grafana queries each Loki through its own datasource.
+- All Lokis run side-by-side under identical load.
 
----
-
-## 2. Context (verified by recon, 2026-09-17)
-
-### 2.1 Current state (as committed)
-
-- Loki: SingleBinary, schema v13, store `tsdb` + `object_store: s3`, retention `3d` via `limits_config`. Buckets `loki/chunks`, `loki/ruler`, `loki/admin` (all named `loki`).
-- File: `monitoring/loki/loki-values.yaml` lines 8–20:
-  ```yaml
-  storage:
-    type: s3
-    bucketNames: { chunks: loki, ruler: loki, admin: loki }
-    s3:
-      endpoint: https://seaweedfs.grafana.svc.cluster.local:8333
-      region: us-east-1
-      s3ForcePathStyle: true
-      insecure: false
-      http_config: { ca_file: /etc/ssl/step-ca/ca-certificates.crt }
-  ```
-- S3 creds: static `--set` from `SEAWEEDFS_ACCESS_KEY=loki` and `SEAWEEDFS_SECRET_KEY` (env, in `monitoring/setup.sh` and `common.sh:96–97`). No ESO/IRSA wired for Loki today.
-- **SeaweedFS is currently a host Docker container** (`seaweedfs`, `weed server -dir=/data -filer -s3`, ports 8333/8334/8889/9333/9340) bridged into the cluster via `kind network connect` + headless `Service`+`Endpoints` created imperatively in `monitoring/setup.sh:248–271`.
-- **RustFS is currently a host Docker container** (`objectstore-<region>` on port 9001), bridged into the cluster at `objectstore-<region>:9000` for Mimir/Tempo. Loki does **not** touch RustFS today.
-- `minio.enabled: false` in the Loki chart. `mc` is used only as a throwaway client for bucket creation.
-
-### 2.2 Topology decision (resolved 2026-09-17)
-
-The user described the system as "in-cluster seaweedfs (managed by seaweedfs-operator) + external seaweedfs + external rustfs". **Recon showed that as a future-state target, not current reality.** SeaweedFS is currently a host Docker container; no `Seaweed` CR, no operator deployment. Same for RustFS.
-
-**Decision (recorded 2026-09-17):** The operator-managed in-cluster SeaweedFS **coexists** with the host Docker SeaweedFS container for the duration of the PoC. The host container remains the rollback target if the operator path misbehaves. After the PoC validates, the host container can be decommissioned in a separate change.
-
-**Second Loki:** User confirmed a second Loki (Loki #2) writing directly to RustFS is **planned, not yet committed**. It is part of the PoC scope (deployed side-by-side with Loki #1) so the two paths can be compared under identical load.
-
-### 2.3 Doc drift to fix in the same change set
-
-- `monitoring/codemap.md:4,8,9,14,23` and root `codemap.md:174,251` claim Loki → RustFS `objectstore-local:9000`. **Stale.** Reality is SeaweedFS `:8333` TLS.
-- Root `codemap.md` external-services table omits SeaweedFS entirely.
-- Graphify community labels reflect the stale Loki→RustFS association; graph was rebuilt 2026-09-17 but labels are pending LLM re-label.
+Verdict metrics (user decision): **query latency over old time ranges**, **S3 operation latency p50/p99**, **resource cost**. A **restore drill** from the mirror is a pass/fail gate (not scored).
 
 ---
 
-## 3. Decision
+## 2. Current state (verified 2026-09-18 against the `vault` branch)
 
-### 3.1 Sync mechanism: **Gateway-to-Remote** (`weed filer.remote.gateway`)
+| Fact | Evidence |
+|---|---|
+| `setup.sh local` → `REGIONS=(local)`, hub = `local` | `scripts/funcs_regions.sh` `set_regions`, `scripts/setup.sh:94-95` |
+| Monitoring (incl. Loki) is **not** installed by `setup.sh` unless `--with-tenant`; run `monitoring/setup.sh` | `scripts/setup.sh:1375-1390` |
+| Host SeaweedFS container `seaweedfs` (hub only), S3 HTTPS `:8333`, static identities `admin`/`loki`/`barman`/`zot` | `scripts/setup.sh:183-520` |
+| Host SeaweedFS is **shared**: Loki bucket `loki`, CNPG Barman backups, **zot blob storage** (the containerd pull-through mirror) | `scripts/setup.sh:462-484,513-519`, `scripts/zot-setup.sh` |
+| RustFS `objectstore-local` is **HTTPS-only** (restarted with `RUSTFS_TLS_PATH`), cert SANs = short name `objectstore-local`, `*.cnpg-system/mimir/tempo.svc` FQDNs, kind IP | `scripts/setup.sh:330-392` |
+| RustFS is reached through **per-namespace** headless bridges (`mimir`, `tempo` only today) | `monitoring/mimir/objectstore-bridge.yaml.tpl`, `monitoring/setup.sh:58-66,120-128` |
+| Loki today: release `loki`, ns `grafana`, chart `grafana-community/loki` 13.5.0 (Loki **3.7.1**), SingleBinary on infra nodes, bucket `loki` on host SeaweedFS via bridge Service `seaweedfs` | `monitoring/setup.sh:244-294`, `monitoring/loki/loki-values.yaml` |
+| Rendered chart uses the **legacy** S3 client (`use_thanos_objstore: false`) and **hedging** `at: 250ms, up_to: 3` | `helm template` of 13.5.0 with current values |
+| `compactor.retention_enabled` unset → no retention deletes today | `monitoring/loki/loki-values.yaml` |
+| Loki `monitoring.serviceMonitor.enabled: false` → Loki metrics are not scraped | `monitoring/loki/loki-values.yaml` |
+| Alloy today: release `alloy` (grafana/alloy 1.8.0) with custom River: pgaudit, `traefik_access`, `k8s_events`, system logs → `loki.grafana.svc:3100` | `monitoring/alloy/alloy-config.river` |
+| Datasource uid `loki` is referenced by the Tempo datasource and dashboards | `monitoring/grafana/grafana_datasource_tempo.yaml:19,37` |
+| `step-ca-external-bundle` is synced by trust-manager to **all** namespaces; `vault-pki-bundle` exists for Vault-PKI-issued certs; ClusterIssuer `vault-pki` | `step-ca/trust-manager/bundle-external.yaml`, `vault/trust-manager/bundle.yaml.tpl`, `vault/cert-manager/clusterissuer.yaml.tpl` |
+| **Stakater Reloader is not installed anywhere** (only annotations exist) | repo-wide `rg stakater`; bug `cnpg-playground-eff0` |
+| kind node image has **no `/var/log/journal`**; journald `Storage=auto` → volatile `/run/log/journal` | inspected `kindest/node` image locally |
+| Infra nodes: 2 tainted workers (`node-role.kubernetes.io/infra:NoSchedule`) | `k8s/kind-cluster.yaml.tpl` |
 
-| | Gateway-to-Remote | Filer Active-Active (`filer.sync`) |
-|---|---|---|
-| Can reach RustFS | ✅ yes | ❌ SeaweedFS-only |
-| One-way fan-out | ✅ native | ⚠️ needs `-isActivePassive` |
-| Bidirectional active-active | ❌ no | ✅ yes (signature dedup) |
-| Deletion propagation | ✅ yes (DR = mirror, not backup) | ✅ yes |
-| Sink type | any S3-compatible | SeaweedFS-native only |
-| Loop / split-brain risk | none (one-way) | real; renames break in loops |
-| Operational complexity | low: 1 daemon/sink, pause-resume safe | medium: per-direction sync, dual channels (gRPC 18888 + HTTP 8888), per-side TLS |
-| Observability | logs only | `-a.debug`/`-b.debug` logs only |
+---
 
-Gateway wins because the sink is **plain S3** — one in-cluster SeaweedFS fans out to both DR sinks (external SeaweedFS + RustFS) with identical mechanics. `filer.sync` cannot target RustFS at all.
+## 3. Topology
 
-Sources:
-- https://github.com/seaweedfs/seaweedfs/wiki/Gateway-to-Remote-Object-Storage (revised 2024–2026)
-- https://github.com/seaweedfs/seaweedfs/wiki/Filer-Active-Active-cross-cluster-continuous-synchronization (revised 2026-09-02)
+```
+                       k8s-monitoring (alloy-logs DaemonSet)
+                       nodeLogs + podLogsViaLoki, WAL per destination
+                 ┌───────────────────┼─────────────────────┐
+                 ▼                   ▼                     ▼
+        Loki-A  loki-rustfs   Loki-B  loki-seaweedfs   Loki-C  loki (existing)
+                 │ https             │ https               │ https
+                 │                   ▼                     │
+                 │        seaweedfs-ab (Seaweed CR, grafana ns)
+                 │        s3 gw ─► filer ─► volume          │
+                 │                   │ filer.backup sidecar │
+                 │                   │ (mirror, deletes on) │
+  ───────────── cluster boundary ────┼──────────────────────┼─────────
+                 ▼                   ▼                      ▼
+        RustFS objectstore-local                   host SeaweedFS `seaweedfs`
+        bucket loki-direct  bucket loki-mirror     bucket loki
+```
 
-### 3.2 Deployment: operator-managed in-cluster SeaweedFS
+| Arm | Release (ns `grafana`) | Store | Location | Datasource uid | Role |
+|---|---|---|---|---|---|
+| A | `loki-rustfs` (new) | RustFS `loki-direct` | outside | `loki-rustfs` | RustFS-direct |
+| B | `loki-seaweedfs` (new) | in-cluster SeaweedFS `loki`, mirrored to RustFS `loki-mirror` | inside | `loki-seaweedfs` | candidate |
+| C | `loki` (existing, unchanged name) | host SeaweedFS `loki` | outside | `loki` | **control**: same software as B, same location as A |
 
-`seaweedfs-operator 0.1.42` (latest, 2026-09-14). CRDs `seaweeds.seaweed.seaweedfs.com/v1` kind `Seaweed`. Neither sync mechanism has a first-class CRD field — both go through `spec.filer.sidecars` (arbitrary `v1.Container`) + `spec.filer.configSecret` for filer TOML.
+Reading the results: **B vs C** isolates *location* (same software). **A vs C** isolates *software* (same location). A vs B is the combined comparison as originally asked.
 
-Sample CR skeleton (subject to operator API validation):
+---
+
+## 4. Components
+
+### 4.1 Platform additions (`scripts/setup.sh`, hub only)
+
+| Component | Version | Notes | Bead |
+|---|---|---|---|
+| seaweedfs-operator | chart **0.1.42** / app **1.0.39** (`https://seaweedfs.github.io/seaweedfs-operator/`) | CRD `seaweeds.seaweed.seaweedfs.com` is templated (chart ≥0.1.15, upgrades update it). Infra nodes. | `t9p7.1` |
+| stakater Reloader | pin at implementation | Also repairs demo-app's Vault-rotation restarts. | `eff0` |
+
+### 4.2 In-cluster SeaweedFS (`monitoring/setup.sh`) — bead `8ti`
+
+Seaweed CR **`seaweedfs-ab`** in `grafana`. The name avoids confusion with the existing bridge Service `seaweedfs` and the host container's cert SAN `seaweedfs.grafana.svc.cluster.local`.
+
 ```yaml
 apiVersion: seaweed.seaweedfs.com/v1
 kind: Seaweed
-metadata: { name: seaweedfs, namespace: grafana }
+metadata: { name: seaweedfs-ab, namespace: grafana }
 spec:
-  image: chrislusf/seaweedfs:latest   # required for filer.remote.gateway / filer.sync
-  master: { replicas: 1 }              # bump to 3 once quorum is desired
-  volume: { replicas: 1, requests: { storage: 100Gi } }   # bump per data growth
+  image: chrislusf/seaweedfs:4.47          # pin; sidecar uses the same tag
+  master: { replicas: 1, nodeSelector: *infra, tolerations: *infra }
+  volume: { replicas: 1, requests: { storage: 20Gi }, storageClassName: standard, nodeSelector: *infra, tolerations: *infra }
   filer:
     replicas: 1
-    configSecret: seaweedfs-filer-config     # contains [s3] remotes cloud1/cloud2 + [remote.mount] entries
+    s3: { enabled: false }                  # use the standalone gateway below
+    nodeSelector: *infra
+    tolerations: *infra
+    annotations: { reloader.stakater.com/auto: "true" }
     sidecars:
-      - name: filer-remote-gateway-cloud1
-        image: chrislusf/seaweedfs:latest
-        command: [weed, filer.remote.gateway, -createBucketAt=cloud1]
-      - name: filer-remote-gateway-cloud2
-        image: chrislusf/seaweedfs:latest
-        command: [weed, filer.remote.gateway, -createBucketAt=cloud2]
+      - name: filer-backup-rustfs
+        image: chrislusf/seaweedfs:4.47
+        args: [filer.backup, -filer=localhost:8888, -filerPath=/buckets/loki,
+               -doDeleteFiles=true, -initialSnapshot]
+        env: [{ name: AWS_CA_BUNDLE, value: /etc/ssl/step-ca/ca-certificates.crt }]
+        volumeMounts: [replication-toml → /etc/seaweedfs/replication.toml, step-ca-external-bundle → /etc/ssl/step-ca]
   s3:
-    replicas: 1   # Loki S3 endpoint target
+    replicas: 1
+    configSecret: { name: seaweedfs-ab-s3-identities, key: identities.json }
+    extraArgs: [-port.https=8333, -cert.file=/etc/tls/tls.crt, -key.file=/etc/tls/tls.key]   # verify flag names + HTTP port relocation
+    volumes/volumeMounts: Certificate secret from ClusterIssuer vault-pki (SANs: operator s3 Service name(s))
+    nodeSelector: *infra
+    tolerations: *infra
 ```
 
-### 3.3 Maturity call
+Schematic; field names verified against `api/v1/seaweed_types.go` (master, 2026-09-18): `ComponentSpec` has `sidecars`, `initContainers`, `extraArgs`, `env`, `volumes`, `volumeMounts`, `nodeSelector`, `tolerations`, `annotations`. `SeaweedSpec.s3` is the standalone gateway (preferred over deprecated `filer.s3`). `spec.tls` is **gRPC mTLS only**. Client-facing S3 HTTPS has no first-class field, hence `extraArgs` plus a mounted cert.
 
-- Gateway-to-Remote: documented, actively-maintained production feature.
-- Operator path: **not GA-first-class.** Works via generic `sidecars` + `configSecret`. Operator itself is 0.1.x and actively developed — no version guarantee for the CRD surface.
+S3 identities (`seaweedfs-ab-s3-identities`): `loki` → `Read/Write/List/Tagging:loki`; `admin` → bootstrap only (bucket create Job), never handed to a workload. This mirrors the host container's least-privilege model.
 
----
+**Mirror mechanism: `weed filer.backup` (not `filer.remote.gateway`).**
 
-## 4. Data flow
+| Property | Value | Source |
+|---|---|---|
+| Sink config | `replication.toml` `[sink.s3]` from a Secret: `enabled=true`, `is_incremental=false`, `endpoint=https://objectstore-local:9000`, `bucket=loki-mirror`, `directory=/`, `s3_force_path_style=true`, keys of RustFS user `loki-mirror` | `weed/command/scaffold/replication.toml`, `weed/replication/sink/s3sink/s3_sink.go:64-110` |
+| Key layout | identical to source (so Loki can read the mirror) only with `is_incremental=false`; `true` prefixes `YYYY-MM-DD/` | `weed/command/filer_sync.go:788-792` |
+| Deletes | only with **`-doDeleteFiles=true`** (default **false**), and never when `is_incremental=true` | `weed/command/filer_backup.go:61`, `filer_sync.go:640-647` |
+| Resume | checkpoint keyed by `endpoint\0bucket\0dir` | `s3_sink.go:57` |
+| Seed | `-initialSnapshot` walks the tree once. Remove it after catch-up, or every restart re-walks the whole tree. | `filer_backup.go:67` |
+| TLS to RustFS | no CA option in `replication.toml`. The sink uses aws-sdk-go v1 `session.NewSession`, which should honour `AWS_CA_BUNDLE`. **Verify first**; fallback is adding the step-ca root to the image trust store via an initContainer. | `s3_sink.go:115-131` |
 
-### 4.1 Write path (Loki → SeaweedFS)
-```
-loki (SingleBinary) ── S3 ──► seaweedfs-s3 (in-cluster, port 8333)
-                                  │
-                                  ▼
-                            filer (in-cluster)
-                                  │
-              ┌───────────────────┴───────────────────┐
-              ▼                                       ▼
-   local volume servers (in-cluster)         filer.remote.gateway sidecar(s)
-              │                                       │
-              ▼                                       ▼
-        chunks/rules/admin                  cloud1 → external SeaweedFS S3
-        (canonical SOT)                     cloud2 → RustFS S3
-```
+Why not the gateway, even with one sink:
+- remote config is imperative (`weed shell remote.configure`, stored in filer `/etc/remote`)
+- `-createBucketWithRandomSuffix` defaults `true`
+- only buckets created after the gateway starts are picked up automatically
 
-Loki writes go to in-cluster SeaweedFS only; the gateway sidecars handle fan-out asynchronously. Loki's `insecure: false` + `ca_file` stays for the in-cluster TLS hop.
+`filer.backup` is declarative and restartable.
 
-### 4.2 Read path
-Loki compactor + queriers read their own chunks from in-cluster SeaweedFS. **No DR sink is read from Loki's perspective.** This simplifies the design: no read-coherence requirement between replicas; eventual mirror lag is invisible to queries.
+### 4.3 RustFS (outside) — bead `dfe`
 
-### 4.3 Deletion flow
-Local retention-driven deletes (Loki `limits_config.retention_period: 3d` → compactor → S3 `DELETE`) propagate to both DR sinks via the gateway. **There is no tombstone/recovery window** — local deletion is mirrored deletion. DR = mirror, not backup. See §7 risk 1.
+- Bridge Service/Endpoints `objectstore-local` in `grafana` (copy of `monitoring/mimir/objectstore-bridge.yaml.tpl`). Clients use the **short name** `objectstore-local`, because the cert SANs do not cover `objectstore-local.grafana.svc.cluster.local`.
+- Buckets: `loki-direct` (Loki-A), `loki-mirror` (Loki-B's mirror). Same RustFS container for both (user decision). Loki-A's numbers therefore include mirror contention; §5 records mirror throughput as a covariate.
+- IAM users `loki-direct` and `loki-mirror`, each `Read/Write/List` on its own bucket only (`mc admin user add` + policy). No root `cnpg` creds in any Loki or SeaweedFS pod.
 
----
+### 4.4 Lokis — bead `dfe`
 
-## 5. Loki reconfiguration
+Per-arm values files; `loki-values.yaml` stays Loki-C's file.
 
-The "direct to SeaweedFS" case is current reality. The "direct to RustFS" alternative is shown for comparison and for PoC A/B testing.
-
-### 5.1 Delta table (hard-coupled to `monitoring/loki/loki-values.yaml`)
-
-| YAML key | Current (SeaweedFS) | Direct-RustFS | Change? |
+| Key | Loki-A `loki-values-rustfs.yaml` | Loki-B `loki-values-seaweedfs.yaml` | Loki-C `loki-values.yaml` |
 |---|---|---|---|
-| `s3.endpoint` | `https://seaweedfs.grafana.svc.cluster.local:8333` | `http://objectstore-local:9000` | **CHANGE** |
-| `s3.insecure` | `false` | `true` (or `http_config.insecure_skip_verify: true` if RustFS bridge serves self-signed TLS) | **CHANGE** |
-| `s3.http_config.ca_file` | `/etc/ssl/step-ca/ca-certificates.crt` | remove (or keep with `insecure_skip_verify`) | **CHANGE** |
-| `s3.accessKeyId` source | `SEAWEEDFS_ACCESS_KEY` (env, `common.sh`) | `RUSTFS_ROOT_USER` (env) | **CHANGE** |
-| `s3.secretAccessKey` source | `SEAWEEDFS_SECRET_KEY` | `RUSTFS_ROOT_PASSWORD` | **CHANGE** |
-| `s3.region` | `us-east-1` | `us-east-1` | stays |
-| `s3.s3ForcePathStyle` | `true` | `true` | stays |
-| `bucketNames.chunks/ruler/admin` | `loki`/`loki`/`loki` | `loki`/`loki`/`loki` (create bucket in RustFS first) | stays |
-| `schemaConfig` (tsdb, v13, `loki_index_`, 24h) | — | — | stays |
-| `limits_config.retention_period` | `3d` | `3d` | stays |
-| `singleBinary.extraVolumes/extraVolumeMounts` (step-ca) | mounted | removable if bridge is plain HTTP | **CHANGE** |
+| `storage.s3.endpoint` | `https://objectstore-local:9000` | `https://<seaweedfs-ab s3 Service>.grafana.svc.cluster.local:8333` | `https://seaweedfs.grafana.svc.cluster.local:8333` (unchanged) |
+| bucket (chunks/ruler/admin) | `loki-direct` | `loki` | `loki` |
+| `http_config.ca_file` volume | `step-ca-external-bundle` | `vault-pki-bundle` | `step-ca-external-bundle` |
+| creds (`--set`) | RustFS `loki-direct` | in-cluster `loki` identity | `SEAWEEDFS_ACCESS_KEY/SECRET_KEY` |
 
-**Caveat — RustFS bridge TLS:** `monitoring/setup.sh` aliases RustFS via `mc --insecure alias set store https://objectstore-local:9000` — the bridge is exercised over **HTTPS with TLS-skip-verify**. The `insecure: true`/plain-HTTP form in the table applies only if the bridge is in fact plain HTTP. If the bridge serves self-signed TLS, keep a CA path or add `http_config.insecure_skip_verify: true`.
+Common deltas applied to **all three** so the arms differ only in storage:
+- `compactor.retention_enabled: true`, `limits_config.retention_period: 24h` (minimum with 24h index period), `compactor.delete_request_store: s3`
+- hedging disabled (the chart default hides tail latency and multiplies requests to the slower backend)
+- `monitoring.serviceMonitor.enabled: true`
+- `singleBinary.podAnnotations.reloader.stakater.com/auto: "true"` (cert and secret rotation; see §7)
+- keep `use_thanos_objstore: false` on all three (the chart 13.5.0 render). Latency metric = `loki_s3_request_duration_seconds`; Loki `main` has flipped the default to Thanos, so re-check on chart upgrade.
+- identical `limits_config`, ingester chunk settings, PVC size, infra placement
 
-### 5.2 S3 backend parity (RustFS)
+### 4.5 Alloy via k8s-monitoring — bead `t9p7.2`
 
-Confirmed MinIO-grade for Loki operations (Context7 `/rustfs/rustfs`, `docs/architecture/s3-compatibility-matrix.md`, main branch):
-- Bucket create/delete/list/head ✅
-- Object PUT/GET/DELETE/COPY/HEAD ✅
-- ListObjects / ListObjectsV2 ✅
-- Multipart create/upload/complete/abort ✅
-- Range and conditional reads ✅
-- SSE-C / SSE-KMS for own objects ✅; **MinIO/SeaweedFS-encrypted objects not readable** by default
-- Conditional writes: "Selected… conditional write behavior" — partial, not relied on by Loki
+Replace the `alloy` release with `grafana/k8s-monitoring` **4.5.2**. It pulls the `alloy-operator` 0.7.1 subchart (CRD + operator).
 
-Real-world wiring evidence:
-- `agalue/LGTM-PoC` `values-loki.yaml`: `endpoint: rustfs-svc.storage.svc:9000`, `s3ForcePathStyle: true`, `insecure: true`.
-- `rustfs/rustfs` ships `.docker/observability/loki.yaml` itself.
-- `safebucket/safebucket` `deployments/local/full/config/loki.yaml`: `endpoint: bucket:9000`, `bucketnames: loki-data`, `access_key_id: rustfsadmin`.
+```yaml
+cluster: { name: local }
+destinations:
+  loki:           { type: loki, url: http://loki.grafana.svc.cluster.local:3100/loki/api/v1/push }
+  lokiRustfs:     { type: loki, url: http://loki-rustfs.grafana.svc.cluster.local:3100/loki/api/v1/push }
+  lokiSeaweedfs:  { type: loki, url: http://loki-seaweedfs.grafana.svc.cluster.local:3100/loki/api/v1/push }
+  # identical batchSize/batchWait on all three; writeAheadLog enabled on all three
+nodeLogs:
+  enabled: true
+  collector: alloy-logs
+  journal: { path: /run/log/journal, units: [kubelet.service, containerd.service] }
+podLogsViaLoki:
+  enabled: true
+  collector: alloy-logs
+  extraLogProcessingStages: |   # ported pgaudit + traefik_access stages, each under stage.match
+clusterEvents: { enabled: true, collector: alloy-singleton }   # replaces loki.source.kubernetes_events
+collectors:
+  alloy-logs:      { presets: [filesystem-log-reader, daemonset] }   # + hostPath mount /run/log/journal
+  alloy-singleton: { presets: [singleton] }
+```
 
-### 5.3 Compactor / S3 gotchas (apply to both backends, no config delta)
+- Features send to **every** enabled destination of a matching type (`destinations.get` in `templates/destinations/_destination_helpers.tpl`), so the fan-out needs no per-feature wiring.
+- Each destination renders its own `loki.write`. Upstream, `loki.Fanout.Send` hands each entry to each receiver in turn and blocks while a receiver is full. The chart exposes no `queue_config.block_on_overflow` for Loki destinations. The per-destination **WAL** is the intended decoupling; verify that a stopped Loki does not stall the other two.
+- kind journald is volatile, hence `journal.path: /run/log/journal` plus a mount. The `filesystem-log-reader` preset is not assumed to mount `/run`.
 
-- Compactor is colocated (SingleBinary); `working_directory` lives on the existing 20Gi PVC — unchanged.
-- Multipart: AWS SDK v2 transparently switches above threshold; both SeaweedFS S3 and RustFS support multipart. No change.
-- SSE-KMS: keep unset. Enabling SSE-KMS on either store breaks DR object parity — `filer.sync` would copy ciphertext as-is, RustFS cannot decrypt MinIO/SeaweedFS-encrypted objects in default builds.
-- Atomic rename: Loki never renames keys. Compactor PUTs new index/chunk keys, then DELETEs superseded ones. Gotcha is list-consistency, not rename.
+### 4.6 Grafana — bead `t9p7.2`
 
-### 5.4 What's NOT changing
-- Schema, retention, replication factor, auth mode.
-- Bucket names (`loki` for chunks/ruler/admin).
-- Loki→external-SeaweedFS hop (zero change required at Loki level if we keep the bridge model).
-
----
-
-## 6. Component inventory (PoC: two Lokis side-by-side)
-
-### 6.1 DR path: Loki #1 → in-cluster SeaweedFS + fan-out
-
-| Component | Where | Purpose |
-|---|---|---|
-| `Seaweed` CR (`grafana` ns) | `manifests/argocd/apps/seaweedfs.yaml` (new) | Operator-managed in-cluster SeaweedFS |
-| `Secret seaweedfs-filer-config` (`grafana` ns) | same | filer TOML with `[s3] cloud1` + `cloud2` + `[remote.mount]` |
-| `Secret seaweedfs-filer-credentials` (`grafana` ns) | same | external-SeaweedFS + RustFS access keys |
-| `filer.sidecars[]` × 2 | inside the CR | one `weed filer.remote.gateway` per sink |
-| `Service seaweedfs-s3` (`grafana` ns) | same | stable in-cluster endpoint for Loki #1 |
-| ExternalSeaweedFS bucket `loki` | external cluster | DR mirror (created lazily by gateway) |
-| RustFS bucket `loki` (mirror target) | external cluster | DR mirror; create pre-PoC via `mc mb` |
-| Loki #1 Helm release (`loki-primary`, `grafana` ns) | `monitoring/setup.sh` | writes to in-cluster SeaweedFS at `https://seaweedfs-s3.grafana.svc.cluster.local:8333` |
-| Host Docker SeaweedFS | `scripts/setup.sh` | **coexists** during PoC; rollback target |
-
-### 6.2 Direct path: Loki #2 → RustFS
-
-| Component | Where | Purpose |
-|---|---|---|
-| Loki #2 Helm release (`loki-rustfs`, `monitoring-l2` ns) | `monitoring/setup.sh` new step | writes to RustFS at `http://objectstore-local:9000` |
-| `loki-values-rustfs.yaml` | `monitoring/loki/` | Loki #2-only values file (separate from `loki-values.yaml`) |
-| RustFS bucket `loki` (primary) | external cluster | Loki #2's primary store; pre-PoC via `mc mb` |
-
-### 6.3 Load generator
-
-| Component | Where | Purpose |
-|---|---|---|
-| Alloy config (`monitoring/alloy/alloy-config.river`) | modified | parallel `loki.write` blocks: one to `loki-primary` `:3100`, one to `loki-rustfs` `:3100` |
-| Synthetic log source | new | produces identical log lines to both Lokis so the A/B comparison is fair |
+`GrafanaDatasource` objects: keep uid `loki` (Loki-C: Tempo links and dashboards keep working), add `loki-rustfs` and `loki-seaweedfs`. Dashboards using a `${datasource}` variable work with all three.
 
 ---
 
-## 7. Open risks
+## 5. Benchmark method — bead `t9p7.3`
 
-> **Status legend** — D = decided, R = research pending, X = deferred, A = accepted (no action needed).
+1. **Load:** `flog` Deployment(s) in a dedicated namespace on app nodes at a fixed lines/s, collected by `podLogsViaLoki` like any pod. Real node/pod logs alone (a few KB/s) would flush too little to measure.
+2. **Duration:** ≥ 26h, so chunks flush (`chunk_idle_period` 30m, `max_chunk_age` 2h) and 24h retention + 2h `retention_delete_delay` have fired at least once.
+3. **Writes:** Alloy push latency never touches S3 (ingester memory + WAL). Measure `loki_s3_request_duration_seconds{operation=~"S3.PutObject|..."}` and ingester flush metrics.
+4. **Reads:** a fixed LogQL set run by script against each Loki's query API, over ranges older than `max_chunk_age` + `query_ingesters_within`, so data comes from S3 and not ingester memory. Hedging off, caches off (already), same query order per arm. The TSDB index is cached on each PVC, so report first-run and warm-run separately.
+5. **Resource cost:** CPU/memory/disk of `loki-*` pods and **all** `seaweedfs-ab-*` pods including the `filer-backup-rustfs` sidecar. The RustFS and host SeaweedFS containers are outside Kubernetes: record `docker stats` for them.
+6. **Covariate:** `filer.backup` upload rate/bytes during each window, because it shares `objectstore-local` with Loki-A.
 
-1. **D · Deletion cascades to both DR sinks.** Local retention deletes and accidental local deletes mirror to both sinks — DR is a mirror, not a backup.
-   - **Decision (2026-09-17): YAGNI for now.**
-   - **Recorded suggestion (not for implementation this PoC):** introduce a tombstone window by routing gateway deletes through a delayed-delete queue (e.g., a small `weed filer.remote.gateway` mirror flag or a sidecar that holds DELETEs for N hours before forwarding to DR sinks). Net effect: a N-hour recovery window for accidental deletes, at the cost of doubled delete-state and a soft-consistency window. Acceptable RPO/RTO cost: bounded by N. Implement only if a real deletion incident motivates it.
-2. **D · Cert rotation.** step-ca bundle rotate → Loki reads `ca_file` at client init; failure mode is mid-chain `x509 unknown CA`.
-   - **Finding (lib-3, 2026-09-17): Loki's S3 client reads `ca_file` exactly once at bucket-client construction.** Code path: Loki `pkg/storage/bucket/s3/bucket_client.go:72` → `thanos-io/objstore` `exthttp.TLSConfig` → `readCAFile` = `os.ReadFile`, then `tls.Config.RootCAs` is built once and frozen for the process lifetime. minio-go wraps the injected transport; no per-request re-read. The ConfigMap volume *does* get rewritten in place by kubelet (~1 min sync), but the running process ignores the new bytes.
-   - **Helm side:** the chart's `checksum/config` annotation only hashes the Loki config ConfigMap, not `step-ca-external-bundle` — so a CA rotation alone does not trigger a chart-driven restart. Verified against `production/helm/loki/templates/single-binary/statefulset.yaml`.
-   - **Option matrix (pros / cons):**
-     | Option | Mechanism | Restart? | Repo fit | Cost | Verdict |
-     |---|---|---|---|---|---|
-     | A | Stakater Reloader watches `step-ca-external-bundle`, rollout-restarts Loki + gateway sidecars + RustFS bridge on change | Yes | Reloader already deployed (demo-app pattern, `cnpg-playground-1g3`) | ~2 annotation lines | ✅ **Recommended** |
-     | B | ESO ClusterSecretStore → ExternalSecret writes Secret → Reloader restarts (ESO alone cannot reload Loki's pool — no inotify consumer) | Yes | High coupling to Vault | Medium | ❌ Adds a hop with no restart savings; reduces to B+A |
-     | C | Fork Loki + SeaweedFS gateway: fsnotify-watch CA file, rebuild TLS pool in place | No | Upstream divergence | High | ❌ Fork of two Go projects for one cluster |
-   - **Decision (2026-09-17): Option A.** Annotate the Loki StatefulSet (`loki.podAnnotations` in `loki-values.yaml`), future gateway sidecars, and RustFS bridge with `reloader.stakater.com/auto: "true"`. Keep `step-ca-external-bundle` ConfigMap as the bundle source-of-truth. Do not move the bundle through Vault/ESO — it adds a `refreshInterval` delay with no restart savings (verified by `lib-3`).
-   - **AWS SDK Go v2 note:** not used by Loki today (`minio-go + thanos exthttp`). If `aws_sdk_auth` is ever enabled, `AWS_CA_BUNDLE` is read once at `LoadDefaultConfig` — no hot reload, **not documented in current AWS SDK Go v2; verify before relying.**
-   - **Open questions (from `lib-3` §4):** step-ca rotation cadence (intermediate vs root); whether SeaweedFS S3 / RustFS bridge serves the full chain at handshake; whether the operator-managed gateway sidecars have a reload story for their own CA bundle; Reloader annotation coverage on the Loki StatefulSet volume references.
-3. **D · Retention drift.** Loki retention materialises via compactor runs. Replica deletion lags by up to one compaction interval → DR object counts/bytes drift.
-   - **Finding (lib-4, 2026-09-17): the risk is currently inactive by construction.** `monitoring/loki/loki-values.yaml` sets `limits_config.retention_period: 3d` but does **not** set `compactor.retention_enabled` (default `false`). Until that flag is enabled, the compactor issues zero S3 deletes — drift ≈ 0. The risk scenario activates only when `retention_enabled: true` is added.
-   - **Compactor behaviour:** periodic via `-compactor.compaction-interval` (default 10m). Two-phase delete: index entries removed at retention-apply, then chunk `DELETE`s after `-compactor.retention-delete-delay` (default 2h) via async workers (`-compactor.retention-delete-worker-count`, default 150).
-   - **Gateway behaviour:** deletes propagate via filer metadata tailing (`pb.FollowMetadata`, `PathPrefix: /buckets/`, persisted offset watermark, `RetryForeverOnError`). Object deletes confirmed in source: `filer_remote_gateway_buckets.go` calls `client.DeleteFile(dest)` on `IsDelete(resp)`. Eventual, not immediate; lag unbounded during pause. No `syncDeletes` flag exists — `gh_grep_searchGitHub` for `syncDeletes` in `seaweedfs/seaweedfs` returns zero results.
-   - **Option matrix (pros / cons):**
-     | Option | Mechanism | Lag tolerance | Blast radius on bad run | Repo cost | Verdict |
-     |---|---|---|---|---|---|
-     | A | CronJob: full `list-objects-v2` per bucket, diff keys, delete sink-side extras | Catch-up only on clean run | **High** — full-bucket delete possible on stale listing; mitigable via `--dry-run`, age-gate, 2-run agreement | ~60–100 LOC Python + CronJob | ⚠️ Detection-only |
-     | B | S3 event notifications → Kafka/Redis → worker | Seconds-level | **High + fragile** — restart-loss, ordering gaps, requires full-listing resync anyway | ~400+ LOC + Kafka/Redis | ❌ SeaweedFS S3 emits no native events; RustFS events unverified; strictly worse than the gateway's own metadata tail |
-     | C | Gateway strict delete (`syncDeletes`) | One-shot | **High + coupled** — requires reverse-mount of sinks into filer; second write path racing the gateway | ~0 new code, but needs reverse mount + config | ❌ No such gateway flag exists; only `weed shell remote.copy.local -delete` (rsync-like) is available |
-     | D | Accept drift + read-only listing cron + sink lifecycle expiration | Infinite (bounded by retention+delete-delay) | **Zero** | ~10–20 LOC gauge + lifecycle YAML | ✅ **Recommended** for PoC |
-   - **Decision (2026-09-17): Option D (accept drift) with read-only observability.** Build a CronJob that lists all three buckets (in-cluster SeaweedFS + external SeaweedFS + RustFS), exports per-bucket object count + bytes as Prometheus gauges, never deletes. Add bucket lifecycle expiration on both DR sinks as a safety net. Drift is self-healing: gateway deletes propagate eventually via `pb.FollowMetadata`. Promote gauge to delete mode only when retention grows or RPO tightens.
-   - **Why not delete-capable reconcile in this PoC:** (1) the risk premise is currently inactive (`retention_enabled: false`); (2) DR sinks hold the only post-incident copy — any false-positive delete converts mirror drift into real DR data loss; (3) blast radius of a bad run outweighs the cost of drift, which is bounded by 3d retention + 2h delete delay.
-   - **Open questions (from `lib-4` §5):**
-     - Is `compactor.retention_enabled: true` intended? If no, drift stays ≈0 and any reconcile option is moot.
-     - Do both sinks support S3 lifecycle expiration, and can it target the shared `loki` bucket safely? Chunks+ruler+admin share one bucket; an age-based rule would also expire ruler/admin objects; RustFS lifecycle support unverified.
-     - What is the DR RPO? Minutes-class RPO already fails the eventual gateway + 2h `retention_delete_delay` chain — would need synchronous fan-out, not reconcile.
-     - If retention grows past 3d, does Option D's cost remain negligible?
-     - If the §7.1 tombstone window is ever implemented, must reconciliation be aware of the held-deletes window so it doesn't delete tombstoned objects.
-4. **X · Observability gap.** Neither `weed filer.remote.gateway` nor `filer.sync` exposes metrics or drift detection. `-a.debug`/`-b.debug` logs and (operator backup path only) `status.backupMirrors` are all that exist. Drift detection has to be out-of-band (e.g., a Grafana panel comparing `s3_objects_total` across buckets).
-   - **Decision (2026-09-17): deferred.**
-5. **D · Secret rotation requires filer restart.** SeaweedFS reads TOML at startup. Rotation of external-SeaweedFS or RustFS access keys requires a filer pod restart (operator README explicitly warns).
-   - **Decision (2026-09-17): use recommended.** Add `cluster-autoscaler.kubernetes.io/safe-to-evict: "true"` (or operator equivalent) to the filer pod template; document the restart requirement in the operator's `Secret` rotation runbook; one replica restart at a time during rotation.
-6. **X · Network-blip behaviour.** Pause/resume is safe per wiki, but long partitions produce unbounded fan-out backlog with no built-in alerting. On high change rates `filer.sync` can fail to catch up — does not apply here (we picked Gateway-to-Remote) but worth documenting if `filer.sync` is later added for a third SeaweedFS sink.
-   - **Decision (2026-09-17): deferred.** Not applicable to Gateway-to-Remote; document only if `filer.sync` is ever added.
-7. **D · Spoke-region Loki cannot reach hub-only SeaweedFS.** Today: hub SeaweedFS is the only instance; `monitoring/setup.sh:39` deploys Loki per region. Once SeaweedFS moves in-cluster, decide whether each region gets its own in-cluster SeaweedFS or shares via cross-region networking.
-   - **Decision (2026-09-17): hub-only for now.** Out of scope for this PoC. Reopen when/if spoke regions need their own storage.
-8. **A · Operator version risk.** `seaweedfs-operator` is 0.1.x. The `sidecars` + `configSecret` approach is the only path today. If the operator ships first-class remote-gateway fields in a future release, this design becomes shorter.
-   - **Decision (2026-09-17): accepted.** No action; revisit at next operator release.
+**Restore drill (pass/fail gate):** after the run, deploy a throwaway Loki (same schema) pointed at RustFS `loki-mirror` with read-only creds. It must return the same line counts as `loki-seaweedfs` for the fixed query set, over ranges older than the mirror lag.
+
+Caveat: every store shares one WSL2 VM and one disk (`/dev/sdd`). "Outside" means a Docker bridge hop + TLS, not a network. Results show relative overhead, not production latency, and say nothing about geo-redundancy.
 
 ---
 
-## 8. Decisions log (recorded 2026-09-17) and next steps
+## 6. Deployment order (on `./scripts/setup.sh local`)
 
-### 8.1 Resolved items
+1. `scripts/setup.sh`: + Reloader (`eff0`), + seaweedfs-operator (`t9p7.1`).
+2. `monitoring/setup.sh` (hub only):
+   1. RustFS bridge in `grafana`
+   2. RustFS buckets + IAM users
+   3. Seaweed CR + cert + identities + bucket Job + replication Secret (`8ti`)
+   4. Loki-C with common deltas
+   5. Loki-A and Loki-B (`dfe`)
+   6. k8s-monitoring replacing `alloy`
+   7. datasources (`t9p7.2`)
+3. Benchmark + drill (`t9p7.3`).
+4. `monitoring/teardown.sh` and `scripts/teardown.sh` get matching removals: Seaweed CR + PVCs, releases, RustFS users/buckets.
 
-| # | Item | Decision | Notes |
-|---|---|---|---|
-| 1 | Topology (§2.2) | **Coexist** in-cluster SeaweedFS with host Docker container during PoC | Host container = rollback target; decommission in a separate change after PoC |
-| 2 | Spoke-region (risk 7) | **Hub-only** for now | Out of scope; reopen if spoke regions need storage |
-| 3 | Tombstone window (risk 1) | **YAGNI for now** | Suggestion recorded in §7.1; implement only if a real deletion incident motivates it |
-| 4 | Codemap + graphify cleanup | **Defer** | Tracked as `cnpg-playground-ozm`; user notes more work in flight |
-| 5 | Operator PoC | **Two Lokis side-by-side** | See §8.2 |
-| 6 | Cert rotation (risk 2) | **Research pros/cons** | Tracked as `lib-3` research; output feeds §7.2 |
-| 7 | Retention drift (risk 3) | **Research pros/cons** | Tracked as `lib-4` research; output feeds §7.3 |
-| 8 | Observability (risk 4) | **Deferred** | — |
-| 9 | Secret rotation (risk 5) | **Use recommended** | See §7.5 |
-| 10 | Network-blip (risk 6) | **Deferred** | — |
-| 11 | Operator version (risk 8) | **Accepted** | Revisit at next operator release |
+---
 
-### 8.2 PoC scope: two Lokis side-by-side
+## 7. Risks
 
-The PoC deploys **two** Loki Helm releases against **two** independent object-store paths under the same cluster and same synthetic load, so the design is validated under identical conditions.
+1. **Mirror deletes are real deletes.** `-doDeleteFiles=true` makes `loki-mirror` a mirror, not a backup: an accidental delete in `/buckets/loki` propagates. Accepted for the PoC (YAGNI tombstone window, rev-1 decision stands).
+2. **Cert rotation.** Loki builds its TLS root pool once at client construction. The rev-1 analysis traced the Thanos client (`pkg/storage/bucket/s3`), which this Loki does not use (`use_thanos_objstore: false`); re-verify for the legacy `aws` client. The mitigation is the same either way: Reloader restarts on CA ConfigMap change, and the `filer.backup` sidecar needs the same (filer pod annotation). Depends on `eff0`.
+3. **Secret rotation** (RustFS `loki-mirror` keys, S3 identities) needs a filer or S3 pod restart; handled by Reloader annotations.
+4. **`AWS_CA_BUNDLE` unverified** for the `filer.backup` S3 sink. If not honoured, the sidecar fails TLS to RustFS; fallback is the initContainer trust-store injection.
+5. **Alloy coupling.** A stalled Loki could throttle the others if the WAL does not decouple as expected. Verify before benchmarking.
+6. **Mirror backlog is unobserved.** `filer.backup` has no metrics. Watch sidecar logs and compare bucket object counts at the end of the run (part of the drill).
+7. **Version drift.** Operator (1.0.x), `chrislusf/seaweedfs`, k8s-monitoring and the Loki chart are pinned. Re-check the `use_thanos_objstore` default and metric names on any Loki chart bump.
+8. **Bootstrap dependency.** In-cluster SeaweedFS images come through zot, whose blobs live on the host SeaweedFS. The host container is **not** decommissionable: it also carries zot and Barman. Rev 1's "decommission after PoC" is withdrawn.
 
-| Component | Backend | Purpose |
+---
+
+## 8. Decision log
+
+| # | Decision | Date |
 |---|---|---|
-| **Loki #1** (`loki-primary`) | in-cluster SeaweedFS (operator-managed) → fan-out via `weed filer.remote.gateway` to external SeaweedFS + RustFS | DR path; canonical chunk store; deletion propagates to both DR sinks |
-| **Loki #2** (`loki-rustfs`) | RustFS directly (existing `objectstore-local:9000` bridge) | Direct-write path; baseline for comparison |
-| Synthetic log load | same Alloy → both Lokis via parallel `loki.write` blocks | Identical inputs for A/B |
-
-#### Per-component PoC checklist
-
-**Loki #1 (`loki-primary`) → in-cluster SeaweedFS + DR fan-out:**
-1. Install `seaweedfs-operator` (`monitoring/setup.sh` new step).
-2. Apply `Seaweed` CR in `grafana` ns with `filer.configSecret` referencing two `[s3]` remotes (`cloud1`=external SeaweedFS, `cloud2`=RustFS) and `filer.sidecars[]` with two `weed filer.remote.gateway` daemons.
-3. Repoint Loki #1 `s3.endpoint` to `http://seaweedfs-s3.grafana.svc.cluster.local:8333` (or operator-TLS variant). Keep `s3ForcePathStyle: true` and existing `ca_file` for the in-cluster TLS hop.
-4. Create buckets `loki` on both DR sinks pre-flight (`mc mb`).
-5. Validate: synthetic load → objects appear in in-cluster SeaweedFS → both DR sinks within observable lag; retention delete propagates; compactor runs cleanly.
-
-**Loki #2 (`loki-rustfs`) → RustFS directly:**
-1. Second Helm release in a separate namespace (e.g. `monitoring-l2` or `grafana-l2`) with its own `loki-values-rustfs.yaml`.
-2. `s3.endpoint: http://objectstore-local:9000`, `s3.insecure: true` (or `http_config.insecure_skip_verify: true` if RustFS bridge serves self-signed TLS — see §5.1 caveat), creds from `RUSTFS_ROOT_USER`/`RUSTFS_ROOT_PASSWORD`.
-3. Same retention, schema, and bucket naming (`loki`/`loki`/`loki`). Bucket must be `mc mb`'d in RustFS first.
-4. Validate: same synthetic load path; verify write/read/compactor behaviour on RustFS.
-
-**A/B comparison deliverable:**
-- Object counts, multipart behaviour, compactor latency, deletion propagation latency under identical load.
-- Functional delta expected: zero (Loki → SeaweedFS S3 ≈ Loki → RustFS S3, MinIO-grade parity).
-- Operational delta expected: RustFS lacks SeaweedFS bucket-policy/IAM model; Loki does not exercise it today, so this should be invisible in Loki-specific tests but worth noting.
-
-### 8.3 Remaining non-PoC tasks
-
-- **Cert rotation** (§7.2): research pending, fold into §7.2 when `lib-3` returns.
-- **Retention drift** (§7.3): research pending, fold into §7.3 when `lib-4` returns.
-- **Codemap + graphify** (`cnpg-playground-ozm`): deferred.
-- **Decommission host Docker SeaweedFS**: after PoC validates, separate change.
-- **Multi-region expansion**: not in scope.
+| 1 | Single DR sink: RustFS. External SeaweedFS sink dropped. | 2026-09-18 |
+| 2 | Three Lokis: A RustFS-direct, B in-cluster SeaweedFS + mirror, C existing host-SeaweedFS `loki` as control | 2026-09-18 |
+| 3 | Mirror via `weed filer.backup` (`is_incremental=false`, `-doDeleteFiles=true`), not `filer.remote.gateway` | 2026-09-18 |
+| 4 | Mirror bucket `loki-mirror` on the same RustFS as Loki-A (contention accepted, recorded as covariate) | 2026-09-18 |
+| 5 | Replace custom Alloy with k8s-monitoring (`nodeLogs` + `podLogsViaLoki`); port pgaudit/traefik/events | 2026-09-18 |
+| 6 | HTTPS on every Loki→S3 hop (in-cluster via `vault-pki` cert + `extraArgs`) | 2026-09-18 |
+| 7 | Load: `flog` pods | 2026-09-18 |
+| 8 | Keep release/uid `loki` as Loki-C; new `loki-rustfs`, `loki-seaweedfs` | 2026-09-18 |
+| 9 | seaweedfs-operator in `scripts/setup.sh`; everything else in `monitoring/setup.sh` | 2026-09-18 |
+| 10 | Install Reloader in `scripts/setup.sh` | 2026-09-18 |
+| 11 | Retention on, 24h, all three Lokis | 2026-09-18 |
+| 12 | Per-purpose RustFS IAM users (`loki-direct`, `loki-mirror`) | 2026-09-18 |
+| 13 | Everything in namespace `grafana` | 2026-09-18 |
+| 14 | Verdict = old-range query latency + S3 op latency p50/p99 + resource cost; restore drill = pass/fail gate | 2026-09-18 |
+| 15 | Spoke regions out of scope (hub only) | 2026-09-17 (kept) |
+| 16 | Tombstone window YAGNI | 2026-09-17 (kept) |
 
 ---
 
-## 9. Sources
+## 9. Rev-1 claims withdrawn (errata)
 
-- https://github.com/seaweedfs/seaweedfs/wiki/Gateway-to-Remote-Object-Storage
-- https://github.com/seaweedfs/seaweedfs/wiki/Filer-Active-Active-cross-cluster-continuous-synchronization
-- https://github.com/seaweedfs/seaweedfs-operator (CRD at master; release `seaweedfs-operator-0.1.42`, 2026-09-14)
-- https://github.com/rustfs/rustfs (`docs/architecture/s3-compatibility-matrix.md`, `README.md`, `ARCHITECTURE.md`, main branch)
-- https://grafana.com/docs/loki/latest/configuration/#common-storage (via Context7 `/grafana/loki`)
-- Real-world wiring: `agalue/LGTM-PoC/values-loki.yaml`, `safebucket/safebucket/deployments/local/full/config/loki.yaml`, `rustfs/rustfs/.docker/observability/loki.yaml`, `SpecterOps/Nemesis/infra/loki/local-config.yaml`
-- Repo recon: `monitoring/loki/loki-values.yaml`, `monitoring/setup.sh`, `common.sh:88–97`, `seaweedfs/config/identities.json`
+| Rev-1 claim | Reality | Evidence |
+|---|---|---|
+| Two `filer.remote.gateway` sidecars fan one bucket out to two sinks | One bucket maps to **one** remote; both gateways share the filer-stored mapping and would upload to the same remote | `weed/command/filer_remote_gateway_buckets.go` (`mappings.Mappings[bucketPath]`, `findRemoteStorageClient`) |
+| Remotes `cloud1`/`cloud2` and `[remote.mount]` live in `filer.configSecret` TOML | Configured via `weed shell remote.configure`, stored in filer `/etc/remote`; `filer.configSecret` is `filer.toml` | same file (`collectRemoteStorageConf`), operator `FilerSpec.ConfigSecret` |
+| Pre-create `loki` on the sinks with `mc mb` | Gateway creates `<bucket>-<random>` by default (`-createBucketWithRandomSuffix=true`) | `weed/command/filer_remote_gateway.go:59` |
+| "seaweedfs-operator 0.1.42, operator is 0.1.x" | 0.1.42 is the **chart**; operator app is **1.0.39** | GitHub releases 2026-09-14 |
+| `spec.s3` S3 endpoint keeps the TLS hop with existing `ca_file` | S3 gateway has only an HTTP `port`; `spec.tls` = gRPC mTLS | `api/v1/seaweed_types.go` (`S3GatewaySpec`, `TLSSpec`) |
+| Loki #2 at `http://objectstore-local:9000` | RustFS is HTTPS-only, and `objectstore-local` only resolves in `mimir`/`tempo` today | `scripts/setup.sh:381-392`, bridge templates |
+| "Reloader already deployed" | Not installed anywhere | bug `eff0` |
+| Cert-reload trace via `pkg/storage/bucket/s3` (Thanos) | Current config renders `use_thanos_objstore: false` (legacy client) | `helm template` chart 13.5.0 |
+| Rename Loki to `loki-primary` | Would break Alloy URL, Tempo `datasourceUid: loki`, dashboards; orphan PVC | `alloy-config.river:58`, `grafana_datasource_tempo.yaml` |
+| New Argo CD app `manifests/argocd/apps/seaweedfs.yaml` | Root app is only applied by `demo/self-service-setup.sh`; `rbr` AppProject whitelist lacks `Secret`, `Seaweed`, CRDs | `manifests/argocd/root-app.yaml` |
+| Decommission host SeaweedFS after PoC | It also hosts zot blobs (containerd mirror) and Barman backups | `scripts/setup.sh:462-519` |
+| Spoke Lokis cannot reach hub SeaweedFS | Host container is on the shared `kind` network, reachable from every cluster; true only for an in-cluster store | `scripts/setup.sh:320-324` |
+| "Validate retention delete propagates" | Impossible with `retention_enabled` unset; now enabled (decision 11) | `loki-values.yaml` |
+
+---
+
+## 10. Sources
+
+- SeaweedFS (master, 2026-09-18): `weed/command/filer_remote_gateway.go`, `filer_remote_gateway_buckets.go`, `filer_backup.go`, `filer_sync.go`, `weed/replication/sink/s3sink/s3_sink.go`, `weed/command/scaffold/replication.toml`; release 4.47 (2026-09-14)
+- seaweedfs-operator (master): `api/v1/seaweed_types.go`, README; release 1.0.39 / chart 0.1.42 (2026-09-14)
+- Grafana k8s-monitoring-helm 4.5.2: `charts/k8s-monitoring/templates/destinations/_destination_loki.tpl`, `_destination_helpers.tpl`, `charts/feature-node-logs/values.yaml`, `Chart.yaml` (alloy-operator 0.7.1); feature docs via Context7 `/grafana/k8s-monitoring-helm`
+- Grafana Alloy: `internal/component/common/loki/fanout.go`, `docs/design/4940-reliable-loki-pipelines.md`, `loki.write` reference (Context7 `/grafana/alloy`)
+- Grafana Loki: storage + Thanos migration docs, meta-monitoring metrics, ingester config (Context7 `/grafana/loki`); chart `grafana-community/loki` 13.5.0 (appVersion 3.7.1)
+- Repo: `scripts/setup.sh`, `scripts/common.sh`, `scripts/funcs_regions.sh`, `monitoring/setup.sh`, `monitoring/loki/loki-values.yaml`, `monitoring/alloy/alloy-config.river`, `monitoring/mimir/objectstore-bridge.yaml.tpl`, `k8s/kind-cluster.yaml.tpl`, `manifests/argocd/root-app.yaml`, `step-ca/trust-manager/bundle-external.yaml`, `vault/trust-manager/bundle.yaml.tpl`
