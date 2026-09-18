@@ -814,6 +814,17 @@ ${STEP_CA_INT_CERT}" \
     install_cnpg_operator "${CONTEXT_NAME}"
     install_barman_plugin "${CONTEXT_NAME}"
 
+    # Reloader: restarts workloads carrying reloader.stakater.com/auto on
+    # ConfigMap/Secret change (demo-app on Vault static-cred rotation, Loki on
+    # step-ca bundle updates). Without it those annotations are inert.
+    echo "🔄 Installing Reloader ${RELOADER_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
+    helm_upgrade_install reloader \
+        reloader \
+        reloader "${CONTEXT_NAME}" "${RELOADER_CHART_VERSION}" \
+        --repo-url https://stakater.github.io/stakater-charts \
+        --values "${GIT_REPO_ROOT}/k8s/reloader/values.yaml"
+    kubectl --context "${CONTEXT_NAME}" rollout status deployment/reloader-reloader -n reloader --timeout=120s
+
     echo "🏛️  Installing Capsule ${CAPSULE_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
     helm_upgrade_install capsule \
         oci://ghcr.io/projectcapsule/charts/capsule \
