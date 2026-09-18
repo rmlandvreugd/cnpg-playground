@@ -28,21 +28,38 @@ prometheus-node-exporter:
 
 kubeApiServer:
   enabled: true
+  serviceMonitor:
+    # Chart >= 91: control-plane ServiceMonitors auth via a token Secret (not the pod's
+    # mounted SA token). Ours comes from monitoring/prometheus-instance/prometheus-token.yaml.
+    authorization: &prometheusTokenAuth
+      type: Bearer
+      credentials:
+        name: prometheus-token
+        key: token
 kubelet:
   enabled: true
   serviceMonitor:
+    authorization: *prometheusTokenAuth
     cAdvisor: true
     probes: true
 coreDns:
   enabled: true
+  serviceMonitor:
+    authorization: *prometheusTokenAuth
 kubeProxy:
   enabled: true
+  serviceMonitor:
+    authorization: *prometheusTokenAuth
 
 # Kept enabled per locked decision; DOWN targets expected in kind
 kubeControllerManager:
   enabled: true
+  serviceMonitor:
+    authorization: *prometheusTokenAuth
 kubeScheduler:
   enabled: true
+  serviceMonitor:
+    authorization: *prometheusTokenAuth
 kubeEtcd:
   enabled: true
   service:
@@ -50,6 +67,7 @@ kubeEtcd:
     port: 2381
     targetPort: 2381
   serviceMonitor:
+    authorization: *prometheusTokenAuth
     scheme: http
     insecureSkipVerify: true
 

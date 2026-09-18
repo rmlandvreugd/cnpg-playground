@@ -1,0 +1,11 @@
+# Long-lived token for the prometheus ServiceAccount. kube-prometheus-stack >= 91
+# control-plane ServiceMonitors authenticate with a Secret instead of the pod's
+# mounted token; the chart only creates one when its own Prometheus is enabled,
+# and ours is deployed separately. Referenced from kube-prometheus-stack-values.yaml.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: prometheus-token
+  annotations:
+    kubernetes.io/service-account.name: prometheus
+type: kubernetes.io/service-account-token
