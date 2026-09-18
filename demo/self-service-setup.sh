@@ -790,15 +790,13 @@ rotate)
             -n rbr-ver --context "${LOCAL_CONTEXT}" --timeout=120s
         echo "✅ demo-app restarted with rotated credentials"
 
+        # Password logs in over TCP (-h) from the primary pod: no image pull, and the
+        # password travels on stdin rather than in a pod spec.
         echo "🔍 Verifying rotated credential via psql (internal)..."
-        NEW_PASS=$(kubectl get secret "verstappen-app" -n rbr-ver \
-            --context "${LOCAL_CONTEXT}" -o jsonpath='{.data.password}' | base64 -d)
-        kubectl run psql-rotate-verify --restart=Never --rm --attach \
-            --context "${LOCAL_CONTEXT}" \
-            --image=postgres:18-alpine \
-            -n rbr-ver \
-            --env="PGPASSWORD=${NEW_PASS}" \
-            -- psql -h verstappen-rw.rbr-ver-db -U "app" -d max -c "SELECT current_user;"
+        kubectl get secret "verstappen-app" -n rbr-ver --context "${LOCAL_CONTEXT}" \
+            -o jsonpath='{.data.password}' | base64 -d \
+            | kubectl exec -i -n rbr-ver-db --context "${LOCAL_CONTEXT}" "$(primary_pod)" -c postgres -- \
+                sh -c 'PGPASSWORD="$(cat)" psql -h verstappen-rw -U app -d max -tAc "SELECT current_user;"'
     fi
     echo "✅ Rotation complete"
     ;;
