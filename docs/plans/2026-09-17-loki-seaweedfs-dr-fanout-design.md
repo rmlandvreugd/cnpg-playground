@@ -1,6 +1,6 @@
 # Loki S3 Storage A/B/C: RustFS-direct vs in-cluster SeaweedFS (+ RustFS mirror) vs host SeaweedFS
 
-**Date:** 2026-09-17 (rev 2: 2026-09-18 adversarial review; rev 3: 2026-09-18 live-cluster review)
+**Date:** 2026-09-17 (rev 2: 2026-09-18 adversarial review; rev 3: 2026-09-18 live-cluster review; rev 4: 2026-09-18 tenant review)
 **Status:** Design — decisions closed, ready to implement
 **Owner:** monitoring stack
 **Tracking:** epic `cnpg-playground-t9p7` → `.1` operator → `8ti` Seaweed CR + mirror → `dfe` Lokis → `.2` k8s-monitoring + OTel log fan-out → `.3` benchmark → `.4` architecture-overview (§8a); bug `eff0` (Reloader) blocks `dfe`
@@ -247,6 +247,21 @@ Each exporter has its own `sending_queue`, so a slow Loki does not block the oth
 
 Replacing is feasible and yields one collector, but it touches the edge mTLS path and traces. That is out of scope for a storage benchmark. Tracked as a separate follow-up.
 
+### 4.8 Tenant (`rbr`) interactions — rev 4, live with tenant installed
+
+Checked on the live cluster after `demo/self-service-setup.sh` (Capsule `Tenant rbr` Active, namespaces `rbr-ver` / `rbr-ver-db`, ArgoCD `rbr-root`, `grafana-rbr-ver`, `demo-app`).
+
+| # | Live fact | Consequence for this design |
+|---|---|---|
+| T1 | pgaudit pipeline sets stream label **`cluster` = CNPG cluster** (`verstappen`, from pod label `cnpg.io/cluster`); platform and tenant pgaudit dashboards filter `{cluster=~"$cluster"}` | k8s-monitoring's default `clusterLabels: [cluster, k8s.cluster.name]` is rendered as `loki.write external_labels`. Alloy does `externalLabels.Merge(e.Labels)` and `model.LabelSet.Merge` copies the argument last, so **the entry's label wins** (verified `prometheus/common/model/labelset.go`, `alloy/internal/component/loki/write/write.go`; DeepWiki said the opposite). pgaudit streams keep `verstappen`, but every other stream gains `cluster=local`, which pollutes `$cluster` and makes "All" scan every stream. **Decision 20:** `clusterLabels: [k8s.cluster.name]` on every Loki destination; `podLogsViaLoki.labels.cluster: cnpg.io/cluster`. |
+| T2 | `k8s-pod-logs` dashboard selects `{namespace, pod, container}` and uses `label_values(pod)`; `k8s-events` uses `{job="k8s-events"}` | k8s-monitoring defaults put `pod` in structured metadata and use a different events `job`. **Decision 21:** keep today's label shape: remove `pod` from `podLogsViaLoki.structuredMetadata` and add it to `labels`; set `job="k8s-events"` on `clusterEvents` via a processing stage. Stream cardinality stays as today, so the benchmark measures today's shape. |
+| T3 | Tenant Grafana datasource `loki-rbr-ver` → `http://loki.grafana.svc…:3100` (Loki-C), no header; Loki `auth_enabled: false` | Tenant org can read **all** cluster logs (pre-existing). **Decision 22:** no tenant datasources for Loki-A/B; tenant stays on Loki-C. Isolation is its own epic (T6). |
+| T4 | ArgoCD AppProject `rbr` destinations include `grafana`, whitelist includes `ConfigMap`, `Service`, `Deployment` | Tenant GitOps could create or overwrite objects in the namespace that will host Loki-A/B, the Seaweed CR Services and the `objectstore-local` bridge Service (pre-existing exposure, larger with this PoC). Covered by T6. |
+| T5 | `ScheduledBackup verstappen-backup` `0 0 0 * * *` (nightly 00:00) → Barman → **host SeaweedFS** `verstappen-backups` | Loki-C's store takes a backup burst every night during the ≥26h run. Record backup windows as a covariate (like the mirror for Loki-A) and exclude 00:00–00:30 from query-latency windows. |
+| T6 | Tenant metrics: `prometheus-rbr-ver` → `prometheus-operated:9090` (all metrics, no tenancy); `mimir-tempo-rbr-ver` → Mimir org `tempo` (span metrics of every service). Tenant traces: `tempo-rbr-ver` → shared single-tenant Tempo | **Tenant observability is not isolated for logs, metrics or traces.** Tracked as a P1 epic (decision 23), out of scope here, but it constrains this design: if Loki `auth_enabled: true` lands before the benchmark, apply it to **all three** Lokis with the same `X-Scope-OrgID` handling, or arms differ in auth overhead. |
+| T7 | Kyverno `restrict-image-registries` applies to namespaces with `capsule.clastix.io/tenant`; PSS baseline `policyExclude` lists platform namespaces incl. `grafana`, not `seaweedfs-operator` / `reloader` / `loki-bench` | `flog` must run in a **non-tenant** namespace (`loki-bench`) or its `docker.io/mingrammer/flog` image is denied. Add the new platform namespaces to `platformNamespaces` in `kyverno/policies-values.yaml` to avoid PolicyReport noise (Audit only today). |
+| T8 | `demo-app` CrashLoopBackOff: init `db-migrate` → `password authentication failed for user "app"` | Unrelated to storage, but the benchmark must not run while tenant pods crashloop: restart loops inflate pod-log volume unevenly over time. Bug bead filed. |
+
 ---
 
 ## 5. Benchmark method — bead `t9p7.3`
@@ -256,7 +271,8 @@ Replacing is feasible and yields one collector, but it touches the edge mTLS pat
 3. **Writes:** Alloy push latency never touches S3 (ingester memory + WAL). Measure `loki_s3_request_duration_seconds{operation=~"S3.PutObject|..."}` and ingester flush metrics.
 4. **Reads:** a fixed LogQL set run by script against each Loki's query API, over ranges older than `max_chunk_age` + `query_ingesters_within`, so data comes from S3 and not ingester memory. Hedging off, caches off (already), same query order per arm. The TSDB index is cached on each PVC, so report first-run and warm-run separately.
 5. **Resource cost:** CPU/memory/disk of `loki-*` pods and **all** `seaweedfs-ab-*` pods including the `filer-backup-rustfs` sidecar. The RustFS and host SeaweedFS containers are outside Kubernetes: record `docker stats` for them.
-6. **Covariate:** `filer.backup` upload rate/bytes during each window, because it shares `objectstore-local` with Loki-A.
+6. **Covariates:** `filer.backup` upload rate/bytes during each window (shares `objectstore-local` with Loki-A); nightly Barman backup of `verstappen` at 00:00 to host SeaweedFS (shares Loki-C's store, §4.8 T5). Exclude 00:00–00:30 from query windows.
+7. **Preconditions:** no crashlooping tenant pods (§4.8 T8); `flog` in non-tenant namespace `loki-bench` (T7); parity gate from §7 risk 9 passes.
 
 **Restore drill (pass/fail gate):** after the run, deploy a throwaway Loki (same schema) pointed at RustFS `loki-mirror` with read-only creds. It must return the same line counts as `loki-seaweedfs` for the fixed query set, over ranges older than the mirror lag.
 
@@ -320,6 +336,10 @@ Caveat: every store shares one WSL2 VM and one disk (`/dev/sdd`). "Outside" mean
 | 17 | otel-collector kept (traces + edge mTLS gateway); its logs pipeline fans out to all three Lokis. Alloy replacement = separate follow-up. | 2026-09-18 (rev 3) |
 | 18 | `loki-canary` disabled on all three Lokis (top-level `lokiCanary.enabled: false`) | 2026-09-18 (rev 3) |
 | 19 | S3 keys via Secret + `-config.expand-env`, not `--set` (all three Lokis) | 2026-09-18 (rev 3) |
+| 20 | k8s-monitoring Loki destinations: `clusterLabels: [k8s.cluster.name]`; `cluster` stays the CNPG cluster name | 2026-09-18 (rev 4) |
+| 21 | Keep today's label shape (`pod` as label, `job="k8s-events"`); dashboards unchanged | 2026-09-18 (rev 4) |
+| 22 | Tenant Grafana keeps Loki-C only; no tenant datasources for Loki-A/B | 2026-09-18 (rev 4) |
+| 23 | Tenant isolation for **logs, metrics and traces** is a separate **P1** epic; not part of this PoC. If Loki auth lands first, apply it identically to all three Lokis. | 2026-09-18 (rev 4) |
 
 ---
 
@@ -339,6 +359,7 @@ Update **after** `t9p7.2` lands (the doc describes live state). Section-by-secti
 | 7 Helm releases | `alloy 1.8.0`, `loki` only, 26 releases | replace `alloy` with `k8s-monitoring 4.5.2` (+ `alloy-operator` subchart); add `loki-rustfs`, `loki-seaweedfs`, `seaweedfs-operator 0.1.42`, `reloader`; recount |
 | 7 dashboards | 16 listed | 19 live (adds `*-rbr-ver` variants); add the storage A/B/C benchmark dashboard from `t9p7.3` |
 | 7 containers | RustFS purpose "Mimir, Tempo" | "Mimir, Tempo, Loki-A (`loki-direct`), Loki-B mirror (`loki-mirror`)" |
+| 8 self-service | Tenant Grafana presented as tenant-scoped ("org rbr") | state plainly that tenant logs/metrics/traces are **not** isolated server-side today (§4.8 T6) and link epic `bd3d`; update once `bd3d` lands |
 | new note | — | link this design doc; state the benchmark caveat (single WSL disk) |
 
 Tenant Grafana (`demo/yaml/self-service/grafana/`, datasource `loki-rbr-ver` → `http://loki.grafana.svc…`) keeps pointing at Loki-C; no tenant change.
