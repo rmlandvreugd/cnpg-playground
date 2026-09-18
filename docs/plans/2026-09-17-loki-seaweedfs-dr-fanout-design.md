@@ -1,9 +1,9 @@
 # Loki S3 Storage A/B/C: RustFS-direct vs in-cluster SeaweedFS (+ RustFS mirror) vs host SeaweedFS
 
-**Date:** 2026-09-17 (rev 2: 2026-09-18, after adversarial review)
+**Date:** 2026-09-17 (rev 2: 2026-09-18 adversarial review; rev 3: 2026-09-18 live-cluster review)
 **Status:** Design — decisions closed, ready to implement
 **Owner:** monitoring stack
-**Tracking:** epic `cnpg-playground-t9p7` → `.1` operator → `8ti` Seaweed CR + mirror → `dfe` Lokis → `.2` k8s-monitoring → `.3` benchmark; bug `eff0` (Reloader) blocks `dfe`
+**Tracking:** epic `cnpg-playground-t9p7` → `.1` operator → `8ti` Seaweed CR + mirror → `dfe` Lokis → `.2` k8s-monitoring + OTel log fan-out → `.3` benchmark → `.4` architecture-overview (§8a); bug `eff0` (Reloader) blocks `dfe`
 **Target environment:** a cluster built with `./scripts/setup.sh local` (single region `local` = hub, one RustFS `objectstore-local`, host SeaweedFS container) followed by `./monitoring/setup.sh`.
 
 > Rev 1 of this doc proposed one in-cluster SeaweedFS fanning out to two DR sinks (external SeaweedFS + RustFS) via two `weed filer.remote.gateway` sidecars. That mechanism does not work (see §9). Rev 2 records the reworked design and the decisions from the 2026-09-18 review.
@@ -43,13 +43,30 @@ Verdict metrics (user decision): **query latency over old time ranges**, **S3 op
 | kind node image has **no `/var/log/journal`**; journald `Storage=auto` → volatile `/run/log/journal` | inspected `kindest/node` image locally |
 | Infra nodes: 2 tainted workers (`node-role.kubernetes.io/infra:NoSchedule`) | `k8s/kind-cluster.yaml.tpl` |
 
+### 2.1 Live-cluster check (rev 3, `kind-k8s-local`, 2026-09-18)
+
+Checked against a running `setup.sh local` + `monitoring/setup.sh` cluster (no tenant; `demo-local-db` present). All rows above hold. Additional facts found live:
+
+| # | Live fact | Evidence | Consequence |
+|---|---|---|---|
+| L1 | **otel-collector writes logs into Loki-C**: pipeline `logs: otlp → otlphttp/logs → http://loki.grafana.svc.cluster.local:3100/otlp`. Producers: traefik-edge (OTLP gRPC mTLS via `otel/ext-svc-lb` 172.28.255.240:4317), in-cluster Traefik. | ConfigMap `otel/otel-collector-opentelemetry-collector`; Loki streams `service_name=traefik-edge`, `opentelemetry-collector` | Second writer only Loki-C sees → breaks identical input. Fixed by §4.7. |
+| L2 | **`loki-canary` DaemonSet runs** (4 pods) and pushes into Loki-C (`service_name=unknown_service`, ≈9% of bytes over 30 min) | `kubectl -n grafana get ds`; `helm get values loki -a` → `lokiCanary: true` | Chart 13.x reads **top-level** `lokiCanary.enabled`; our `monitoring.lokiCanary.enabled: false` is dead config. Set `lokiCanary.enabled: false` in all three values files. |
+| L3 | Current Alloy = **1-replica Deployment**, `loki.source.kubernetes` (tails through the kube API, no hostPath) | `deploy/alloy`, ConfigMap `alloy` | k8s-monitoring `alloy-logs` is a DaemonSet reading `/var/log/pods` + journal — a collection-mechanism change, not just a chart swap. |
+| L4 | Real ingest ≈ 7 MB / 30 min (~4 KB/s); top: etcd, loki, grafana-operator, canary, calico-node | Loki `bytes_over_time` by `service_name` | Confirms `flog` load is required. |
+| L5 | Journald only in `/run/log/journal` (8 MB); `/var/log/journal` absent on nodes | `docker exec k8s-local-worker ls` | Confirms `nodeLogs.journal.path` override. |
+| L6 | S3 secret **plaintext in ConfigMap `loki`** (`secret_access_key: lokiS3secret`) from `--set` | `kubectl -n grafana get cm loki` | New Lokis must not copy this: Secret + `extraEnvFrom` + `-config.expand-env=true` + `${S3_SECRET_KEY}` in values. Apply to Loki-C too. |
+| L7 | StorageClass `standard` = local-path, `allowVolumeExpansion: false` | `kubectl get sc` | Size Loki PVCs and the SeaweedFS volume PVC up front; no resize later. |
+| L8 | `step-ca-external-bundle` + `vault-pki-bundle` present in `grafana`; ServiceMonitor CRD present; no Seaweed / Reloader CRDs | `kubectl get cm,crd` | Matches §4 assumptions. |
+| L9 | Container / LB IPs unchanged: RustFS 172.28.0.11, SeaweedFS .12, traefik 172.28.255.200 | `docker network inspect kind`, LB Services | — |
+
 ---
 
 ## 3. Topology
 
 ```
-                       k8s-monitoring (alloy-logs DaemonSet)
-                       nodeLogs + podLogsViaLoki, WAL per destination
+     k8s-monitoring (alloy-logs DaemonSet)          otel-collector (otel ns, kept)
+     nodeLogs + podLogsViaLoki, WAL per dest        OTLP logs from traefik-edge + Traefik
+                       └──────────────┬─────────────┘  (3 otlphttp exporters, §4.7)
                  ┌───────────────────┼─────────────────────┐
                  ▼                   ▼                     ▼
         Loki-A  loki-rustfs   Loki-B  loki-seaweedfs   Loki-C  loki (existing)
@@ -161,6 +178,8 @@ Common deltas applied to **all three** so the arms differ only in storage:
 - `compactor.retention_enabled: true`, `limits_config.retention_period: 24h` (minimum with 24h index period), `compactor.delete_request_store: s3`
 - hedging disabled (the chart default hides tail latency and multiplies requests to the slower backend)
 - `monitoring.serviceMonitor.enabled: true`
+- `lokiCanary.enabled: false` (top-level key; see L2)
+- S3 keys from a Secret via `singleBinary.extraEnvFrom` + `singleBinary.extraArgs: [-config.expand-env=true]`, values reference `${S3_ACCESS_KEY}`/`${S3_SECRET_KEY}` (see L6)
 - `singleBinary.podAnnotations.reloader.stakater.com/auto: "true"` (cert and secret rotation; see §7)
 - keep `use_thanos_objstore: false` on all three (the chart 13.5.0 render). Latency metric = `loki_s3_request_duration_seconds`; Loki `main` has flipped the default to Thanos, so re-check on chart upgrade.
 - identical `limits_config`, ingester chunk settings, PVC size, infra placement
@@ -198,6 +217,36 @@ collectors:
 
 `GrafanaDatasource` objects: keep uid `loki` (Loki-C: Tempo links and dashboards keep working), add `loki-rustfs` and `loki-seaweedfs`. Dashboards using a `${datasource}` variable work with all three.
 
+### 4.7 OTel Collector — kept, logs fanned out — bead `t9p7.2`
+
+Decision (rev 3): otel-collector **stays** the traces gateway (tail sampling → Tempo, mTLS OTLP intake from traefik-edge via `ext-svc-lb`). It is **not** superseded by Alloy in this epic. Only its logs pipeline changes, so all three Lokis receive the same OTLP logs:
+
+```yaml
+# monitoring/otel-collector/otel-collector-values.yaml (config.exporters / service.pipelines.logs)
+exporters:
+  otlphttp/logs:          { endpoint: http://loki.grafana.svc.cluster.local:3100/otlp,           tls: { insecure: true } }
+  otlphttp/logs-rustfs:   { endpoint: http://loki-rustfs.grafana.svc.cluster.local:3100/otlp,    tls: { insecure: true } }
+  otlphttp/logs-seaweedfs:{ endpoint: http://loki-seaweedfs.grafana.svc.cluster.local:3100/otlp, tls: { insecure: true } }
+service:
+  pipelines:
+    logs: { receivers: [otlp], processors: [memory_limiter, batch], exporters: [otlphttp/logs, otlphttp/logs-rustfs, otlphttp/logs-seaweedfs] }
+```
+
+Each exporter has its own `sending_queue`, so a slow Loki does not block the others (unlike Alloy's `loki.Fanout`). Keeping Loki's native `/otlp` endpoint keeps `limits_config.otlp_config` index labels (`service.name`, `host.name`) identical to today.
+
+**Why not replace it with Alloy now** (assessed; follow-up bead):
+
+| Capability | otel-collector today | k8s-monitoring `applicationObservability` + `alloy-receiver` |
+|---|---|---|
+| OTLP gRPC/HTTP, jaeger, zipkin receivers | yes | yes |
+| Tail sampling → Tempo | `tail_sampling` processor | per-destination `processors.tailSampling` on the `otlp` destination |
+| OTLP logs → several Lokis | exporters per Loki (above) | automatic, every `loki` destination |
+| **mTLS on the OTLP receiver** (client-CA, edge intake) | yes | **not in feature values** → raw Alloy `extraConfig` (`otelcol.receiver.otlp` `tls` block) |
+| Loki `/otlp` label semantics | native | via `otelcol.exporter.loki` → `loki.write`: labels differ from `otlp_config` |
+| Callers to repoint | — | `otel/ext-svc-lb` selector, Traefik `--tracing.otlp.grpc.endpoint`, demo-app `otlpEndpoint`, spoke `otel-push` IngressRoute, OTLP server cert SANs |
+
+Replacing is feasible and yields one collector, but it touches the edge mTLS path and traces. That is out of scope for a storage benchmark. Tracked as a separate follow-up.
+
 ---
 
 ## 5. Benchmark method — bead `t9p7.3`
@@ -225,9 +274,11 @@ Caveat: every store shares one WSL2 VM and one disk (`/dev/sdd`). "Outside" mean
    4. Loki-C with common deltas
    5. Loki-A and Loki-B (`dfe`)
    6. k8s-monitoring replacing `alloy`
-   7. datasources (`t9p7.2`)
+   7. otel-collector logs exporters for A and B (§4.7). otel-collector installs **before** Loki today (`monitoring/setup.sh:154` vs `:289`), so either move the upgrade after step 5 or accept exporter retries until A/B exist.
+   8. datasources (`t9p7.2`)
 3. Benchmark + drill (`t9p7.3`).
 4. `monitoring/teardown.sh` and `scripts/teardown.sh` get matching removals: Seaweed CR + PVCs, releases, RustFS users/buckets.
+5. `docs/architecture-overview.md` update (`t9p7.4`, §8a).
 
 ---
 
@@ -241,6 +292,8 @@ Caveat: every store shares one WSL2 VM and one disk (`/dev/sdd`). "Outside" mean
 6. **Mirror backlog is unobserved.** `filer.backup` has no metrics. Watch sidecar logs and compare bucket object counts at the end of the run (part of the drill).
 7. **Version drift.** Operator (1.0.x), `chrislusf/seaweedfs`, k8s-monitoring and the Loki chart are pinned. Re-check the `use_thanos_objstore` default and metric names on any Loki chart bump.
 8. **Bootstrap dependency.** In-cluster SeaweedFS images come through zot, whose blobs live on the host SeaweedFS. The host container is **not** decommissionable: it also carries zot and Barman. Rev 1's "decommission after PoC" is withdrawn.
+9. **Hidden writers.** Anything that pushes to Loki outside Alloy breaks input parity: otel-collector (fixed §4.7), `loki-canary` (disabled). Before the benchmark, compare `sum by (service_name) (bytes_over_time(...))` across all three Lokis; they must match within ±1%.
+10. **Collection-mechanism change.** API-tailing Deployment → file-reading DaemonSet (L3) may change line counts, timestamps and labels (`service_name` derivation). Pgaudit/Traefik/events dashboards must be re-checked after `t9p7.2`, not only the new datasources.
 
 ---
 
@@ -264,6 +317,31 @@ Caveat: every store shares one WSL2 VM and one disk (`/dev/sdd`). "Outside" mean
 | 14 | Verdict = old-range query latency + S3 op latency p50/p99 + resource cost; restore drill = pass/fail gate | 2026-09-18 |
 | 15 | Spoke regions out of scope (hub only) | 2026-09-17 (kept) |
 | 16 | Tombstone window YAGNI | 2026-09-17 (kept) |
+| 17 | otel-collector kept (traces + edge mTLS gateway); its logs pipeline fans out to all three Lokis. Alloy replacement = separate follow-up. | 2026-09-18 (rev 3) |
+| 18 | `loki-canary` disabled on all three Lokis (top-level `lokiCanary.enabled: false`) | 2026-09-18 (rev 3) |
+| 19 | S3 keys via Secret + `-config.expand-env`, not `--set` (all three Lokis) | 2026-09-18 (rev 3) |
+
+---
+
+## 8a. Plan: update `docs/architecture-overview.md` — bead `t9p7.4`
+
+Update **after** `t9p7.2` lands (the doc describes live state). Section-by-section:
+
+| § | Current text | Change |
+|---|---|---|
+| 2 diagram | `Alloy "Log Collector"`, one `Loki`, `Seaweed -->|S3 storage| Loki`, `OTel -->|traces| Tempo` only | Alloy → "Alloy (k8s-monitoring)"; three Loki nodes (`loki`, `loki-rustfs`, `loki-seaweedfs`); in-cluster `SeaweedFS (operator)` node in ObsLayer; edges: host SeaweedFS→`loki`, RustFS→`loki-rustfs`, in-cluster SW→`loki-seaweedfs`, in-cluster SW `-.filer.backup mirror.->` RustFS; add missing `OTel -->|logs| Loki` (already true today) |
+| 2.1 wiring table | `mimir,tempo/objectstore-local` | add `grafana/objectstore-local` (RustFS bridge for Loki-A + mirror) |
+| 3.1 flowchart + outcomes | no seaweedfs-operator / Reloader | add both under Phase 4 (hub-only platform) |
+| 3.3 flowchart | `M3 Loki (single-binary) → SeaweedFS`, `M5 Alloy`, `M6 OTel` | three Loki boxes with their stores; `M5` = k8s-monitoring (`nodeLogs`, `podLogsViaLoki`, `clusterEvents`); OTel → 3 Lokis (logs) + Tempo (traces) |
+| 3.3 outcomes | "All long-term storage backed by RustFS S3" (**already wrong**: Loki is on SeaweedFS); "5 datasources … 12 dashboards" | per-signal storage list; datasource list incl. `loki-rustfs`, `loki-seaweedfs` (live today: 9 GrafanaDatasource CRs incl. `*-rbr-ver`, 19 dashboards) |
+| 5.3 observability flow | `AppL --> Alloy`, `Loki --> Seaweed` | node journal + pod logs → Alloy DaemonSet; OTel logs → Lokis; three Loki → store edges + mirror edge |
+| 6 namespaces | `grafana` = "Grafana Operator, platform Grafana, tenant Grafana, Loki, Alloy" | add Loki-A/B, SeaweedFS CR pods, alloy-operator; new `seaweedfs-operator` namespace (name set in `t9p7.1`); `reloader` namespace if separate |
+| 7 Helm releases | `alloy 1.8.0`, `loki` only, 26 releases | replace `alloy` with `k8s-monitoring 4.5.2` (+ `alloy-operator` subchart); add `loki-rustfs`, `loki-seaweedfs`, `seaweedfs-operator 0.1.42`, `reloader`; recount |
+| 7 dashboards | 16 listed | 19 live (adds `*-rbr-ver` variants); add the storage A/B/C benchmark dashboard from `t9p7.3` |
+| 7 containers | RustFS purpose "Mimir, Tempo" | "Mimir, Tempo, Loki-A (`loki-direct`), Loki-B mirror (`loki-mirror`)" |
+| new note | — | link this design doc; state the benchmark caveat (single WSL disk) |
+
+Tenant Grafana (`demo/yaml/self-service/grafana/`, datasource `loki-rbr-ver` → `http://loki.grafana.svc…`) keeps pointing at Loki-C; no tenant change.
 
 ---
 
