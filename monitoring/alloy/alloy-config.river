@@ -1,6 +1,9 @@
 // Discover all CNPG pods across all namespaces
 discovery.kubernetes "cnpg_pods" {
   role = "pod"
+  attach_metadata {
+    namespace = true
+  }
   selectors {
     role  = "pod"
     label = "cnpg.io/cluster"
@@ -11,6 +14,16 @@ discovery.kubernetes "cnpg_pods" {
 discovery.relabel "cnpg_pods" {
   targets = discovery.kubernetes.cnpg_pods.targets
 
+  // Loki tenant (X-Scope-OrgID): the source namespace's Capsule tenant, else "platform".
+  rule {
+    target_label = "tenant"
+    replacement  = "platform"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_namespace_label_capsule_clastix_io_tenant"]
+    regex         = "(.+)"
+    target_label  = "tenant"
+  }
   rule {
     source_labels = ["__meta_kubernetes_namespace"]
     target_label  = "namespace"
@@ -49,6 +62,14 @@ loki.process "pgaudit" {
     }
   }
 
+  forward_to = [loki.process.tenant.receiver]
+}
+
+// Every pipeline ends here: the "tenant" label becomes the X-Scope-OrgID.
+loki.process "tenant" {
+  stage.tenant {
+    label = "tenant"
+  }
   forward_to = [loki.write.grafana_loki.receiver]
 }
 
@@ -62,11 +83,24 @@ loki.write "grafana_loki" {
 // === Cluster-wide pod logs (system + workload) ===
 discovery.kubernetes "all_pods" {
   role = "pod"
+  attach_metadata {
+    namespace = true
+  }
 }
 
 discovery.relabel "all_pods" {
   targets = discovery.kubernetes.all_pods.targets
 
+  // Loki tenant (X-Scope-OrgID): the source namespace's Capsule tenant, else "platform".
+  rule {
+    target_label = "tenant"
+    replacement  = "platform"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_namespace_label_capsule_clastix_io_tenant"]
+    regex         = "(.+)"
+    target_label  = "tenant"
+  }
   rule {
     source_labels = ["__meta_kubernetes_namespace"]
     target_label  = "namespace"
@@ -103,13 +137,23 @@ discovery.relabel "all_pods" {
 
 loki.source.kubernetes "system_logs" {
   targets    = discovery.relabel.all_pods.output
-  forward_to = [loki.write.grafana_loki.receiver]
+  forward_to = [loki.process.tenant.receiver]
 }
 
 // === Traefik access-log branch ===
 discovery.relabel "traefik_pods" {
   targets = discovery.kubernetes.all_pods.targets
 
+  // Loki tenant (X-Scope-OrgID): the source namespace's Capsule tenant, else "platform".
+  rule {
+    target_label = "tenant"
+    replacement  = "platform"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_namespace_label_capsule_clastix_io_tenant"]
+    regex         = "(.+)"
+    target_label  = "tenant"
+  }
   rule {
     source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
     regex         = "traefik"
@@ -157,7 +201,7 @@ loki.process "traefik_access" {
     }
   }
 
-  forward_to = [loki.write.grafana_loki.receiver]
+  forward_to = [loki.process.tenant.receiver]
 }
 
 // === Kubernetes events ===
@@ -168,6 +212,10 @@ loki.source.kubernetes_events "k8s_events" {
 }
 
 loki.process "events" {
+  // Events have no namespace metadata to derive a Capsule tenant from.
+  stage.static_labels {
+    values = { tenant = "platform" }
+  }
   stage.labels {
     values = {
       "namespace" = "namespace",
@@ -176,5 +224,5 @@ loki.process "events" {
       "kind"      = "kind",
     }
   }
-  forward_to = [loki.write.grafana_loki.receiver]
+  forward_to = [loki.process.tenant.receiver]
 }
