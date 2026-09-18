@@ -101,7 +101,7 @@ CHART_REGISTRY: dict[str, ChartEntry] = {
     "CAPSULE_PROXY_CHART_VERSION": ChartEntry("CAPSULE_PROXY_CHART_VERSION", "capsule-proxy", ah_slug="projectcapsule/capsule-proxy", repo_url="https://projectcapsule.github.io/charts"),
     "GANGPLANK_CHART_VERSION": ChartEntry("GANGPLANK_CHART_VERSION", "gangplank", ah_slug="peak-scale/gangplank", repo_url="https://projectcapsule.github.io/charts"),
     "KYVERNO_CHART_VERSION": ChartEntry("KYVERNO_CHART_VERSION", "kyverno", ah_slug="kyverno/kyverno", repo_url="https://kyverno.github.io/kyverno"),
-    "KYVERNO_POLICIES_CHART_VERSION": ChartEntry("KYVERNO_POLICIES_CHART_VERSION", "kyverno-policies", ah_slug="kyverno/kyverno-policies", repo_url="https://kyverno.github.io/kyverno-policies"),
+    "KYVERNO_POLICIES_CHART_VERSION": ChartEntry("KYVERNO_POLICIES_CHART_VERSION", "kyverno-policies", ah_slug="kyverno/kyverno-policies", repo_url="https://kyverno.github.io/kyverno/"),
     "POLICY_REPORTER_CHART_VERSION": ChartEntry("POLICY_REPORTER_CHART_VERSION", "policy-reporter", ah_slug="policy-reporter/policy-reporter", repo_url="https://kyverno.github.io/policy-reporter"),
     "ARGOCD_CHART_VERSION": ChartEntry("ARGOCD_CHART_VERSION", "argo-cd", ah_slug="argo/argo-cd", repo_url="https://argoproj.github.io/argo-helm"),
     "ARGO_ROLLOUTS_CHART_VERSION": ChartEntry("ARGO_ROLLOUTS_CHART_VERSION", "argo-rollouts", ah_slug="argo/argo-rollouts", repo_url="https://argoproj.github.io/argo-helm"),
@@ -113,13 +113,13 @@ CHART_REGISTRY: dict[str, ChartEntry] = {
     "GRAFANA_OPERATOR_CHART_VERSION": ChartEntry("GRAFANA_OPERATOR_CHART_VERSION", "grafana-operator", ah_slug="grafana/grafana-operator", repo_url="https://grafana.github.io/helm-charts"),
     "KUBE_PROMETHEUS_STACK_CHART_VERSION": ChartEntry("KUBE_PROMETHEUS_STACK_CHART_VERSION", "kube-prometheus-stack", ah_slug="prometheus-community/kube-prometheus-stack", repo_url="https://prometheus-community.github.io/helm-charts"),
     "LOKI_CHART_VERSION": ChartEntry("LOKI_CHART_VERSION", "loki", ah_slug="grafana/loki", repo_url="https://grafana.github.io/helm-charts"),
-    "MIMIR_CHART_VERSION": ChartEntry("MIMIR_CHART_VERSION", "mimir", ah_slug="grafana/mimir-distributed", repo_url="https://grafana.github.io/helm-charts"),
+    "MIMIR_CHART_VERSION": ChartEntry("MIMIR_CHART_VERSION", "mimir-distributed", ah_slug="grafana/mimir-distributed", repo_url="https://grafana.github.io/helm-charts"),
     "TEMPO_CHART_VERSION": ChartEntry("TEMPO_CHART_VERSION", "tempo", ah_slug="grafana/tempo", repo_url="https://grafana.github.io/helm-charts"),
     "ALLOY_CHART_VERSION": ChartEntry("ALLOY_CHART_VERSION", "alloy", ah_slug="grafana/alloy", repo_url="https://grafana.github.io/helm-charts"),
     "OTEL_COLLECTOR_CHART_VERSION": ChartEntry("OTEL_COLLECTOR_CHART_VERSION", "opentelemetry-collector", ah_slug="opentelemetry-helm/opentelemetry-collector", oci_ref="oci://ghcr.io/open-telemetry/opentelemetry-helm-charts/opentelemetry-collector"),
     "TIGERA_OPERATOR_CHART_VERSION": ChartEntry("TIGERA_OPERATOR_CHART_VERSION", "tigera-operator", ah_slug="projectcalico/tigera-operator", repo_url="https://docs.projectcalico.org/charts"),
     "CARETTA_CHART_VERSION": ChartEntry("CARETTA_CHART_VERSION", "caretta", ah_slug="groundcover/caretta", repo_url="https://caretta.app/charts"),
-    "RADAR_CHART_VERSION": ChartEntry("RADAR_CHART_VERSION", "radar", ah_slug="skyhook/radar", repo_url="https://radar-team.github.io/charts"),
+    "RADAR_CHART_VERSION": ChartEntry("RADAR_CHART_VERSION", "radar", ah_slug="skyhook/radar", repo_url="https://skyhook-io.github.io/helm-charts"),
     "RELOADER_CHART_VERSION": ChartEntry("RELOADER_CHART_VERSION", "reloader", ah_slug="stakater/reloader", repo_url="https://stakater.github.io/stakater-charts"),
     # In-repo chart: no env-var in common.sh — keyed by chart name, reported as
     # "missing in common.sh" until a version variable is added.
@@ -320,6 +320,9 @@ def ah_values(slug: str, version: str, client: httpx.Client) -> str:
 
 # ── Helm values fetch (plan section 6) ─────────────────────────────────────────
 
+_repo_names: dict[str, str] = {}   # repo url → registered, index-refreshed repo name
+
+
 def _repo_name_for(url: str) -> str:
     """Return a helm repo name serving `url`, registering it if needed.
 
@@ -327,15 +330,27 @@ def _repo_name_for(url: str) -> str:
     arbitrary cached index); the `--repo` flag then only works for repos already
     registered in the helm config, so fall back to the <name>/<chart> form.
     """
+    if url in _repo_names:
+        return _repo_names[url]
+    name = None
     r = subprocess.run(["helm", "repo", "list"], capture_output=True, text=True, timeout=30)
     if r.returncode == 0:
         for line in r.stdout.splitlines()[1:]:
             parts = line.split()
             if len(parts) >= 2 and parts[1].rstrip("/") == url.rstrip("/"):
-                return parts[0]
-    name = f"chk-{hashlib.sha256(url.encode()).hexdigest()[:8]}"
-    subprocess.run(["helm", "repo", "add", name, url], capture_output=True, text=True, timeout=60)
-    subprocess.run(["helm", "repo", "update", name], capture_output=True, text=True, timeout=120)
+                name = parts[0]
+                break
+    if name is None:
+        name = f"chk-{hashlib.sha256(url.encode()).hexdigest()[:8]}"
+        add = subprocess.run(["helm", "repo", "add", name, url], capture_output=True, text=True, timeout=60)
+        if add.returncode != 0:
+            raise RuntimeError(f"helm repo add {name} {url} failed: {add.stderr.strip()}")
+    # A registered repo can lack a cached index (e.g. added on another machine
+    # or cache cleared), which makes `helm show values` fail with "no cached repo".
+    upd = subprocess.run(["helm", "repo", "update", name], capture_output=True, text=True, timeout=120)
+    if upd.returncode != 0:
+        raise RuntimeError(f"helm repo update {name} failed: {upd.stderr.strip()}")
+    _repo_names[url] = name
     return name
 
 
