@@ -112,6 +112,7 @@ graph LR
         Seaweed["SeaweedFS<br/>172.28.0.12:8333"]
         Vault["Vault<br/>172.28.0.14:8200"]
         Authelia["Authelia<br/>172.28.0.2:9091"]
+        Zot["zot<br/>172.28.0.251:5000"]
         Edge["traefik-edge<br/>172.28.0.250:443 / :9102"]
     end
 
@@ -122,21 +123,23 @@ graph LR
         LokiTenant["Loki + verstappen backups"]
         OTel["OTel Collector<br/>ext-svc-lb 172.28.255.240:4317/4318"]
         Consumers["ESO / cert-manager<br/>(Vault clients)"]
+        Prom["Prometheus<br/>(otel ns)"]
     end
 
     StepCA -. "headless Service + Endpoints" .-> Cluster
     RustFS -- "headless Endpoints → :9000" --> MimirTempo
     Seaweed -- "headless Endpoints → :8333" --> LokiTenant
     Edge -- "scraped: Endpoints → :9102" --> OTel
+    Zot -- "headless Endpoints → :5000/metrics" --> Prom
     Consumers == "HTTPS via sslip.io → edge" ==> Edge
-    Edge -. "routes vault.* / authelia.*" .-> Vault & Authelia
+    Edge -. "routes vault.* / authelia.* / zot.*" .-> Vault & Authelia & Zot
     Edge == "OTLP push → MetalLB LB" ==> OTel
 ```
 
 | Mechanism | Containers reached this way | Cluster side | How it resolves |
 |---|---|---|---|
-| **1. Direct headless `Service` + manual `Endpoints`** | step-ca, RustFS (`objectstore-local`), SeaweedFS | `step-ca/step-ca`, `mimir,tempo/objectstore-local`, `grafana,rbr-ver-db/seaweedfs` | In-cluster DNS name resolves to the container's **kind-bridge IP**; pods dial it directly on the shared bridge. |
-| **2. Via the `traefik-edge` proxy** (`*.172-28-0-250.sslip.io`) | Vault, Authelia | ESO `ClusterSecretStore` (`vault-approle*`) + cert-manager `ClusterIssuer` (`vault-pki`) → `https://vault.172-28-0-250.sslip.io`; Authelia `ExternalName` → `authelia.172-28-0-250.sslip.io` | The `sslip.io` hostname resolves to `172.28.0.250` (the **edge container**), which TLS-terminates and routes to the backend container. There is **no** in-cluster `vault` Service. |
+| **1. Direct headless `Service` + manual `Endpoints`** | step-ca, RustFS (`objectstore-local`), SeaweedFS, zot (metrics only) | `step-ca/step-ca`, `mimir,tempo/objectstore-local`, `grafana,rbr-ver-db/seaweedfs`, `otel/zot` | In-cluster DNS name resolves to the container's **kind-bridge IP**; pods dial it directly on the shared bridge. zot's `/metrics` is scraped this way (anonymous, not exposed via the edge) rather than proxied — see §7 ServiceMonitor pattern. |
+| **2. Via the `traefik-edge` proxy** (`*.172-28-0-250.sslip.io`) | Vault, Authelia, zot | ESO `ClusterSecretStore` (`vault-approle*`) + cert-manager `ClusterIssuer` (`vault-pki`) → `https://vault.172-28-0-250.sslip.io`; Authelia `ExternalName` → `authelia.172-28-0-250.sslip.io`; kind nodes' containerd mirrors + `helm`/`stacker`/`trivy` on the host → `https://zot.172-28-0-250.sslip.io` | The `sslip.io` hostname resolves to `172.28.0.250` (the **edge container**), which TLS-terminates and routes to the backend container. There is **no** in-cluster `vault` (or `zot`) Service. |
 | **3. Reverse: cluster ← edge** | traefik-edge → cluster | MetalLB `LoadBalancer` `otel/ext-svc-lb` at `172.28.255.240:4317/4318` | The edge container pushes **OTLP traces + logs** into the cluster over the MetalLB VIP; the cluster in turn **scrapes** the edge's Prometheus metrics at `172.28.0.250:9102`. |
 
 **Why two different mechanisms?** Data-plane dependencies that need raw TCP and no auth
@@ -167,6 +170,7 @@ flowchart TD
     P1 --> P1A2["Calico CNI<br/>(Tigera Operator)"]
     P1 --> P1B["RustFS S3 Container"]
     P1 --> P1B2["SeaweedFS S3 Container"]
+    P1 --> P1B3["traefik-edge + zot<br/>(pull-through registry cache,<br/>SeaweedFS S3 storage)"]
     P1 --> P1C["MetalLB (Load Balancer)"]
     P1 --> P1D["cert-manager + trust-manager"]
     P1 --> P1E["External Secrets Operator"]
@@ -199,6 +203,7 @@ flowchart TD
 **Key outcomes:**
 - An 8-node Kind cluster with labeled node pools: control-plane, **2 infra**, **2 app** (untainted, nodeSelector-only), **3 postgres** (tainted `NoSchedule`)
 - External services (step-ca, Vault, Authelia, RustFS) running as Docker containers, wired into K8s via headless Services/Endpoints
+- **zot** on-demand pull-through registry cache (SeaweedFS S3, htpasswd push + Authelia OIDC UI) fronted by `traefik-edge`: kind nodes mirror `docker.io`/`ghcr.io`/`quay.io`/`registry.k8s.io` through it via containerd `hosts.toml`, and `helm`/`stacker`/`trivy` on the host pull OCI charts, base images, and CVE DBs through it too (`OCI_PROXY`)
 - Calico CNI (via Tigera Operator) providing pod networking, with Caretta + Radar for network observability
 - Full 3-tier PKI: step-ca Root → step-ca Intermediate → Vault Intermediate → leaf certs
 - cert-manager ClusterIssuer for Vault PKI, trust-manager distributing CA bundles
@@ -315,7 +320,7 @@ flowchart TD
     S --> S5["CNPG Cluster verstappen (3) + Pooler<br/>+ ScheduledBackup → SeaweedFS"]
     S --> S6["Stable roles + VDE admin<br/>Vault DB Engine: static role app +<br/>dynamic roles (1h TTL)"]
     S --> S7["Traefik TCP IngressRoute<br/>SNI passthrough :5432"]
-    S --> S8["demo-app build + kind load<br/>→ ArgoCD app-of-apps rbr-root (last)"]
+    S --> S8["demo-app stacker build + publish to zot<br/>+ trivy CVE scan<br/>→ ArgoCD app-of-apps rbr-root (last)"]
     S --> S9["pgAdmin pgadmin-rbr-ver"]
     S --> S10["Grafana grafana-rbr-ver<br/>Generic OAuth via Authelia (org rbr)"]
 
@@ -347,7 +352,7 @@ graph TD
     IntCA -->|issues| AutheliaTLS["Authelia TLS cert"]
     IntCA -->|issues| RustFSTLS["RustFS TLS cert"]
     IntCA -->|issues| SeaweedFSTLS["SeaweedFS TLS cert"]
-    IntCA -->|x5c: edge service certs| EdgeCerts["Edge TLS certs<br/>(vault/authelia/seaweedfs/<br/>seaweedfs-admin/otlp-client)"]
+    IntCA -->|x5c: edge service certs| EdgeCerts["Edge TLS certs<br/>(vault/authelia/seaweedfs/<br/>seaweedfs-admin/zot/otlp-client)"]
     VaultIntCA -->|issues| TraefikDashTLS["Traefik Dashboard cert"]
     VaultIntCA -->|issues| RadarDashTLS["Radar Dashboard cert"]
     VaultIntCA -->|issues| ClusterCerts["In-cluster TLS certs<br/>(via cert-manager)"]
@@ -420,6 +425,7 @@ flowchart LR
         K8sO["K8s Objects<br/>(kube-state-metrics)"]
         TraefikS["Traefik<br/>(access logs + traces)"]
         TraefikEdgeS["Traefik Edge<br/>(access logs + traces<br/>+ Prometheus metrics)"]
+        ZotS["zot<br/>(Prometheus metrics)"]
         AppL["Application<br/>Logs"]
     end
 
@@ -447,6 +453,7 @@ flowchart LR
     AppL --> Alloy
     TraefikS --> OTel
     TraefikEdgeS --> OTel
+    ZotS --> Prom
 
     Prom -->|remoteWrite| Mimir
     Alloy -->|push| Loki
@@ -622,6 +629,7 @@ ports are what you reach from the laptop.
 | seaweedfs-admin | chrislusf/seaweedfs:latest | 172.28.0.15 | 23646 | 23646 | SeaweedFS admin UI |
 | seaweedfs-webdav | chrislusf/seaweedfs:latest | — (compose net) | 7333 | 7333 | SeaweedFS WebDAV gateway |
 | seaweedfs-worker | chrislusf/seaweedfs:latest | — (compose net) | 9327 | 9327 | SeaweedFS maintenance worker |
+| zot | ghcr.io/project-zot/zot-linux-amd64:v2.1.21 | 172.28.0.251 | 5000 | — (via edge only) | On-demand pull-through registry cache (docker.io/ghcr.io/quay.io/registry.k8s.io) + push target for stacker-built `demo-app`; SeaweedFS S3 storage; htpasswd push (`ci`) + Authelia OIDC UI; anonymous read; Prometheus metrics on `/metrics` |
 | traefik-edge | traefik:v3.7.5 | 172.28.0.250 | 443 / 80 / 9102 | 80/443 | Edge reverse proxy: TLS termination, Authelia forward-auth, `*.sslip.io` routing, OTLP traces/logs export, Prometheus metrics on :9102 |
 | revocation-exporter | revocation-exporter:latest | (host net) | — | — | step-ca CRL / certificate revocation metrics exporter |
 

@@ -1,7 +1,8 @@
 # Plan: zot registry (pull-through proxy) + stacker builds for demo-app
 
-Status: plan — nothing implemented yet. Tracked as beads epic
-`cnpg-playground-2k1`, one child per spike (see [Spikes](#spikes-beads-children)).
+Status: **implemented** (all 8 spikes closed, verified live). Tracked as beads
+epic `cnpg-playground-2k1`, one child per spike (see
+[Spikes](#spikes-beads-children)).
 
 ## Goals
 
@@ -547,15 +548,21 @@ configured**, so scanning moves to the trivy CLI.
 
 ## Spikes (beads children)
 
-| Beads | Spike | Blocked by | Done when | Estimate |
-|---|---|---|---|---|
-| `2k1.1` | zot container (SeaweedFS S3, htpasswd push) + edge route + cert | — | `curl https://zot…/v2/` 200; blobs in SeaweedFS `zot` bucket; `helm pull oci://zot…/ghcr.io/traefik/helm/traefik` works; digest-pinned pull keeps digest; `ci` push ok, anonymous push 401 | 2–3 h |
-| `2k1.2` | containerd mirrors in kind | 2k1.1 | cluster recreated; `crictl pull` on a node shows hit in zot logs; fallback works with zot stopped | 2 h + rebuild |
-| `2k1.3` | helm OCI ref rewrite (`OCI_PROXY`) | 2k1.1 | `helm_upgrade_install` prefixes `OCI_PROXY`; `--repo-url` charts untouched | 1 h |
-| `2k1.4` | stacker demo-app build + publish | 2k1.1, 2k1.2 | stacker build + publish to zot; ArgoCD demo-app runs image from zot; `kind load` removed | 2–3 h |
-| `2k1.6` | zot UI + search with Authelia OIDC | 2k1.1 | UI login via Authelia; `zot-admin` can delete; anonymous pull + `ci` push still work | 1–2 h |
-| `2k1.7` | CVE scanning with trivy CLI | 2k1.1, 2k1.4 | setup prints trivy HIGH/CRITICAL report for demo-app; trivy DB pulled via zot | 1 h |
-| `2k1.8` | zot metrics ServiceMonitor | 2k1.1 | zot target UP; `zot_http_requests_total` queryable in Grafana | 1 h (+1 h dashboard) |
-| `2k1.5` | docs | 2k1.2–2k1.4, 2k1.6–2k1.8 | architecture-overview + self-service-demo updated; this plan marked implemented | 45 min |
+| Beads | Spike | Blocked by | Done when | Estimate | Status |
+|---|---|---|---|---|---|
+| `2k1.1` | zot container (SeaweedFS S3, htpasswd push) + edge route + cert | — | `curl https://zot…/v2/` 200; blobs in SeaweedFS `zot` bucket; `helm pull oci://zot…/ghcr.io/traefik/helm/traefik` works; digest-pinned pull keeps digest; `ci` push ok, anonymous push 401 | 2–3 h | ✅ closed |
+| `2k1.2` | containerd mirrors in kind | 2k1.1 | cluster recreated; `crictl pull` on a node shows hit in zot logs; fallback works with zot stopped | 2 h + rebuild | ✅ closed |
+| `2k1.3` | helm OCI ref rewrite (`OCI_PROXY`) | 2k1.1 | `helm_upgrade_install` prefixes `OCI_PROXY`; `--repo-url` charts untouched | 1 h | ✅ closed |
+| `2k1.4` | stacker demo-app build + publish | 2k1.1, 2k1.2 | stacker build + publish to zot; ArgoCD demo-app runs image from zot; `kind load` removed | 2–3 h | ✅ closed |
+| `2k1.6` | zot UI + search with Authelia OIDC | 2k1.1 | UI login via Authelia; `zot-admin` can delete; anonymous pull + `ci` push still work | 1–2 h | ✅ closed |
+| `2k1.7` | CVE scanning with trivy CLI | 2k1.1, 2k1.4 | setup prints trivy HIGH/CRITICAL report for demo-app; trivy DB pulled via zot | 1 h | ✅ closed |
+| `2k1.8` | zot metrics ServiceMonitor | 2k1.1 | zot target UP; `zot_http_requests_total` queryable in Grafana | 1 h (+1 h dashboard) | ✅ closed |
+| `2k1.5` | docs | 2k1.2–2k1.4, 2k1.6–2k1.8 | architecture-overview + self-service-demo updated; this plan marked implemented | 45 min | ✅ closed |
 
-Suggested order: 1 → (2, 3, 6, 8 in any order) → 4 → 7 → 5.
+Suggested order: 1 → (2, 3, 6, 8 in any order) → 4 → 7 → 5. All 8 spikes
+closed and verified live against the running dev environment; see each
+issue's close reason in `bd show <id>` for the verification method and any
+unplanned bugs found+fixed along the way. One known follow-up left
+deliberately unresolved: `cnpg-playground-dzk` (zot `_catalog`/GraphQL search
+returns empty despite valid S3 data — root-caused to a doubled `zot/zot/` S3
+key prefix, doesn't block any spike's done-criteria).

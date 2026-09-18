@@ -129,7 +129,7 @@ What it does (in order):
 10. **Stable PostgreSQL roles** — `rbr_ver_ddl_owner`, `rbr_ver_ddl_admin`, `rbr_ver_ddl_reader` with grants
 11. **VDE admin role** — `rbr_ver_vde_admin` with CREATEROLE; password in Vault KV `cnpg/rbr/ver/vde-admin`
 12. **Vault DB Engine** — config `rbr-ver-max` (sslip.io endpoint, TLS); rotate-root; static role `app` (24h rotation); dynamic roles `rbr-db-admin`, `rbr-ver-db-admin`, `rbr-ver-db-readonly`
-13. **demo-app image build + `kind load`** — built from `app/`, tagged with the chart `appVersion`, loaded into the Kind cluster
+13. **demo-app stacker build + publish + trivy scan** — `stacker build`/`publish` from `app/stacker.yaml`, tagged with the chart `appVersion`, pushed to `zot.<edge-ip>.sslip.io/apps/demo-app`; `trivy image --image-src remote` then prints a HIGH/CRITICAL CVE report (report-only), pulling its vulnerability DBs through zot's `ghcr.io` mirror
 14. **ArgoCD app-of-apps** — applies `manifests/argocd/root-app.yaml` (`rbr-root`), waits for sync, patches `demo-app` with `global.traefikIpDashed`. Runs **last** (after the DB + `verstappen-app` secret exist) so `demo-app` comes up healthy on its app node instead of crash-looping
 15. **pgAdmin** — `pgadmin-rbr-ver` Deployment in `pgadmin` namespace; servers.json ConfigMap preloaded; HTTP IngressRoute
 16. **Grafana + Authelia** — issues TLS cert; deploys `grafana-rbr-ver` CR with Generic OAuth (Authelia); applies Prometheus + Loki datasources + pgaudit dashboard; HTTPS IngressRoute; pre-creates `rbr` org via API
