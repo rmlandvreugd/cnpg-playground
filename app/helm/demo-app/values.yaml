@@ -33,7 +33,7 @@ database:
 
 # Application settings
 app:
-  version: "0.1.0"
+  version: "0.1.1"
   debug: false
   logLevel: "INFO"
   reload: false
@@ -50,7 +50,7 @@ observability:
     path: /metrics
   tracing:
     enabled: false  # Set to true for v2
-    otlpEndpoint: "http://otel-collector.otel.svc.cluster.local:4317"
+    otlpEndpoint: "http://otel-collector-opentelemetry-collector.otel.svc.cluster.local:4317"
 
 # Migration strategy
 migration:

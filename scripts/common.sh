@@ -225,6 +225,10 @@ CERT_MANAGER_CHART_VERSION="${CERT_MANAGER_CHART_VERSION:-v1.20.2}"
 TRUST_MANAGER_CHART_VERSION="${TRUST_MANAGER_CHART_VERSION:-v0.12.2}"
 METRICS_SERVER_CHART_VERSION="${METRICS_SERVER_CHART_VERSION:-3.13.1}"
 KUBELET_CSR_APPROVER_CHART_VERSION="${KUBELET_CSR_APPROVER_CHART_VERSION:-1.2.14}"
+# Reloader: watches ConfigMaps/Secrets and restarts workloads carrying the
+# reloader.stakater.com/auto annotation (demo-app on Vault static-cred
+# rotation, Loki on step-ca bundle updates). Chart repo only, no OCI mirror.
+RELOADER_CHART_VERSION="${RELOADER_CHART_VERSION:-2.2.17}"
 
 # Capsule + capsule-proxy + gangplank
 CAPSULE_CHART_VERSION="${CAPSULE_CHART_VERSION:-0.13.6}"

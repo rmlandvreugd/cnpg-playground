@@ -20,12 +20,12 @@ class AppSettings(BaseSettings):
     database_url: str | None = None
 
     # Application
-    app_version: str = "0.1.0"
+    app_version: str = "0.1.1"
     debug: bool = False
     log_level: str = "INFO"
 
     # Observability
-    otlp_endpoint: str = "http://otel-collector.otel.svc.cluster.local:4317"
+    otlp_endpoint: str = "http://otel-collector-opentelemetry-collector.otel.svc.cluster.local:4317"
     metrics_enabled: bool = True
     tracing_enabled: bool = False  # v1: off, v2: on
 
