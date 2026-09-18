@@ -743,7 +743,7 @@ def _run_default_mode(root: Path, versions: dict[str, str], update: bool, diff_v
                 console.print(f"[yellow]Warning:[/yellow] {key} missing in common.sh — skipping")
                 results.append({"key": key, "current_raw": "-", "latest": "-",
                                 "latest_compat": None, "is_constrained": False,
-                                "status": "error", "status_str": "[yellow]missing in common.sh[/yellow]",
+                                "status": "error", "status_str": "[red]✗ missing in common.sh[/red]",
                                 "slug": entry.ah_slug or ""})
                 continue
 
