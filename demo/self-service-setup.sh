@@ -490,6 +490,17 @@ EOF
         --username "${ZOT_CI_USER}" --password "${ZOT_CI_PASSWORD}"
     echo "✅ demo-app:${DEMO_APP_VERSION} published to ${OCI_PROXY}/apps/demo-app"
 
+    # zot-native CVE scanning is rejected at startup with an S3 storageDriver
+    # (root.go:681), so scanning runs via the trivy CLI instead. DBs are pulled
+    # through zot's ghcr.io mirror so repeated setups don't hit ghcr.io directly.
+    echo "🔍 Scanning demo-app:${DEMO_APP_VERSION} with trivy (report only, not gating)..."
+    SSL_CERT_FILE="${GIT_REPO_ROOT}/zot/ca-bundle.crt" \
+        trivy image --image-src remote \
+        --db-repository "${OCI_PROXY}/ghcr.io/aquasecurity/trivy-db:2" \
+        --java-db-repository "${OCI_PROXY}/ghcr.io/aquasecurity/trivy-java-db:1" \
+        --severity HIGH,CRITICAL --exit-code 0 \
+        "${OCI_PROXY}/apps/demo-app:${DEMO_APP_VERSION}"
+
     echo "🚀 Applying ArgoCD root Application (app-of-apps)..."
     kubectl apply --context "${LOCAL_CONTEXT}" \
         -f "${GIT_REPO_ROOT}/manifests/argocd/root-app.yaml"
