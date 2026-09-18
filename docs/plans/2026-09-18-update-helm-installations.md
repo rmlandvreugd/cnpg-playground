@@ -24,19 +24,17 @@ Six charts already current: metallb, gangplank, loki, tempo, caretta, reloader.
 demo-app is local-path (skipped). CILIUM is registered in the checker but absent
 from `common.sh` (error row, out of scope — cnpg-playground-2he9).
 
-### Known defects in the source data
+### Source-data defects (fixed)
 
-The 2026-09-18 run is incomplete. Tier 0 must fix these before the tier-2 review
-can rely on the log:
+The first 2026-09-18 run had no values diff for 7 charts. All three causes are
+fixed, and a re-run for those 7 charts produced a diff for each one, with the
+target versions listed below:
 
-| Defect | Effect | Bead |
+| Defect | Fix | Bead |
 |---|---|---|
-| `TRUST_MANAGER_CHART_VERSION` defined twice in `common.sh` (line 144 `0.17.1`, line 225 `v0.12.2`). Both use `${VAR:-default}`, so **the first one wins: effective pin is `0.17.1`**. The checker reads the dead line 225. | trust-manager "from" version wrong; values diff fails (`chart "trust-manager" matching 0.12.2 not found`). | cnpg-playground-u9n0.1 |
-| Checker registers MIMIR as chart `mimir`; installer uses `mimir-distributed` (`monitoring/setup.sh:88`). | No values diff for mimir. | cnpg-playground-ounx |
-| `helm show values` fails with `repo chk-XXXX not found` / `no cached repo found`. | No values diff for kyverno, kyverno-policies, policy-reporter, ESO, radar. | cnpg-playground-7zdn |
-
-Target versions for charts without a diff below are carried over from the
-2026-09-17 run. Reconfirm them in tier 0.
+| `TRUST_MANAGER_CHART_VERSION` was defined twice in `common.sh`. The first `${VAR:-default}` (`0.17.1`) won; the checker read the dead `v0.12.2` line. | One pin in the version block, set to the effective `0.17.1`. | cnpg-playground-u9n0.1 |
+| Checker registered MIMIR as chart `mimir`; installer uses `mimir-distributed`. | Registry chart name → `mimir-distributed`. | cnpg-playground-ounx |
+| `helm show values` failed with `repo chk-XXXX not found` / `no cached repo found`. | Registry URLs for kyverno-policies and radar returned 404 (they now match the installers). Pre-registered repos with no cached index are now refreshed. `helm repo add/update` failures are reported instead of swallowed. | cnpg-playground-7zdn |
 
 ---
 
@@ -97,17 +95,17 @@ uv run scripts/check-helm-versions.py --diff-values --rendered \
 | trust-manager | **0.17.1** → 0.25.0 | 8 minors. Pre-condition: tier 1 cert-manager applied; u9n0.1 dedupe done. |
 | capsule | 0.13.6 → 0.14.6 | minor. API-version change claims are unverified — check release notes. |
 | capsule-proxy | 0.13.5 → 0.14.1 | minor; ship with capsule. |
-| kyverno | 3.8.1 → 3.9.1 | minor. No diff yet (cnpg-playground-7zdn). |
+| kyverno | 3.8.1 → 3.9.1 | minor. |
 | kyverno-policies | 3.8.1 → 3.9.1 | ship with kyverno (same app version). |
-| policy-reporter | 3.7.4 → 3.10.0 | 3 minors. No diff yet. |
-| ESO | 2.4.1 → 2.10.0 | 6 minors; installed by `scripts/eso-setup.sh`. No diff yet. |
+| policy-reporter | 3.7.4 → 3.10.0 | 3 minors. |
+| ESO | 2.4.1 → 2.10.0 | 6 minors; installed by `scripts/eso-setup.sh`. |
 | cloudnative-pg | 0.28.0 → 0.29.0 | minor; installed by `install_cnpg_operator` (`common.sh`). |
 | plugin-barman-cloud | 0.6.0 → 0.8.0 | 2 minors; ship with cloudnative-pg. Chart warns only the `Recreate` update strategy is supported. |
 | grafana-operator | 5.22.2 → 5.25.0 | 3 minors; installed by `monitoring/setup.sh`. |
-| mimir (mimir-distributed) | 6.0.6 → 6.2.0 | 2 minors. No diff yet (cnpg-playground-ounx). |
+| mimir (mimir-distributed) | 6.0.6 → 6.2.0 | 2 minors. |
 | alloy | 1.8.0 → 1.12.1 | 4 minors. |
 | otel-collector | 0.158.2 → 0.173.1 | 15 minors. **Bump `OTEL_COLLECTOR_IMAGE_TAG` with it** — see below. |
-| radar | 1.7.9 → 1.14.1 | 7 minors. No diff yet. |
+| radar | 1.7.9 → 1.14.1 | 7 minors. |
 
 **otel-collector image exception.** `OTEL_COLLECTOR_IMAGE_TAG=0.153.0`
 (`common.sh:265`) is forced through `--set image.tag` (`monitoring/setup.sh:175`).
@@ -190,19 +188,15 @@ cilium (not in `common.sh`), demo-app (local chart). Line numbers are as of comm
 
 ### Tier 0 — prep (cnpg-playground-u9n0.3)
 
-Blocked by u9n0.1, ounx, 7zdn.
+Blockers u9n0.1, ounx and 7zdn are fixed (see "Source-data defects").
 
-1. Fix the duplicate trust-manager pin (u9n0.1). Remove the `# trust-manager
-   Configuration` block at `common.sh:143-144` and set line 225 to `0.17.1`, the
-   value in effect today. `bash -n scripts/common.sh`.
-2. Fix the checker (ounx, 7zdn), then regenerate the log:
+1. Regenerate the full log:
    ```bash
    uv run scripts/check-helm-versions.py --diff-values 2>&1 | tee helm-diff.log
    ```
-   Every outdated chart should now have a values diff and there should be no
+   Every outdated chart should have a values diff and there should be no
    `helm show values failed` lines.
-3. Update the target versions in this plan from the new log. Verify the
-   "unverified" notes in tier 2 (capsule API versions, kyverno) against upstream
+2. Check the "unverified" tier-2 notes (capsule API versions) against upstream
    release notes.
 
 ### Tier 1 + pin-only (cnpg-playground-u9n0.4)
