@@ -71,3 +71,8 @@ graphify-out/cache/           # optional: commit for speed, skip to keep repo sm
 CLAUDE.local.md
 graphify-out
 .playwright-mcp
+
+# Python bytecode (uv run check-helm-versions.py)
+__pycache__/
+*.pyc
+*.pyo
