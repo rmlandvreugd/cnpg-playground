@@ -45,6 +45,7 @@ from typing import Annotated, Optional
 
 import httpx
 import typer
+import yaml
 from packaging.version import InvalidVersion, Version
 from rich.console import Console
 from rich.syntax import Syntax
@@ -716,6 +717,27 @@ def _run_default_mode(root: Path, versions: dict[str, str], update: bool, diff_v
     with httpx.Client(headers={"Accept": "application/json"}) as client:
         for idx, key in enumerate(keys, 1):
             entry = CHART_REGISTRY[key]
+
+            # In-repo chart: version lives in Chart.yaml, not common.sh, and is
+            # not published anywhere to compare against. No AH call.
+            if entry.local_path:
+                chart_yaml = root / entry.local_path / "Chart.yaml"
+                try:
+                    local_ver = str(yaml.safe_load(chart_yaml.read_text())["version"])
+                except (OSError, KeyError, TypeError, yaml.YAMLError) as e:
+                    console.print(f"  [red]{key}: failed to read {chart_yaml}: {e}[/red]")
+                    results.append({"key": key, "current_raw": "-", "latest": "-",
+                                    "latest_compat": None, "is_constrained": False,
+                                    "status": "error", "status_str": f"[red]✗ {e}[/red]",
+                                    "slug": ""})
+                    continue
+                results.append({"key": key, "current_raw": local_ver, "latest": "-",
+                                "latest_compat": None, "is_constrained": False,
+                                "status": "local",
+                                "status_str": "[cyan]⊙ local (Chart.yaml)[/cyan]",
+                                "slug": ""})
+                continue
+
             current_raw = versions.get(key)
             if current_raw is None:
                 console.print(f"[yellow]Warning:[/yellow] {key} missing in common.sh — skipping")
@@ -796,10 +818,12 @@ def _run_default_mode(root: Path, versions: dict[str, str], update: bool, diff_v
     n_constrained = sum(1 for r in results if r["status"] == "constrained")
     n_error = sum(1 for r in results if r["status"] == "error")
     n_skip = sum(1 for r in results if r["status"] == "skip")
+    n_local = sum(1 for r in results if r["status"] == "local")
     console.print(f"\n[bold]Summary:[/bold] [green]{n_ok} up-to-date[/green]  "
                   f"[yellow]{n_update} update(s) available[/yellow]  "
                   f"[blue]{n_constrained} newer (out of constraint range)[/blue]  "
-                  f"[red]{n_error} error(s)[/red]  [yellow]{n_skip} skipped[/yellow]")
+                  f"[red]{n_error} error(s)[/red]  [yellow]{n_skip} skipped[/yellow]  "
+                  f"[cyan]{n_local} local (Chart.yaml)[/cyan]")
 
     # Values diff for updated charts (plan section 6 wiring).
     if diff_values:
