@@ -262,7 +262,7 @@ OTEL_COLLECTOR_CHART_VERSION="${OTEL_COLLECTOR_CHART_VERSION:-0.173.1}"  # OCI: 
 OTEL_COLLECTOR_IMAGE_TAG="${OTEL_COLLECTOR_IMAGE_TAG:-0.160.0}"          # otel/opentelemetry-collector-contrib; = chart 0.173.1 appVersion. Chart rewrites exporters to otlp_grpc/otlp_http, which older images reject
 TIGERA_OPERATOR_CHART_VERSION="${TIGERA_OPERATOR_CHART_VERSION:-v3.32.2}"
 CARETTA_CHART_VERSION="${CARETTA_CHART_VERSION:-0.0.16}"
-RADAR_CHART_VERSION="${RADAR_CHART_VERSION:-1.7.9}"
+RADAR_CHART_VERSION="${RADAR_CHART_VERSION:-1.14.1}"
 GRAFANA_IMAGE="${GRAFANA_IMAGE:-docker.io/grafana/grafana:12.4.1}"
 
 # --- Common Prerequisite Checks ---
