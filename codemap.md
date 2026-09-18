@@ -2,7 +2,7 @@
 
 ## Project Responsibility
 
-A local learning environment for **CloudNativePG** (CNPG) — the PostgreSQL operator for Kubernetes. Uses Docker/Kind to create simulated multi-region Kubernetes clusters with PostgreSQL distributed across them, backed by S3-compatible object storage (RustFS), HashiCorp Vault for secrets management, Dex for OIDC authentication, and a full observability stack (Prometheus, Grafana, Loki, Mimir, Tempo).
+A local learning environment for **CloudNativePG** (CNPG) — the PostgreSQL operator for Kubernetes. Uses Docker/Kind to create simulated multi-region Kubernetes clusters with PostgreSQL distributed across them, backed by S3-compatible object storage — RustFS for Barman/Mimir/Tempo, SeaweedFS for Loki, HashiCorp Vault for secrets management, Dex for OIDC authentication, and a full observability stack (Prometheus, Grafana, Loki, Mimir, Tempo).
 
 The **`local` region** is the primary learning environment — a single-region standalone setup ideal for experimentation. The `eu` and `us` regions provide a multi-region distributed topology with cross-region replication. All three regions (`local`, `eu`, `us`) are first-class; `local` is not in the default `REGIONS` array but is fully supported and is the required region for ESO/self-service demos.
 
@@ -10,7 +10,7 @@ The **`local` region** is the primary learning environment — a single-region s
 
 | Entry Point | Purpose |
 |-------------|---------|
-| `scripts/setup.sh` | Main bootstrap: creates Kind clusters, RustFS, Vault, Dex, MetalLB, Traefik, cert-manager, ESO per region |
+| `scripts/setup.sh` | Main bootstrap: creates Kind clusters, RustFS, SeaweedFS, Vault, Dex, MetalLB, Traefik, cert-manager, ESO per region |
 | `scripts/teardown.sh` | Destroys all clusters and containers |
 | `scripts/info.sh` | Displays cluster status and access URLs |
 | `demo/setup.sh` | Deploys CNPG operator, Barman Cloud Plugin, PostgreSQL clusters (pg-eu, pg-us, or pg-local) |
@@ -72,7 +72,7 @@ mTLS Access Patterns:
 
 ## Setup Lifecycle
 
-1. **`scripts/setup.sh`** — Phase 0: Bootstrap step-ca (Root CA) + Vault (non-dev, step-ca TLS) + Vault PKI + ESO + Dex; Phase 1: Create Kind clusters, deploy RustFS, MetalLB, cert-manager, trust-manager, ESO, Traefik per region; Phase 2: Distribute RustFS secrets; Post-loop: Vault OIDC + step-ca OIDC provisioner
+1. **`scripts/setup.sh`** — Phase 0: Bootstrap step-ca (Root CA) + Vault (non-dev, step-ca TLS) + Vault PKI + ESO + Dex; Phase 1: Create Kind clusters, deploy RustFS + SeaweedFS, MetalLB, cert-manager, trust-manager, ESO, Traefik per region; Phase 2: Distribute RustFS + SeaweedFS secrets; Post-loop: Vault OIDC + step-ca OIDC provisioner
 2. **`demo/setup.sh`** — Deploy CNPG operator, Barman Cloud Plugin, ObjectStore CRs, PostgreSQL clusters with distributed topology
 3. **`monitoring/setup.sh`** — Deploy Prometheus Operator, Grafana Operator, Loki, Alloy, Mimir, Tempo, OTel Collector, dashboards
 
@@ -171,7 +171,7 @@ mTLS Access Patterns:
 | Prometheus Operator | prometheus-operator | v0.90.1 | kube-prometheus-stack 83.6.0 |
 | Prometheus | prometheus-operator | v3.10.0 | Single instance, remoteWrites to Mimir |
 | Mimir | mimir | 2.16.0 | Distributed mode (3 zones), S3 backend via RustFS |
-| Loki | grafana | 3.7.1 | Single-binary mode, S3 backend via RustFS |
+| Loki | grafana | 3.7.1 | Single-binary mode, S3 backend via SeaweedFS (TLS) |
 | Tempo | tempo | 2.10.5 | Distributed mode, S3 backend via RustFS |
 | Alloy | grafana | v1.16.0 | Log collection → Loki |
 | OTel Collector | otel | 0.151.0 | Tail-based sampling gateway → Tempo |
@@ -248,7 +248,8 @@ mTLS Access Patterns:
 | step-ca | 8443 | Root CA + intermediate CA, TLS provider |
 | Vault | 8200 | Secrets management, PKI, AppRole auth |
 | Dex | 5556 | OIDC identity provider |
-| RustFS | 9000 | S3-compatible object storage (backups, Mimir, Loki, Tempo) |
+| RustFS | 9000 | S3-compatible object storage (Barman backups, Mimir, Tempo) |
+| SeaweedFS | 8333 | S3-compatible object storage (Loki chunks/rules/admin) |
 
 ## Key Configuration Patterns
 
