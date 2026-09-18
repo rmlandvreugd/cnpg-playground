@@ -20,7 +20,7 @@ class AppSettings(BaseSettings):
     database_url: str | None = None
 
     # Application
-    app_version: str = "0.1.0"
+    app_version: str = "0.1.1"
     debug: bool = False
     log_level: str = "INFO"
 

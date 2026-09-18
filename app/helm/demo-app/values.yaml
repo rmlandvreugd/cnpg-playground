@@ -33,7 +33,7 @@ database:
 
 # Application settings
 app:
-  version: "0.1.0"
+  version: "0.1.1"
   debug: false
   logLevel: "INFO"
   reload: false
