@@ -258,8 +258,8 @@ LOKI_CHART_VERSION="${LOKI_CHART_VERSION:-13.5.0}"
 ALLOY_CHART_VERSION="${ALLOY_CHART_VERSION:-1.12.1}"
 MIMIR_CHART_VERSION="${MIMIR_CHART_VERSION:-6.2.0}"
 TEMPO_CHART_VERSION="${TEMPO_CHART_VERSION:-2.25.2}"
-OTEL_COLLECTOR_CHART_VERSION="${OTEL_COLLECTOR_CHART_VERSION:-0.158.2}"  # OCI: ghcr.io/open-telemetry/opentelemetry-helm-charts
-OTEL_COLLECTOR_IMAGE_TAG="${OTEL_COLLECTOR_IMAGE_TAG:-0.153.0}"          # otel/opentelemetry-collector-contrib; chart 0.153.0 appVersion is 0.151.0
+OTEL_COLLECTOR_CHART_VERSION="${OTEL_COLLECTOR_CHART_VERSION:-0.173.1}"  # OCI: ghcr.io/open-telemetry/opentelemetry-helm-charts
+OTEL_COLLECTOR_IMAGE_TAG="${OTEL_COLLECTOR_IMAGE_TAG:-0.160.0}"          # otel/opentelemetry-collector-contrib; = chart 0.173.1 appVersion. Chart rewrites exporters to otlp_grpc/otlp_http, which older images reject
 TIGERA_OPERATOR_CHART_VERSION="${TIGERA_OPERATOR_CHART_VERSION:-v3.32.2}"
 CARETTA_CHART_VERSION="${CARETTA_CHART_VERSION:-0.0.16}"
 RADAR_CHART_VERSION="${RADAR_CHART_VERSION:-1.7.9}"
