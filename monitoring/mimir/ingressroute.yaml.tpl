@@ -9,5 +9,5 @@ spec:
     - match: Host(`mimir-push.${TRAEFIK_IP_DASHED}.sslip.io`)
       kind: Rule
       services:
-        - name: mimir-nginx
+        - name: mimir-gateway
           port: 80

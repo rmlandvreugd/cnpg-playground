@@ -54,7 +54,7 @@ ruler:          { replicas: 1 }
 alertmanager:   { replicas: 1, persistentVolume: { size: 1Gi } }
 overrides_exporter: { replicas: 1 }
 
-nginx:
+gateway:
   replicas: 1
   service:
     type: ClusterIP

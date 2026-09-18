@@ -102,7 +102,7 @@ for region in "${REGIONS[@]}"; do
 
     # Compute MIMIR_PUSH_URL for this region
     if [[ "${region}" == "${HUB_REGION}" ]]; then
-        MIMIR_PUSH_URL="http://mimir-nginx.mimir.svc.cluster.local/api/v1/push"
+        MIMIR_PUSH_URL="http://mimir-gateway.mimir.svc.cluster.local/api/v1/push"
     else
         HUB_TRAEFIK_IP="$(get_traefik_lb_ip "${HUB_CONTEXT}" 30)"
         HUB_TRAEFIK_DASHED="$(ip_to_dashed "${HUB_TRAEFIK_IP}")"
