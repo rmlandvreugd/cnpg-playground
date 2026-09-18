@@ -50,7 +50,7 @@ observability:
     path: /metrics
   tracing:
     enabled: false  # Set to true for v2
-    otlpEndpoint: "http://otel-collector.otel.svc.cluster.local:4317"
+    otlpEndpoint: "http://otel-collector-opentelemetry-collector.otel.svc.cluster.local:4317"
 
 # Migration strategy
 migration:

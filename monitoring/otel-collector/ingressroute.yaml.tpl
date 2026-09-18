@@ -9,5 +9,5 @@ spec:
     - match: Host(`otel-push.${TRAEFIK_IP_DASHED}.sslip.io`)
       kind: Rule
       services:
-        - name: otel-collector
+        - name: otel-collector-opentelemetry-collector
           port: 4318

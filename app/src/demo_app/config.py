@@ -25,7 +25,7 @@ class AppSettings(BaseSettings):
     log_level: str = "INFO"
 
     # Observability
-    otlp_endpoint: str = "http://otel-collector.otel.svc.cluster.local:4317"
+    otlp_endpoint: str = "http://otel-collector-opentelemetry-collector.otel.svc.cluster.local:4317"
     metrics_enabled: bool = True
     tracing_enabled: bool = False  # v1: off, v2: on
 
