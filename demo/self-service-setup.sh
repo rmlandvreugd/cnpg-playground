@@ -130,7 +130,6 @@ setup)
     cat <<'EOF' | _vcmd_stdin policy write eso-rbr-ver -
 path "cnpg/data/rbr/ver/*"       { capabilities = ["read"] }
 path "cnpg/metadata/rbr/ver/*"   { capabilities = ["read", "list"] }
-path "database/static-creds/app" { capabilities = ["read"] }
 EOF
     cat <<'EOF' | _vcmd_stdin policy write rbr-db-admin -
 path "database/creds/rbr-db-admin"     { capabilities = ["read"] }
@@ -422,19 +421,11 @@ EOF
     _vcmd write -f database/rotate-root/rbr-ver-max
     echo "✅ Root credential rotated — config password is now Vault-owned"
 
-    # Add 'app' to allowed_roles so the static role can be created
-    _vcmd write database/config/rbr-ver-max \
-        allowed_roles="rbr-db-admin,rbr-ver-db-admin,rbr-ver-db-readonly,app"
-
-    # Vault static role: Vault rotates the 'app' PG role password on a 24h schedule.
-    # ESO reads database/static-creds/app → verstappen-app Secret in rbr-ver.
-    # Reloader (reloader.stakater.com/auto annotation) bounces the pod on Secret change.
-    _vcmd write database/static-roles/app \
-        db_name="rbr-ver-max" \
-        username="app" \
-        rotation_period="24h" \
-        rotation_statements="ALTER ROLE \"app\" WITH PASSWORD '{{password}}'"
-    echo "✅ Vault static role 'app' configured (24h auto-rotation)"
+    # KV cnpg/rbr/ver/app is the single writer of the 'app' password: CNPG applies it
+    # to the role, demo-app reads the same path. A Vault static role on 'app' would
+    # ALTER the role behind CNPG's back (on create and every rotation_period), leaving
+    # both Secrets stale. Vault config survives teardown, so drop any leftover one.
+    _vcmd delete database/static-roles/app >/dev/null 2>&1 || true
 
     _vcmd write database/roles/rbr-db-admin \
         db_name="rbr-ver-max" \
@@ -460,10 +451,9 @@ EOF
     echo "✅ Vault Database Secrets Engine configured"
 
     # --- demo-app image + ArgoCD app-of-apps (GitOps) ---
-    # Sequenced AFTER the verstappen DB and the Vault DB engine exist: the demo-app
-    # ExternalSecret reads database/static-creds/app via the vault-approle-rbr-db store,
-    # so the static role 'app' (above) and the store (earlier) must already be in place —
-    # otherwise demo-app crash-loops. Build + publish the image before ArgoCD syncs it.
+    # Sequenced AFTER the verstappen DB exists: the demo-app ExternalSecret reads KV
+    # rbr/ver/app via the vault-approle-rbr store, and CNPG must have applied that
+    # password to the 'app' role first. Build + publish the image before ArgoCD syncs it.
     echo "🐳 Building demo-app image (stacker)..."
     DEMO_APP_VERSION=$(grep '^appVersion:' "${GIT_REPO_ROOT}/app/helm/demo-app/Chart.yaml" | awk '{print $2}' | tr -d '"')
 
@@ -736,7 +726,7 @@ verify)
     APP_PASS=$(kubectl get secret "verstappen-app" -n rbr-ver \
         --context "${LOCAL_CONTEXT}" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || echo "")
     if [[ -z "${APP_PASS}" ]]; then
-        echo "⚠️  verstappen-app Secret not yet synced in rbr-ver (ESO/Vault static-role may still be syncing)"
+        echo "⚠️  verstappen-app Secret not yet synced in rbr-ver (ESO may still be syncing KV rbr/ver/app)"
     else
         echo "✅ verstappen-app Secret present in rbr-ver"
     fi
@@ -756,30 +746,45 @@ rotate)
         *) echo "❌ rotate target must be: app | readonly"; exit 1 ;;
     esac
 
-    if [[ "${TARGET}" == "app" ]]; then
-        echo "🔄 Rotating 'app' via Vault static-role (database/rotate-role/app)..."
-        _vcmd write -f database/rotate-role/app
-
-        echo "⚡ Forcing ESO sync for verstappen-app in rbr-ver..."
-        kubectl annotate externalsecret "verstappen-app" \
-            -n rbr-ver \
-            --context "${LOCAL_CONTEXT}" \
-            --overwrite \
-            force-sync="$(date +%s)"
-
-        echo "⏳ Waiting for verstappen-app Secret (rbr-ver) to update..."
-        OLD_VER=$(kubectl get secret "verstappen-app" -n rbr-ver \
-            --context "${LOCAL_CONTEXT}" -o jsonpath='{.metadata.resourceVersion}' 2>/dev/null || echo "0")
-        MAX_WAIT=60; ELAPSED=0
-        while [ "${ELAPSED}" -lt "${MAX_WAIT}" ]; do
-            NEW_VER=$(kubectl get secret "verstappen-app" -n rbr-ver \
-                --context "${LOCAL_CONTEXT}" -o jsonpath='{.metadata.resourceVersion}' 2>/dev/null || echo "0")
-            [ "${NEW_VER}" != "${OLD_VER}" ] && break
-            sleep 2; ((ELAPSED+=2))
+    # KV cnpg/rbr/ver/<target> is the single source: ESO copies it into rbr-ver-db
+    # (CNPG applies it to the role via managed.roles) and, for 'app', into rbr-ver
+    # (what demo-app connects with).
+    secret_ver() { kubectl get secret "verstappen-${TARGET}" -n "$1" \
+        --context "${LOCAL_CONTEXT}" -o jsonpath='{.metadata.resourceVersion}' 2>/dev/null || echo "0"; }
+    wait_secret_update() { # ns old_version
+        local new; for _ in $(seq 1 30); do
+            new=$(secret_ver "$1"); [ "${new}" != "$2" ] && { echo "✅ $1/verstappen-${TARGET} updated ($2 → ${new})"; return 0; }
+            sleep 2
         done
-        [ "${ELAPSED}" -ge "${MAX_WAIT}" ] && { echo "❌ Secret did not update within ${MAX_WAIT}s"; exit 1; }
-        echo "✅ Secret updated (resourceVersion ${OLD_VER} → ${NEW_VER})"
+        echo "❌ $1/verstappen-${TARGET} did not update within 60s"; exit 1
+    }
+    force_sync() { kubectl annotate externalsecret "verstappen-${TARGET}" -n "$1" \
+        --context "${LOCAL_CONTEXT}" --overwrite force-sync="$(date +%s)" >/dev/null; }
 
+    NAMESPACES=(rbr-ver-db)
+    [[ "${TARGET}" == "app" ]] && NAMESPACES+=(rbr-ver)
+    declare -A OLD_VER
+    for ns in "${NAMESPACES[@]}"; do OLD_VER[$ns]=$(secret_ver "${ns}"); done
+
+    echo "🔄 Rotating '${TARGET}' in Vault KV (cnpg/rbr/ver/${TARGET})..."
+    _vcmd kv patch "cnpg/rbr/ver/${TARGET}" password="$(random_password)"
+
+    echo "⚡ Forcing ESO sync for verstappen-${TARGET} in: ${NAMESPACES[*]}"
+    for ns in "${NAMESPACES[@]}"; do force_sync "${ns}"; done
+    for ns in "${NAMESPACES[@]}"; do wait_secret_update "${ns}" "${OLD_VER[$ns]}"; done
+
+    echo "⏳ Waiting for CNPG to apply the new '${TARGET}' password..."
+    DB_VER=$(secret_ver rbr-ver-db)
+    for _ in $(seq 1 30); do
+        APPLIED=$(kubectl get cluster verstappen -n rbr-ver-db --context "${LOCAL_CONTEXT}" \
+            -o jsonpath="{.status.managedRolesStatus.passwordStatus.${TARGET}.resourceVersion}")
+        [ "${APPLIED}" = "${DB_VER}" ] && break
+        sleep 2
+    done
+    [ "${APPLIED}" = "${DB_VER}" ] || { echo "❌ CNPG did not apply the new password within 60s"; exit 1; }
+    echo "✅ CNPG applied password (Secret resourceVersion ${DB_VER})"
+
+    if [[ "${TARGET}" == "app" ]]; then
         echo "⏳ Waiting for demo-app pod restart via Reloader..."
         kubectl rollout status deployment/demo-app \
             -n rbr-ver --context "${LOCAL_CONTEXT}" --timeout=120s
@@ -794,33 +799,8 @@ rotate)
             -n rbr-ver \
             --env="PGPASSWORD=${NEW_PASS}" \
             -- psql -h verstappen-rw.rbr-ver-db -U "app" -d max -c "SELECT current_user;"
-        echo "✅ Rotation verified"
-    else
-        # readonly still uses KV-backed ESO (Workstream E scope: app only)
-        echo "🔄 Rotating '${TARGET}' in Vault KV..."
-        _vcmd kv patch "cnpg/rbr/ver/${TARGET}" password="$(random_password)"
-
-        echo "⚡ Forcing ESO sync for verstappen-${TARGET}..."
-        kubectl annotate externalsecret "verstappen-${TARGET}" \
-            -n rbr-ver-db \
-            --context "${LOCAL_CONTEXT}" \
-            --overwrite \
-            force-sync="$(date +%s)"
-
-        echo "⏳ Waiting for Secret resourceVersion to change..."
-        OLD_VER=$(kubectl get secret "verstappen-${TARGET}" -n rbr-ver-db \
-            --context "${LOCAL_CONTEXT}" -o jsonpath='{.metadata.resourceVersion}')
-        MAX_WAIT=60; ELAPSED=0
-        while [ "${ELAPSED}" -lt "${MAX_WAIT}" ]; do
-            NEW_VER=$(kubectl get secret "verstappen-${TARGET}" -n rbr-ver-db \
-                --context "${LOCAL_CONTEXT}" -o jsonpath='{.metadata.resourceVersion}')
-            [ "${NEW_VER}" != "${OLD_VER}" ] && break
-            sleep 2; ((ELAPSED+=2))
-        done
-        [ "${ELAPSED}" -ge "${MAX_WAIT}" ] && { echo "❌ Secret did not update within ${MAX_WAIT}s"; exit 1; }
-        echo "✅ Secret updated (resourceVersion ${OLD_VER} → ${NEW_VER})"
-        echo "✅ Rotation complete"
     fi
+    echo "✅ Rotation complete"
     ;;
 
 backup)
