@@ -8,7 +8,7 @@
     "gc": true,
     "storageDriver": {
       "name": "s3",
-      "rootdirectory": "/zot",
+      "rootdirectory": "/",
       "region": "us-east-1",
       "bucket": "${SEAWEEDFS_ZOT_BUCKET}",
       "regionendpoint": "http://seaweedfs:8334",

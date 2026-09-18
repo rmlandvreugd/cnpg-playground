@@ -59,6 +59,7 @@ GitHub releases. Stacker is not indexed on deepwiki.
 | CVE scanning | **Any S3 `storageDriver` + CVE enabled → startup error** "failed to enable cve scanning due to incompatibility with remote storage" (`root.go:681`, also for subPaths) |
 | Endpoint TLS | No per-driver CA option; use SeaweedFS plain-HTTP S3 port `8334` on the internal `kind` network (`secure: false`) |
 | Sync + remote storage | **S3 `storageDriver` + `extensions.sync` enabled requires `extensions.sync.downloadDir`** → startup error "using both sync and remote storage features needs config.Extensions.Sync.DownloadDir to be specified" otherwise (`root.go:729`). Not caught by source review — found running spike 1 live; fixed with `downloadDir: /tmp/zot-sync` |
+| **`storageDriver.rootdirectory` non-empty → S3 keys silently doubled** | A non-empty `rootdirectory` (e.g. `/zot`) is applied **twice** on writes (S3 key ends up `zot/zot/<repo>/...` instead of `zot/<repo>/...`), but the repo-discovery walk behind `GET /v2/_catalog` and GraphQL search only strips it **once** — so those two see nothing (`getAllRepos`/`GetRepositories` in zot's `pkg/storage/imagestore`), even though direct known-path reads (tags list, blob/manifest GET) work fine since they apply the same (doubled) path consistently on both sides. 100% reproducible regardless of the actual string used or bucket name (confirmed against a disposable bucket with `rootdirectory: "/registry"` and `"/r"` — always doubled). Empty string (`""`) isn't a workaround either — zot errors at startup (`s3aws: invalid path: `). The only value that produces correct, undoubled keys is the documented default **`"/"`** (root, no extra prefix) — safe here because each service already gets its own dedicated bucket, so no extra namespacing prefix is needed inside it. Fixed `zot/config.json.tpl` from `/zot` → `/`; see `cnpg-playground-dzk`. |
 
 ### Auth — verified in source
 
@@ -180,7 +181,7 @@ SEAWEEDFS_ZOT_SECRET_KEY="${SEAWEEDFS_ZOT_SECRET_KEY:-zotS3secret}"
     "gc": true,
     "storageDriver": {
       "name": "s3",
-      "rootdirectory": "/zot",
+      "rootdirectory": "/",
       "region": "us-east-1",
       "bucket": "${SEAWEEDFS_ZOT_BUCKET}",
       "regionendpoint": "http://seaweedfs:8334",
