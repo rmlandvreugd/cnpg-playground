@@ -116,7 +116,7 @@ CHART_REGISTRY: dict[str, ChartEntry] = {
     "TEMPO_CHART_VERSION": ChartEntry("TEMPO_CHART_VERSION", "tempo", ah_slug="grafana/tempo", repo_url="https://grafana.github.io/helm-charts"),
     "ALLOY_CHART_VERSION": ChartEntry("ALLOY_CHART_VERSION", "alloy", ah_slug="grafana/alloy", repo_url="https://grafana.github.io/helm-charts"),
     "OTEL_COLLECTOR_CHART_VERSION": ChartEntry("OTEL_COLLECTOR_CHART_VERSION", "opentelemetry-collector", ah_slug="opentelemetry-helm/opentelemetry-collector", oci_ref="oci://ghcr.io/open-telemetry/opentelemetry-helm-charts/opentelemetry-collector"),
-    "TIGERA_OPERATOR_CHART_VERSION": ChartEntry("TIGERA_OPERATOR_CHART_VERSION", "tigera-operator", ah_slug="projectcalico/tigera-operator", repo_url="https://projectcalico.github.io/charts"),
+    "TIGERA_OPERATOR_CHART_VERSION": ChartEntry("TIGERA_OPERATOR_CHART_VERSION", "tigera-operator", ah_slug="projectcalico/tigera-operator", repo_url="https://docs.projectcalico.org/charts"),
     "CARETTA_CHART_VERSION": ChartEntry("CARETTA_CHART_VERSION", "caretta", ah_slug="groundcover/caretta", repo_url="https://caretta.app/charts"),
     "RADAR_CHART_VERSION": ChartEntry("RADAR_CHART_VERSION", "radar", ah_slug="skyhook/radar", repo_url="https://radar-team.github.io/charts"),
     # In-repo chart: no env-var in common.sh — keyed by chart name, reported as
@@ -337,6 +337,32 @@ def _repo_name_for(url: str) -> str:
     return name
 
 
+def _resolve_helm_ref_args(entry: ChartEntry) -> tuple[str, list[str]]:
+    """Resolve (chart_ref, extra_args) for helm show/pull, tolerating helm >= 4.
+
+    helm >= 4 dropped ad-hoc `--repo URL` for repos not registered in the helm
+    config (the flag then resolves against an arbitrary cached index). Classic
+    repos are therefore resolved to a registered `<repo-name>/<chart>` reference,
+    which `_repo_name_for()` provisions on demand. OCI and local charts use
+    their raw reference unchanged; extra_args carries OCI-specific flags.
+    """
+    if entry.local_path:
+        return entry.local_path, []
+    if entry.oci_ref:
+        extra: list[str] = []
+        # OCI via zot proxy needs --ca-file for the step-ca chain
+        # (matches helm_upgrade_install()).
+        if os.environ.get("OCI_PROXY"):
+            ca_file = Path(__file__).parent.parent / "traefik-edge" / "certs" / "step-ca-chain.pem"
+            if ca_file.exists():
+                extra += ["--ca-file", str(ca_file)]
+            else:
+                console.print(f"  [yellow]Warning:[/yellow] OCI_PROXY set but {ca_file} missing — not adding --ca-file[/yellow]")
+        return entry.oci_ref, extra
+    assert entry.repo_url is not None
+    return f"{_repo_name_for(entry.repo_url)}/{entry.name}", []
+
+
 def _disk_cache_path(entry: ChartEntry, version: str) -> Path:
     digest = hashlib.sha256(f"{entry.name}:{version}".encode()).hexdigest()
     return CACHE_DIR / f"{digest}.yaml"
@@ -344,20 +370,12 @@ def _disk_cache_path(entry: ChartEntry, version: str) -> Path:
 
 def helm_show_values(entry: ChartEntry, version: str) -> str:
     """Branch by ChartEntry kind. Always pass exact semver."""
+    chart_ref, extra_args = _resolve_helm_ref_args(entry)
     if entry.local_path:
-        cmd = ["helm", "show", "values", entry.local_path]          # local: --version ignored
-    elif entry.oci_ref:
-        cmd = ["helm", "show", "values", entry.oci_ref, "--version", clean_version(version)]
+        cmd = ["helm", "show", "values", chart_ref, *extra_args]   # local: --version ignored
     else:
-        cmd = ["helm", "show", "values", entry.name,
-               "--repo", entry.repo_url, "--version", clean_version(version)]
-    # OCI via zot proxy needs --ca-file for the step-ca chain (matches helm_upgrade_install()).
-    if entry.oci_ref and os.environ.get("OCI_PROXY"):
-        ca_file = Path(__file__).parent.parent / "traefik-edge" / "certs" / "step-ca-chain.pem"
-        if ca_file.exists():
-            cmd += ["--ca-file", str(ca_file)]
-        else:
-            console.print(f"  [yellow]Warning:[/yellow] OCI_PROXY set but {ca_file} missing — not adding --ca-file[/yellow]")
+        cmd = ["helm", "show", "values", chart_ref, *extra_args,
+               "--version", clean_version(version)]
 
     if entry.oci_ref:
         cache_file = _disk_cache_path(entry, version)
@@ -485,13 +503,16 @@ def rendered_diff(entry: ChartEntry, from_ver: str, to_ver: str, timeout: int = 
         )
     with tempfile.TemporaryDirectory() as td:
         def pull(ver: str) -> str:
-            args = ["--repo", entry.repo_url] if entry.repo_url else []
-            ref = entry.oci_ref or entry.name
-            subprocess.run(["helm", "pull", ref, *args, "--version", clean_version(ver),
-                            "--untar", "-d", td], check=True, timeout=120, capture_output=True)
+            chart_ref, extra_args = _resolve_helm_ref_args(entry)
+            # helm pull --untar refuses to untar over an existing dir, so give
+            # each version its own destination (d1 and d2 share `td`).
+            dest = Path(td) / clean_version(ver)
+            dest.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["helm", "pull", chart_ref, *extra_args, "--version", clean_version(ver),
+                            "--untar", "-d", str(dest)], check=True, timeout=120, capture_output=True)
             # helm pull --untar names the dir after Chart.yaml's name; tolerate
             # both "<name>" and "<name>-<ver>" layouts.
-            candidates = sorted(Path(td).glob(f"{entry.name}*"))
+            candidates = sorted(dest.glob(f"{entry.name}*"))
             if not candidates:
                 raise RuntimeError(f"helm pull produced no directory for {entry.name}")
             return str(candidates[0])
@@ -615,10 +636,14 @@ def _run_from_mode(root: Path, versions: dict[str, str], from_charts: list[Chart
                     drift = bool(d)
                     console.print(Syntax(d, "diff", theme="monokai") if d
                                   else "  [green]No changes in values[/green]")
-            except RuntimeError as e:
-                console.print(f"  [red]error: {e}[/red]")
+            except Exception as e:
+                # Per-chart guard: one chart's failure must not abort the
+                # whole --from run (helm pull/diff can fail on network, missing
+                # versions, unvendored deps, …).
+                console.print(f"  [red]{entry.key}: helm pull/diff failed — {e}[/red]")
                 results.append({"key": entry.key, "from": ref.version, "current": current,
-                                "drift": "-", "status": "error", "status_str": f"[red]✗ {e}[/red]"})
+                                "drift": "error", "status": "error",
+                                "status_str": f"[red]✗ {e}[/red]"})
                 error_count += 1
                 continue
 
