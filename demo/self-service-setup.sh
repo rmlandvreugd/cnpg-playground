@@ -277,6 +277,18 @@ EOF
     done
     echo "✅ Tenant namespaces ready"
 
+    # --- Ingress allow-list for the new tenant namespaces (bead i23) ---
+    # scripts/setup.sh applied the cluster-wide default-deny before these namespaces
+    # existed, so re-render: netpol.sh emits one GlobalNetworkPolicy per Capsule tenant
+    # (same tenant + traefik/cnpg-system/ESO/monitoring). Without it the CNPG operator
+    # cannot reach the instance status endpoint and the cluster never turns Ready —
+    # the Kyverno-generated tenant NetworkPolicy only arrives once ArgoCD has synced.
+    if kubectl get globalnetworkpolicies.projectcalico.org default-deny-ingress \
+        --context "${LOCAL_CONTEXT}" &>/dev/null; then
+        echo "🛡️  Re-applying ingress allow-list for tenant namespaces..."
+        "${GIT_REPO_ROOT}/scripts/netpol.sh" enforce "${MODE}"
+    fi
+
     # --- ExternalSecrets ---
     echo "📋 Applying ExternalSecrets..."
     for es in superuser app readonly; do
@@ -621,16 +633,26 @@ EOF
     PF_PID=$!
     sleep 4
 
+    # Since bd3d.6 the tenant Grafana has no hardcoded admin/admin: the operator
+    # generates the credentials (Secret grafana-rbr-ver-admin-credentials, same one
+    # `self-service-setup.sh breakglass local` prints), so seeding authenticates with those.
+    GF_ADMIN_USER=$(kubectl get secret grafana-rbr-ver-admin-credentials -n grafana \
+        --context "${LOCAL_CONTEXT}" -o jsonpath='{.data.GF_SECURITY_ADMIN_USER}' | base64 -d)
+    GF_ADMIN_PASS=$(kubectl get secret grafana-rbr-ver-admin-credentials -n grafana \
+        --context "${LOCAL_CONTEXT}" -o jsonpath='{.data.GF_SECURITY_ADMIN_PASSWORD}' | base64 -d)
+    export GF_ADMIN_USER GF_ADMIN_PASS
+
     # Create org (idempotent — ignore conflict)
-    curl -sf -u admin:admin http://localhost:13000/api/orgs \
+    curl -sf -u "${GF_ADMIN_USER}:${GF_ADMIN_PASS}" http://localhost:13000/api/orgs \
         -X POST -H "Content-Type: application/json" \
         -d '{"name":"rbr"}' > /dev/null 2>&1 || true
 
     python3 - << 'PYEOF'
-import json, urllib.request, urllib.error, sys
+import base64, json, os, urllib.request, urllib.error, sys
 
 base  = "http://localhost:13000"
-auth  = "Basic YWRtaW46YWRtaW4="   # admin:admin
+auth  = "Basic " + base64.b64encode(
+    f"{os.environ['GF_ADMIN_USER']}:{os.environ['GF_ADMIN_PASS']}".encode()).decode()
 
 def api(path, method="GET", data=None, org_id=None):
     hdrs = {"Authorization": auth, "Content-Type": "application/json"}
