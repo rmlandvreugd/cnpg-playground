@@ -1,0 +1,35 @@
+# External entry points (MetalLB L2 LoadBalancers). After L2 the client is a real
+# external address, not a pod, so these are nets-based rules on the container ports
+# (post-DNAT): Traefik web/websecure/postgres and the OTLP receivers behind otel/ext-svc-lb
+# (:4317 mTLS, :4318 http; the collector derives the tenant from pod metadata, not from
+# anything the sender sets).
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: allow-edge
+  labels:
+    app.kubernetes.io/part-of: playground-netpol
+spec:
+  order: 100
+  types:
+    - Ingress
+  selector: >-
+    (projectcalico.org/namespace == 'traefik' && app.kubernetes.io/name == 'traefik') ||
+    (projectcalico.org/namespace == 'otel' && app.kubernetes.io/name == 'opentelemetry-collector')
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source:
+        nets:
+          - 0.0.0.0/0
+      destination:
+        selector: app.kubernetes.io/name == 'traefik'
+        ports: [8000, 8443, 5432]
+    - action: Allow
+      protocol: TCP
+      source:
+        nets:
+          - 0.0.0.0/0
+      destination:
+        selector: app.kubernetes.io/name == 'opentelemetry-collector'
+        ports: [4317, 4318]

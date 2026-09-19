@@ -1377,6 +1377,17 @@ TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
     | kubectl --context "${HUB_CONTEXT}" apply -f -
 echo "✅ policy-reporter: https://policy-reporter.${HUB_TRAEFIK_IP_DASHED}.sslip.io"
 
+# --- Ingress allow-list + default-deny (k8s/calico/policies) ---
+# Applied last for the platform. The policies select by namespace, so the monitoring and
+# tenant namespaces that --with-tenant (or a later manual run) creates are covered from
+# their first pod. NETPOL_MODE=stage keeps it a dry run (check `scripts/flowlogs.sh
+# pending`), NETPOL_MODE=off skips it.
+NETPOL_MODE="${NETPOL_MODE:-enforce}"
+if [ "${NETPOL_MODE}" != "off" ]; then
+    echo "🛡️  Applying ingress allow-list + default-deny (${NETPOL_MODE})..."
+    "${GIT_REPO_ROOT}/scripts/netpol.sh" "${NETPOL_MODE}" "${HUB_REGION}"
+fi
+
 # --- Final Instructions ---
 echo
 # Display information using the info script
