@@ -300,6 +300,9 @@ as the full-stack integration test). Iteration speed + CNI-risk isolation won.
 - **10.** Author the allow-list incl. the two ★ rules (kubelet→pod from node host-CIDR; MetalLB-L2→Traefik
   as a CIDR/`nets` rule), observe green, **then** flip the `GlobalNetworkPolicy` ingress default-deny.
   Fully reversible (delete the deny policy). Everything green under deny; one non-allowed flow confirmed blocked.
+  *Implemented:* `docs/network-policy-allowlist.md` — staged policies + the Calico flow-logs API
+  (Goldmane) replaced "observe green"; the kubelet-probe ★ rule turned out unnecessary (host → local
+  pod is not policed), the apiserver → remote-webhook path needed the node set instead.
 
 **Steer points between phases:** §3 (CDP reissue blast radius — ready?), §5 (did storage isolation actually
 hold?), §8 (the "no two-IdP period" can be relaxed to de-risk the swap), §9 (Calico-on-WSL2 go/no-go),

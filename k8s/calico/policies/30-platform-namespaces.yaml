@@ -1,0 +1,191 @@
+# Per-namespace ingress allow-list for the platform namespaces.
+#
+# Built from the Calico flow-logs API (Goldmane): stage the set, drive the stack, then
+#   scripts/flowlogs.sh pending --since 3600
+# must list nothing but unwanted flows before `scripts/netpol.sh enforce`.
+#
+# Tenant namespaces (Capsule) are not listed here: the Capsule Tenant renders their
+# NetworkPolicy (same tenant, traefik, cnpg-system, external-secrets, monitoring).
+#
+# Observability backends take a tenant from the X-Scope-OrgID header, so whoever can reach
+# them can read or write any tenant. Loki (grafana), Mimir and Tempo therefore only accept
+# their own components, the Grafana instances, the collector/agents and Prometheus.
+
+# --- Traefik -> routed backends (IngressRoutes in platform namespaces) -------------------
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: allow-traefik-backends
+  labels:
+    app.kubernetes.io/part-of: playground-netpol
+spec:
+  order: 200
+  types:
+    - Ingress
+  selector: >-
+    (projectcalico.org/namespace == 'argocd' && app.kubernetes.io/name == 'argocd-server') ||
+    (projectcalico.org/namespace == 'capsule-system' && app.kubernetes.io/name == 'capsule-proxy') ||
+    (projectcalico.org/namespace == 'gangplank' && app.kubernetes.io/name == 'gangplank') ||
+    (projectcalico.org/namespace == 'grafana' && app in {'grafana', 'grafana-rbr-ver'}) ||
+    (projectcalico.org/namespace == 'pgadmin') ||
+    (projectcalico.org/namespace == 'policy-reporter' && app.kubernetes.io/name == 'policy-reporter-ui') ||
+    (projectcalico.org/namespace == 'radar' && app.kubernetes.io/name == 'radar')
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source:
+        namespaceSelector: kubernetes.io/metadata.name == 'traefik'
+        selector: app.kubernetes.io/name == 'traefik'
+      destination:
+        ports: [80, 3000, 8080, 9001, 9280]
+---
+# --- Components talking to each other inside their own namespace -------------------------
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: allow-same-namespace
+  labels:
+    app.kubernetes.io/part-of: playground-netpol
+spec:
+  order: 200
+  types:
+    - Ingress
+  # One rule per namespace: Calico has no "source namespace == my namespace" selector.
+  namespaceSelector: >-
+    kubernetes.io/metadata.name in {'argocd', 'capsule-system', 'caretta', 'cert-manager',
+    'cnpg-system', 'external-secrets', 'grafana', 'kyverno', 'mimir', 'otel',
+    'policy-reporter', 'prometheus-operator', 'tempo'}
+  selector: all()
+  ingress:
+    - {action: Allow, source: {namespaceSelector: "kubernetes.io/metadata.name == 'argocd'"}, destination: {selector: "projectcalico.org/namespace == 'argocd'"}}
+    - {action: Allow, source: {namespaceSelector: "kubernetes.io/metadata.name == 'capsule-system'"}, destination: {selector: "projectcalico.org/namespace == 'capsule-system'"}}
+    - {action: Allow, source: {namespaceSelector: "kubernetes.io/metadata.name == 'caretta'"}, destination: {selector: "projectcalico.org/namespace == 'caretta'"}}
+    - {action: Allow, source: {namespaceSelector: "kubernetes.io/metadata.name == 'cert-manager'"}, destination: {selector: "projectcalico.org/namespace == 'cert-manager'"}}
+    - {action: Allow, source: {namespaceSelector: "kubernetes.io/metadata.name == 'cnpg-system'"}, destination: {selector: "projectcalico.org/namespace == 'cnpg-system'"}}
+    - {action: Allow, source: {namespaceSelector: "kubernetes.io/metadata.name == 'external-secrets'"}, destination: {selector: "projectcalico.org/namespace == 'external-secrets'"}}
+    - {action: Allow, source: {namespaceSelector: "kubernetes.io/metadata.name == 'grafana'"}, destination: {selector: "projectcalico.org/namespace == 'grafana'"}}
+    - {action: Allow, source: {namespaceSelector: "kubernetes.io/metadata.name == 'kyverno'"}, destination: {selector: "projectcalico.org/namespace == 'kyverno'"}}
+    - {action: Allow, source: {namespaceSelector: "kubernetes.io/metadata.name == 'mimir'"}, destination: {selector: "projectcalico.org/namespace == 'mimir'"}}
+    - {action: Allow, source: {namespaceSelector: "kubernetes.io/metadata.name == 'otel'"}, destination: {selector: "projectcalico.org/namespace == 'otel'"}}
+    - {action: Allow, source: {namespaceSelector: "kubernetes.io/metadata.name == 'policy-reporter'"}, destination: {selector: "projectcalico.org/namespace == 'policy-reporter'"}}
+    - {action: Allow, source: {namespaceSelector: "kubernetes.io/metadata.name == 'prometheus-operator'"}, destination: {selector: "projectcalico.org/namespace == 'prometheus-operator'"}}
+    - {action: Allow, source: {namespaceSelector: "kubernetes.io/metadata.name == 'tempo'"}, destination: {selector: "projectcalico.org/namespace == 'tempo'"}}
+---
+# --- Observability backends ---------------------------------------------------------------
+# Loki (namespace grafana, :3100): Alloy and Grafana are same-namespace; add the collector.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: allow-loki-writers
+  labels:
+    app.kubernetes.io/part-of: playground-netpol
+spec:
+  order: 200
+  types:
+    - Ingress
+  selector: projectcalico.org/namespace == 'grafana' && app.kubernetes.io/name == 'loki' && app.kubernetes.io/component == 'single-binary'
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source:
+        namespaceSelector: kubernetes.io/metadata.name == 'otel'
+      destination:
+        ports: [3100]
+---
+# Mimir: Grafana queries, Tempo metrics-generator and the collector write, all via the gateway.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: allow-mimir-gateway
+  labels:
+    app.kubernetes.io/part-of: playground-netpol
+spec:
+  order: 200
+  types:
+    - Ingress
+  selector: projectcalico.org/namespace == 'mimir' && app.kubernetes.io/component == 'gateway'
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source:
+        namespaceSelector: kubernetes.io/metadata.name in {'grafana', 'tempo', 'otel'}
+      destination:
+        ports: [8080]
+---
+# Tempo: the collector writes to the distributor, Grafana reads from the query-frontend.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: allow-tempo
+  labels:
+    app.kubernetes.io/part-of: playground-netpol
+spec:
+  order: 200
+  types:
+    - Ingress
+  selector: projectcalico.org/namespace == 'tempo' && app.kubernetes.io/component in {'distributor', 'query-frontend'}
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source:
+        namespaceSelector: kubernetes.io/metadata.name == 'otel'
+      destination:
+        selector: app.kubernetes.io/component == 'distributor'
+        ports: [4317]
+    - action: Allow
+      protocol: TCP
+      source:
+        namespaceSelector: kubernetes.io/metadata.name == 'grafana'
+      destination:
+        selector: app.kubernetes.io/component == 'query-frontend'
+        ports: [3200]
+---
+# Collector plaintext in-cluster receiver (:4319): tenant workloads and Traefik (bd3d.10).
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: allow-otel-cluster-receiver
+  labels:
+    app.kubernetes.io/part-of: playground-netpol
+spec:
+  order: 200
+  types:
+    - Ingress
+  selector: projectcalico.org/namespace == 'otel' && app.kubernetes.io/name == 'opentelemetry-collector'
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source:
+        namespaceSelector: has(capsule.clastix.io/tenant) || kubernetes.io/metadata.name == 'traefik'
+      destination:
+        ports: [4319]
+---
+# Metrics readers outside the backends above: Grafana -> Prometheus and Caretta's
+# VictoriaMetrics; Radar -> VictoriaMetrics (network topology view).
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: allow-grafana-datasources
+  labels:
+    app.kubernetes.io/part-of: playground-netpol
+spec:
+  order: 200
+  types:
+    - Ingress
+  selector: >-
+    (projectcalico.org/namespace == 'prometheus-operator' && app.kubernetes.io/name == 'prometheus') ||
+    (projectcalico.org/namespace == 'caretta' && app.kubernetes.io/name == 'victoria-metrics-single')
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source:
+        namespaceSelector: kubernetes.io/metadata.name == 'grafana'
+      destination:
+        ports: [9090, 8428]
+    - action: Allow
+      protocol: TCP
+      source:
+        namespaceSelector: kubernetes.io/metadata.name == 'radar'
+      destination:
+        selector: app.kubernetes.io/name == 'victoria-metrics-single'
+        ports: [8428]

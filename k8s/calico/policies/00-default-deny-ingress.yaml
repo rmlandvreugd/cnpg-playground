@@ -1,0 +1,29 @@
+# Cluster-wide ingress default-deny (hardening plan item 1b, bead i23).
+#
+# Every workload pod outside the always-allowed infra namespaces loses all ingress that
+# no policy in the default tier allows. The allows live next to this file (order < 10000);
+# namespaced Kubernetes NetworkPolicies (order 1000, e.g. the Capsule tenant policy and the
+# argo-cd chart policies) are evaluated before this rule too, so their allows still count.
+#
+# Egress stays open by design (pods keep reaching the host-side Vault/step-ca/S3 bridges).
+# Host -> local pod traffic (kubelet probes) is not policed by Calico; host -> remote pod
+# (apiserver -> webhooks) is, see 10-cluster-wide.yaml.
+#
+# scripts/netpol.sh applies this set as StagedGlobalNetworkPolicy (dry run, visible as
+# pending_action in the flow-logs API) or GlobalNetworkPolicy (enforced). Reversible:
+# `scripts/netpol.sh off local`.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: default-deny-ingress
+  labels:
+    app.kubernetes.io/part-of: playground-netpol
+spec:
+  order: 10000
+  namespaceSelector: >-
+    kubernetes.io/metadata.name not in {'kube-system', 'calico-system', 'tigera-operator', 'metallb-system'}
+  selector: all()
+  types:
+    - Ingress
+  ingress:
+    - action: Deny

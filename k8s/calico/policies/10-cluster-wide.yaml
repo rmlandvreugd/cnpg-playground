@@ -1,0 +1,49 @@
+# Allows that apply to every pod under the default-deny.
+#
+# allow-from-nodes: the kind nodes (GlobalNetworkSet "cluster-nodes", rendered from the node
+#   InternalIPs by scripts/netpol.sh). Covers the apiserver calling admission webhooks and
+#   aggregated APIs (metrics-server, cert-manager, kyverno, capsule, cnpg, ESO ...) on pods
+#   of other nodes, and LoadBalancer traffic kube-proxy SNATs to a node IP.
+# allow-prometheus-scrape: the kube-prometheus-stack Prometheus scrapes pods in every
+#   namespace on their metrics ports.
+#
+# Both carry the default-deny namespaceSelector: a default-tier policy that selects an
+# endpoint subjects it to the tier's end-of-tier deny, so selecting all() would also put
+# CoreDNS (kube-system) and the other exempt namespaces under default-deny.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: allow-from-nodes
+  labels:
+    app.kubernetes.io/part-of: playground-netpol
+spec:
+  order: 100
+  namespaceSelector: >-
+    kubernetes.io/metadata.name not in {'kube-system', 'calico-system', 'tigera-operator', 'metallb-system'}
+  selector: all()
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      source:
+        selector: role == 'k8s-node'
+---
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: allow-prometheus-scrape
+  labels:
+    app.kubernetes.io/part-of: playground-netpol
+spec:
+  order: 100
+  namespaceSelector: >-
+    kubernetes.io/metadata.name not in {'kube-system', 'calico-system', 'tigera-operator', 'metallb-system'}
+  selector: all()
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source:
+        namespaceSelector: kubernetes.io/metadata.name == 'prometheus-operator'
+        selector: app.kubernetes.io/name == 'prometheus'
