@@ -25,8 +25,29 @@ config:
             client_ca_file: /etc/otel/step-ca/ca-certificates.crt
         http:
           endpoint: 0.0.0.0:4318
+    # In-cluster workloads (e.g. tenant demo-app): plaintext gRPC. :4317 stays mTLS for
+    # traefik-edge and spokes, which in-cluster SDKs have no client certificate for.
+    otlp/cluster:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4319
 
   processors:
+    # Tag spans with the source pod's namespace and its Capsule tenant (namespace label
+    # capsule.clastix.io/tenant); the routing connector picks the Tempo tenant from it.
+    k8s_attributes:
+      extract:
+        metadata:
+          - k8s.namespace.name
+          - k8s.pod.name
+        labels:
+          - tag_name: capsule.tenant
+            key: capsule.clastix.io/tenant
+            from: namespace
+      pod_association:
+        - sources:
+            - from: connection
+
     memory_limiter:
       check_interval: 1s
       limit_percentage: 75
@@ -54,9 +75,26 @@ config:
       send_batch_size: 1000      # low-traffic playground; full batch unlikely
       timeout: 5s                # snappier flush for live dashboards
 
+  connectors:
+    # Tempo runs multi-tenant: spans from a Capsule tenant's namespaces go to that
+    # tenant's org, everything else (traefik-edge, platform) to "platform".
+    routing:
+      default_pipelines: [traces/platform]
+      table:
+        - condition: resource.attributes["capsule.tenant"] == "rbr"
+          pipelines: [traces/rbr]
+
   exporters:
-    otlp:
+    otlp/platform:
       endpoint: tempo-distributor.tempo.svc.cluster.local:4317
+      headers:
+        X-Scope-OrgID: platform
+      tls:
+        insecure: true
+    otlp/rbr:
+      endpoint: tempo-distributor.tempo.svc.cluster.local:4317
+      headers:
+        X-Scope-OrgID: rbr
       tls:
         insecure: true
     otlphttp/logs:
@@ -72,9 +110,15 @@ config:
   service:
     pipelines:
       traces:
-        receivers: [otlp]
-        processors: [memory_limiter, tail_sampling, batch]
-        exporters: [otlp]
+        receivers: [otlp, otlp/cluster]
+        processors: [memory_limiter, k8s_attributes, tail_sampling, batch]
+        exporters: [routing]
+      traces/platform:
+        receivers: [routing]
+        exporters: [otlp/platform]
+      traces/rbr:
+        receivers: [routing]
+        exporters: [otlp/rbr]
       logs:
         receivers: [otlp]
         processors: [memory_limiter, batch]
@@ -89,6 +133,13 @@ ports:
     enabled: true
     containerPort: 4318
     servicePort: 4318
+  otlp-cluster:
+    enabled: true
+    containerPort: 4319
+    servicePort: 4319
+    protocol: TCP
+    appProtocol: grpc
+
   # disable unused default ports to reduce surface area
   metrics:
     enabled: false
@@ -100,6 +151,17 @@ ports:
     enabled: false
   zipkin:
     enabled: false
+
+# k8s_attributes needs to look up pods (by connection IP) and their namespaces' labels.
+clusterRole:
+  create: true
+  rules:
+    - apiGroups: [""]
+      resources: [pods, namespaces]
+      verbs: [get, list, watch]
+    - apiGroups: [apps]
+      resources: [replicasets]
+      verbs: [get, list, watch]
 
 resources:
   limits:

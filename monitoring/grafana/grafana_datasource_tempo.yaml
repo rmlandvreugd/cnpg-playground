@@ -15,6 +15,8 @@ spec:
     access: proxy
     url: http://tempo-query-frontend.tempo.svc.cluster.local:3200
     jsonData:
+      # Tempo multi-tenancy: platform reads every tenant (extend per Capsule tenant).
+      httpHeaderName1: X-Scope-OrgID
       tracesToLogsV2:
         datasourceUid: loki
         spanStartTimeShift: '-1m'
@@ -35,3 +37,5 @@ spec:
         enabled: true
       lokiSearch:
         datasourceUid: loki
+    secureJsonData:
+      httpHeaderValue1: platform|rbr
