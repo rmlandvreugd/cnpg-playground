@@ -22,6 +22,7 @@ Usage: self-service-setup.sh <subcommand> local [args]
   rotate  local <app|readonly>       — rotate ESO-managed credential
   backup  local                      — trigger on-demand backup
   creds   local <tenant-admin|group-admin|readonly>  — print dynamic DB credentials
+  breakglass local                   — print emergency admin login for the tenant Grafana
   teardown local                     — remove rbr-ver-db/rbr-ver namespaces + ESO store
 USAGE
     exit 1
@@ -842,6 +843,28 @@ creds)
             ;;
         *) echo "❌ creds persona must be: tenant-admin | group-admin | readonly"; exit 1 ;;
     esac
+    ;;
+
+breakglass)
+    # Emergency access only: tenant personas log in via Authelia SSO as Editor/Viewer.
+    # The local admin is org Admin + server admin and can change the tenant-scoped
+    # datasources, so it lives in a platform-namespace Secret that tenants cannot read.
+    CREDS_SECRET="grafana-rbr-ver-admin-credentials"
+    ADMIN_USER=$(kubectl get secret "${CREDS_SECRET}" -n grafana --context "${LOCAL_CONTEXT}" \
+        -o jsonpath='{.data.GF_SECURITY_ADMIN_USER}' | base64 -d)
+    ADMIN_PASS=$(kubectl get secret "${CREDS_SECRET}" -n grafana --context "${LOCAL_CONTEXT}" \
+        -o jsonpath='{.data.GF_SECURITY_ADMIN_PASSWORD}' | base64 -d)
+    GRAFANA_HOST=$(kubectl get ingressroute grafana-rbr-ver -n grafana --context "${LOCAL_CONTEXT}" \
+        -o jsonpath='{.spec.routes[0].match}' | sed -E 's/.*Host\(`([^`]+)`\).*/\1/')
+    echo "🚨 Break-glass admin for the tenant Grafana (emergency use only)"
+    echo "   URL:      https://${GRAFANA_HOST}/login  (use the username/password form, not SSO)"
+    echo "   User:     ${ADMIN_USER}"
+    echo "   Password: ${ADMIN_PASS}"
+    echo ""
+    echo "⚠️  Revert any datasource change made with this account; the operator also resyncs"
+    echo "   GitOps-managed datasources. Rotate afterwards with:"
+    echo "   kubectl delete secret ${CREDS_SECRET} -n grafana --context ${LOCAL_CONTEXT} \\"
+    echo "     && kubectl rollout restart deploy/grafana-rbr-ver-deployment -n grafana --context ${LOCAL_CONTEXT}"
     ;;
 
 teardown)

@@ -11,9 +11,10 @@ spec:
       root_url: "https://grafana-rbr-ver.${TRAEFIK_IP_DASHED}.sslip.io"
     log:
       mode: "console"
-    security:
-      admin_user: admin
-      admin_password: admin
+    # No security.admin_user/admin_password: grafana-operator then generates a random
+    # break-glass password in Secret grafana/grafana-rbr-ver-admin-credentials (platform
+    # namespace, not readable by the tenant). A static one would let anyone with it
+    # edit the tenant-scoped datasources. Retrieve with: self-service-setup.sh breakglass local
     live:
       max_connections: "0"
     # Note: no signout_redirect_url -> Grafana's logout returns to its own login
