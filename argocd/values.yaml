@@ -27,6 +27,10 @@ configs:
       # rbr-admin user carries both groups; bind each so either grants access.
       p, role:rbr-admin, applications, *, rbr/*, allow
       p, role:rbr-admin, logs, *, rbr/*, allow
+      # Tenant Grafana objects are platform-managed (project rbr-grafana): view and
+      # sync only. Project rbr-governance (Tenant CR, cluster policies) is not granted.
+      p, role:rbr-admin, applications, get, rbr-grafana/*, allow
+      p, role:rbr-admin, applications, sync, rbr-grafana/*, allow
       g, rbr-db-admin, role:rbr-admin
       g, rbr-ver-db-admin, role:rbr-admin
     policy.default: ''

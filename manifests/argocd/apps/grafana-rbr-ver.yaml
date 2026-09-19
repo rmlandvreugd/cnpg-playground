@@ -8,7 +8,7 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  project: rbr
+  project: rbr-grafana
   source:
     repoURL: https://github.com/rmlandvreugd/cnpg-playground.git
     targetRevision: vault
