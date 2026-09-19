@@ -38,6 +38,13 @@ nodeSelector:
 migration:
   strategy: "initContainer"
 
+# Traces go to the collector's plaintext in-cluster receiver (:4317 is mTLS); the
+# collector tags them with this namespace's Capsule tenant and writes Tempo org "rbr".
+observability:
+  tracing:
+    enabled: true
+    otlpEndpoint: "http://otel-collector-opentelemetry-collector.otel.svc.cluster.local:4319"
+
 externalSecret:
   # Point at the SAME Vault KV secret CNPG uses to set the 'app' role password
   # (store vault-approle-rbr mounts KV path 'cnpg', key resolves to cnpg/rbr/ver/app).

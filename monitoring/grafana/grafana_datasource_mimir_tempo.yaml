@@ -18,4 +18,4 @@ spec:
       httpHeaderName1: X-Scope-OrgID
       timeInterval: 15s
     secureJsonData:
-      httpHeaderValue1: tempo
+      httpHeaderValue1: platform|rbr
