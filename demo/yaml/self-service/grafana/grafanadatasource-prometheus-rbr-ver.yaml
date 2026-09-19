@@ -12,7 +12,12 @@ spec:
     access: proxy
     name: DS_PROMETHEUS
     type: prometheus
-    url: http://prometheus-operated.prometheus-operator.svc.cluster.local:9090
+    # Mimir org "rbr" holds only this tenant's namespaces (Prometheus remoteWrite keep
+    # namespace=~rbr-.+); querying prometheus-operated directly would expose every series.
+    url: http://mimir-gateway.mimir.svc.cluster.local/prometheus
     jsonData:
-      timeInterval: 5s
+      timeInterval: 15s
       tlsSkipVerify: true
+      httpHeaderName1: X-Scope-OrgID
+    secureJsonData:
+      httpHeaderValue1: rbr

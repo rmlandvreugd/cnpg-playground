@@ -3,6 +3,9 @@ kind: Tenant
 metadata:
   name: rbr
 spec:
+  # Every tenant namespace is rbr-*: tenant metrics are routed to Mimir org "rbr" by
+  # namespace=~"rbr-.+" (monitoring/prometheus-instance/prometheus-cr.yaml.tpl).
+  forceTenantPrefix: true
   owners:
     - name: oidc:capsule-admin
       kind: Group

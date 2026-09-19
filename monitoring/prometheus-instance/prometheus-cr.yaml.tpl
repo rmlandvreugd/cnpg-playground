@@ -25,3 +25,12 @@ spec:
         - sourceLabels: [__name__]
           regex: '(up|scrape_.*|kube_.*|node_.*|kubelet_.*|apiserver_.*|cnpg_.*|pg_.*)'
           action: keep
+    # Capsule tenant rbr: its namespaces' series only, into Mimir org "rbr" (the tenant
+    # Grafana datasource reads that org). Capsule forces the rbr- prefix on the tenant.
+    - url: ${MIMIR_PUSH_URL}
+      headers:
+        X-Scope-OrgID: rbr
+      writeRelabelConfigs:
+        - sourceLabels: [namespace]
+          regex: 'rbr-.+'
+          action: keep
