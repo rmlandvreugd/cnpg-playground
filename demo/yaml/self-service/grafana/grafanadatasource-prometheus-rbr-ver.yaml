@@ -11,6 +11,9 @@ spec:
   datasource:
     access: proxy
     name: DS_PROMETHEUS
+    # Default, or dashboards with a "prometheus" datasource variable resolve to
+    # DS_MIMIR_TEMPO (span metrics only) and show No data.
+    isDefault: true
     type: prometheus
     # Mimir org "rbr" holds only this tenant's namespaces (Prometheus remoteWrite keep
     # namespace=~rbr-.+); querying prometheus-operated directly would expose every series.

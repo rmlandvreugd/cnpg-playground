@@ -156,17 +156,17 @@ spec:
           "fieldConfig": { "defaults": { "unit": "short" } },
           "targets": [
             {
-              "expr": "cnpg_pgbouncer_pools_cl_active{namespace=~\"$namespace\", pod=~\"$cluster-[0-9]+\"}",
+              "expr": "cnpg_pgbouncer_pools_cl_active{namespace=~\"$namespace\", pod=~\"pooler-$cluster-.+\"}",
               "legendFormat": "active client ({{pod}} {{database}})",
               "refId": "A"
             },
             {
-              "expr": "cnpg_pgbouncer_pools_cl_waiting{namespace=~\"$namespace\", pod=~\"$cluster-[0-9]+\"}",
+              "expr": "cnpg_pgbouncer_pools_cl_waiting{namespace=~\"$namespace\", pod=~\"pooler-$cluster-.+\"}",
               "legendFormat": "waiting client ({{pod}} {{database}})",
               "refId": "B"
             },
             {
-              "expr": "cnpg_pgbouncer_pools_sv_active{namespace=~\"$namespace\", pod=~\"$cluster-[0-9]+\"}",
+              "expr": "cnpg_pgbouncer_pools_sv_active{namespace=~\"$namespace\", pod=~\"pooler-$cluster-.+\"}",
               "legendFormat": "active server ({{pod}} {{database}})",
               "refId": "C"
             }
