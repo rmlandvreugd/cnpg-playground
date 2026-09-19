@@ -873,10 +873,10 @@ teardown)
     # Delete the ArgoCD app-of-apps FIRST so it stops reconciling/re-creating tenant
     # resources while we tear them down. Cascade-delete removes the child Applications
     # (demo-app, grafana-rbr-ver, kyverno-policies, tenant-rbr) and their managed objects.
-    echo "🚢 Deleting ArgoCD app-of-apps (rbr-root) + AppProject rbr..."
+    echo "🚢 Deleting ArgoCD app-of-apps (rbr-root) + AppProjects rbr, rbr-grafana, rbr-governance..."
     kubectl delete application rbr-root \
         -n argocd --context "${LOCAL_CONTEXT}" --ignore-not-found --wait
-    kubectl delete appproject rbr \
+    kubectl delete appproject rbr rbr-grafana rbr-governance \
         -n argocd --context "${LOCAL_CONTEXT}" --ignore-not-found
 
     # Delete CRs first so operators can process finalizers before namespace termination

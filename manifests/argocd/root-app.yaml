@@ -6,6 +6,9 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
+  # Tenant-controlled (role:rbr-admin has applications/* on rbr/*): tenant namespaces
+  # only, namespaced workload kinds only, nothing cluster-scoped. Platform-owned tenant
+  # objects live in rbr-grafana and rbr-governance, which the tenant cannot modify.
   description: RBR tenant workloads
   sourceRepos:
     - https://github.com/rmlandvreugd/cnpg-playground.git
@@ -14,19 +17,7 @@ spec:
       server: https://kubernetes.default.svc
     - namespace: rbr-ver-db
       server: https://kubernetes.default.svc
-    - namespace: grafana
-      server: https://kubernetes.default.svc
-    - namespace: kyverno
-      server: https://kubernetes.default.svc
-    - namespace: argocd
-      server: https://kubernetes.default.svc
-  clusterResourceWhitelist:
-    - group: capsule.clastix.io
-      kind: Tenant
-    - group: kyverno.io
-      kind: ClusterPolicy
-    - group: kyverno.io
-      kind: ClusterPolicyReport
+  clusterResourceWhitelist: []
   namespaceResourceWhitelist:
     - group: ''
       kind: ConfigMap
@@ -46,10 +37,58 @@ spec:
       kind: Certificate
     - group: traefik.io
       kind: IngressRoute
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: rbr-grafana
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # Tenant Grafana objects in the platform namespace grafana: only the two Grafana
+  # CR kinds, so nothing here can create/overwrite Services, Deployments or ConfigMaps
+  # in grafana. The tenant may get/sync these apps but not create or edit them.
+  description: RBR tenant Grafana datasources and dashboards (platform-managed)
+  sourceRepos:
+    - https://github.com/rmlandvreugd/cnpg-playground.git
+  destinations:
+    - namespace: grafana
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
     - group: grafana.integreatly.org
       kind: GrafanaDatasource
     - group: grafana.integreatly.org
       kind: GrafanaDashboard
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: rbr-governance
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  # Platform governance of the tenant (its Capsule Tenant, cluster Kyverno policies).
+  # No tenant RBAC: otherwise the tenant could edit its own owners/quotas or
+  # cluster-wide admission policies.
+  description: RBR tenant governance (platform only)
+  sourceRepos:
+    - https://github.com/rmlandvreugd/cnpg-playground.git
+  destinations:
+    - namespace: argocd
+      server: https://kubernetes.default.svc
+    - namespace: kyverno
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: capsule.clastix.io
+      kind: Tenant
+    - group: kyverno.io
+      kind: ClusterPolicy
+  namespaceResourceBlacklist:
+    - group: '*'
+      kind: '*'
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: Application
