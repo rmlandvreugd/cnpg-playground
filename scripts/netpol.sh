@@ -39,6 +39,46 @@ EOF
     } | kc apply -f -
 }
 
+# One policy per Capsule tenant, rendered from the live tenants: "same tenant" cannot be
+# written statically, because Calico selectors compare against literals, not against the
+# destination's own label value. This mirrors the NetworkPolicy that
+# manifests/kyverno/generate-default-networkpolicy.yaml generates, so the platform paths
+# (CNPG operator -> instance :8000, Traefik, ESO, monitoring) do not depend on Kyverno and
+# ArgoCD having synced first. During tenant onboarding they have not, and the CNPG cluster
+# then hangs on "Instance Status Extraction Error: HTTP communication issue".
+render_tenant_policies() {
+    local kind="$1" tenant
+    for tenant in $(kc get ns -l capsule.clastix.io/tenant \
+        -o jsonpath='{range .items[*]}{.metadata.labels.capsule\.clastix\.io/tenant}{"\n"}{end}' | sort -u); do
+        cat <<EOF
+apiVersion: projectcalico.org/v3
+kind: ${kind}
+metadata:
+  name: allow-tenant-${tenant}
+  labels:
+    app.kubernetes.io/part-of: playground-netpol
+spec:
+  order: 200
+  namespaceSelector: capsule.clastix.io/tenant == '${tenant}'
+  selector: all()
+  types:
+    - Ingress
+  ingress:
+    # Same namespace and same tenant (demo-app -> the pooler in the tenant's db namespace).
+    - action: Allow
+      source:
+        namespaceSelector: capsule.clastix.io/tenant == '${tenant}'
+    # Platform operators and the ingress controller that must reach tenant workloads.
+    - action: Allow
+      source:
+        namespaceSelector: >-
+          kubernetes.io/metadata.name in {'traefik', 'cnpg-system', 'external-secrets',
+          'prometheus-operator', 'grafana'}
+---
+EOF
+    done
+}
+
 # The policy files are authored as GlobalNetworkPolicy; staging only swaps the kind.
 render_policies() {
     local kind="$1"
@@ -46,6 +86,7 @@ render_policies() {
         sed "s/^kind: GlobalNetworkPolicy$/kind: ${kind}/" "${f}"
         echo "---"
     done
+    render_tenant_policies "${kind}"
 }
 
 delete_kind() {

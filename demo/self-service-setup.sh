@@ -277,6 +277,18 @@ EOF
     done
     echo "✅ Tenant namespaces ready"
 
+    # --- Ingress allow-list for the new tenant namespaces (bead i23) ---
+    # scripts/setup.sh applied the cluster-wide default-deny before these namespaces
+    # existed, so re-render: netpol.sh emits one GlobalNetworkPolicy per Capsule tenant
+    # (same tenant + traefik/cnpg-system/ESO/monitoring). Without it the CNPG operator
+    # cannot reach the instance status endpoint and the cluster never turns Ready —
+    # the Kyverno-generated tenant NetworkPolicy only arrives once ArgoCD has synced.
+    if kubectl get globalnetworkpolicies.projectcalico.org default-deny-ingress \
+        --context "${LOCAL_CONTEXT}" &>/dev/null; then
+        echo "🛡️  Re-applying ingress allow-list for tenant namespaces..."
+        "${GIT_REPO_ROOT}/scripts/netpol.sh" enforce "${MODE}"
+    fi
+
     # --- ExternalSecrets ---
     echo "📋 Applying ExternalSecrets..."
     for es in superuser app readonly; do
