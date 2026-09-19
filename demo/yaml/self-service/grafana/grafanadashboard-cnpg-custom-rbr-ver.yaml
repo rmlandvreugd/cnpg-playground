@@ -21,6 +21,7 @@ spec:
             "name": "datasource",
             "type": "datasource",
             "query": "prometheus",
+            "regex": "/^DS_PROMETHEUS$/",
             "label": "Datasource",
             "current": {},
             "hide": 0
