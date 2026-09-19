@@ -11,9 +11,10 @@ spec:
       root_url: "https://grafana.${TRAEFIK_IP_DASHED}.sslip.io"
     log:
       mode: "console"
-    security:
-      admin_user: admin
-      admin_password: admin
+    # No security.admin_user/admin_password: grafana-operator generates a random
+    # break-glass password in Secret grafana/grafana-admin-credentials. Automation (the
+    # Grafana MCP) uses the grafana-mcp service-account token instead. Retrieve the
+    # break-glass login with scripts/grafana-breakglass.sh.
     live:
       max_connections: "0"
     # Note: no signout_redirect_url -> Grafana's logout returns to its own login

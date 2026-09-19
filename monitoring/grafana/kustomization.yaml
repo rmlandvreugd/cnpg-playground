@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: grafana
 resources:
   # grafana_instance.yaml is rendered from grafana_instance.yaml.tpl by monitoring/setup.sh
+  - grafana_serviceaccount_mcp.yaml
   - grafana_datasource.yaml
   - grafana_datasource_loki.yaml
   - grafana_dashboard.yaml
