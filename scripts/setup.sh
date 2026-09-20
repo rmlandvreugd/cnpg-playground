@@ -1383,6 +1383,32 @@ TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
     | kubectl --context "${HUB_CONTEXT}" apply -f -
 echo "✅ policy-reporter: https://policy-reporter.${HUB_TRAEFIK_IP_DASHED}.sslip.io"
 
+echo "=================================================="
+echo "🌱 Installing seaweedfs-operator on hub cluster..."
+echo "=================================================="
+
+# Operator + CRDs only. No Seaweed CR is created here: which namespace gets an
+# in-cluster SeaweedFS, and how it is sized, belongs to the layer that wants one
+# (the Loki A/B/C storage PoC puts its Seaweed CR in the grafana namespace — see
+# bead cnpg-playground-8ti). Installing the operator at the platform layer keeps
+# the CRDs in place across monitoring/teardown.sh + monitoring/setup.sh cycles.
+#
+# Placed before the netpol section below so the namespace exists when the
+# ingress allow-list is applied. No allow rule is needed for it: the apiserver
+# reaching the operator's admission webhook is already covered cluster-wide by
+# allow-from-nodes in k8s/calico/policies/10-cluster-wide.yaml.
+echo "🌱 Installing seaweedfs-operator ${SEAWEEDFS_OPERATOR_CHART_VERSION} (operator 1.0.39)..."
+helm_upgrade_install seaweedfs-operator \
+    seaweedfs-operator \
+    seaweedfs-operator "${HUB_CONTEXT}" "${SEAWEEDFS_OPERATOR_CHART_VERSION}" \
+    --repo-url https://seaweedfs.github.io/seaweedfs-operator/ \
+    --values "${GIT_REPO_ROOT}/k8s/seaweedfs-operator/values.yaml"
+kubectl --context "${HUB_CONTEXT}" -n seaweedfs-operator rollout status \
+    deployment/seaweedfs-operator --timeout=300s
+# Fail loudly here rather than leaving bead 8ti to discover a missing CRD.
+kubectl --context "${HUB_CONTEXT}" get crd seaweeds.seaweed.seaweedfs.com >/dev/null
+echo "✅ seaweedfs-operator ready (CRD seaweeds.seaweed.seaweedfs.com installed, no Seaweed CR created)"
+
 # --- Ingress allow-list + default-deny (k8s/calico/policies) ---
 # Applied last for the platform. The policies select by namespace, so the monitoring and
 # tenant namespaces that --with-tenant (or a later manual run) creates are covered from

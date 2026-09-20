@@ -226,6 +226,13 @@ KUBELET_CSR_APPROVER_CHART_VERSION="${KUBELET_CSR_APPROVER_CHART_VERSION:-1.2.15
 # reloader.stakater.com/auto annotation (demo-app on Vault static-cred
 # rotation, Loki on step-ca bundle updates). Chart repo only, no OCI mirror.
 RELOADER_CHART_VERSION="${RELOADER_CHART_VERSION:-2.2.17}"
+# seaweedfs-operator: reconciles Seaweed CRs into an in-cluster SeaweedFS
+# (master/volume/filer/s3). Hub-only platform component; setup.sh installs the
+# operator and its CRDs but creates no Seaweed CR — those belong to the layer
+# that wants a cluster (see bead cnpg-playground-8ti). 0.1.42 is the CHART
+# version; the operator image is appVersion 1.0.39. The chart has templated the
+# Seaweed CRD since 0.1.15, so crds.create (default true) installs it.
+SEAWEEDFS_OPERATOR_CHART_VERSION="${SEAWEEDFS_OPERATOR_CHART_VERSION:-0.1.42}"
 
 # Capsule + capsule-proxy + gangplank
 CAPSULE_CHART_VERSION="${CAPSULE_CHART_VERSION:-0.14.6}"

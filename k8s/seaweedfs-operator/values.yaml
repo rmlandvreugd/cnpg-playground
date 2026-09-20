@@ -1,0 +1,28 @@
+# seaweedfs-operator (chart 0.1.42 / operator 1.0.39), hub-only platform component.
+#
+# Pin the manager Deployment *and* the three webhook-certificate Jobs
+# (create-webhook-certificates, patch-mutating-webhook, patch-validating-webhook)
+# to infra nodes: the chart threads these top-level keys into every pod template
+# it renders, so one pair covers all four. Without the toleration the Jobs stay
+# Pending on the tainted infra nodes and `helm --wait` times out before the
+# webhook configurations are ever patched with a CA bundle.
+nodeSelector:
+  node-role.kubernetes.io/infra: ""
+tolerations:
+  - key: node-role.kubernetes.io/infra
+    operator: Exists
+    effect: NoSchedule
+
+# Images are left at their chart defaults on purpose. Every node mounts
+# k8s/containerd-certs.d at /etc/containerd/certs.d, which transparently mirrors
+# docker.io, ghcr.io, quay.io and registry.k8s.io through zot — so
+# chrislusf/seaweedfs-operator, curlimages/curl and
+# registry.k8s.io/ingress-nginx/kube-webhook-certgen all pull via the cache
+# without rewriting registries here. Setting global.imageRegistry would in fact
+# break the manager image, whose `registry` field holds the Docker Hub *user*
+# (chrislusf) rather than a registry host.
+
+# No ServiceMonitor yet: kube-prometheus-stack lives in the monitoring layer,
+# which is torn down and rebuilt independently of this platform release.
+serviceMonitor:
+  enabled: false
