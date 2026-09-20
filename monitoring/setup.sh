@@ -359,8 +359,16 @@ EOF
     envsubst '${SEAWEEDFS_AB_IMAGE} ${SEAWEEDFS_AB_VOLUME_SIZE} ${SEAWEEDFS_AB_INITIAL_SNAPSHOT}' \
         < "${GIT_REPO_ROOT}/monitoring/seaweedfs-ab/seaweed.yaml.tpl" \
         | kubectl --context "${CONTEXT_NAME}" apply -f -
-    # The operator brings components up in order (master -> volume/filer -> s3),
-    # so wait on the last one rather than racing the CR's own Ready condition.
+    # The operator brings components up in dependency order (master -> ready ->
+    # volume/filer -> s3), so the s3 Deployment does NOT exist at apply time.
+    # `kubectl rollout status` against a missing Deployment fails immediately
+    # with NotFound instead of waiting, so wait for the object to appear first —
+    # same shape as the calico-node wait in scripts/setup.sh.
+    echo "⏳ Waiting for the operator to create the S3 gateway Deployment..."
+    for _ in $(seq 1 120); do
+        kubectl --context "${CONTEXT_NAME}" -n grafana get deploy seaweedfs-ab-s3 &>/dev/null && break
+        sleep 5
+    done
     kubectl --context "${CONTEXT_NAME}" -n grafana rollout status deploy/seaweedfs-ab-s3 --timeout=600s \
         || echo "  ⚠️  seaweedfs-ab S3 gateway not ready — check: kubectl -n grafana get seaweed seaweedfs-ab -o yaml"
 
