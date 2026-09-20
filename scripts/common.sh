@@ -226,6 +226,13 @@ KUBELET_CSR_APPROVER_CHART_VERSION="${KUBELET_CSR_APPROVER_CHART_VERSION:-1.2.15
 # reloader.stakater.com/auto annotation (demo-app on Vault static-cred
 # rotation, Loki on step-ca bundle updates). Chart repo only, no OCI mirror.
 RELOADER_CHART_VERSION="${RELOADER_CHART_VERSION:-2.2.17}"
+# seaweedfs-operator: reconciles Seaweed CRs into an in-cluster SeaweedFS
+# (master/volume/filer/s3). Hub-only platform component; setup.sh installs the
+# operator and its CRDs but creates no Seaweed CR — those belong to the layer
+# that wants a cluster (see bead cnpg-playground-8ti). 0.1.42 is the CHART
+# version; the operator image is appVersion 1.0.39. The chart has templated the
+# Seaweed CRD since 0.1.15, so crds.create (default true) installs it.
+SEAWEEDFS_OPERATOR_CHART_VERSION="${SEAWEEDFS_OPERATOR_CHART_VERSION:-0.1.42}"
 
 # Capsule + capsule-proxy + gangplank
 CAPSULE_CHART_VERSION="${CAPSULE_CHART_VERSION:-0.14.6}"
@@ -403,6 +410,40 @@ retry() {
     done
 }
 
+# Repo URLs already registered + index-cached in this shell, keyed by repo name.
+declare -gA _HELM_REPO_READY 2>/dev/null || true
+
+# helm_repo_ref <repo-url> <chart-name>
+# Echoes a "<repo-name>/<chart-name>" ref usable by any helm subcommand, after
+# registering <repo-url> and caching its index.
+#
+# Why not the `--repo <url>` flag: on helm >= 4, resolving a chart that way makes
+# helm scan *every* registered repo's cached index to match the resolved chart
+# URL. One unrelated repo whose index is not cached — added on another machine,
+# cache cleared, or a URL that no longer answers — then fails the call with
+#   Error: no cached repo found. (try 'helm repo update'): open .../traefik-index.yaml
+# even though that repo has nothing to do with the chart being installed.
+#
+# `helm repo update` is NOT a fix: it aborts on the first unreachable repo and
+# leaves that repo's index missing, so the next --repo call fails identically.
+# Registering the one repo we need and using the <name>/<chart> form skips the
+# cross-repo scan entirely, and is unaffected by junk left in the helm config.
+#
+# The name is derived exactly as _repo_name_for() does in
+# scripts/check-helm-versions.py (sha256 of the URL as written, first 8 hex
+# chars), so both tools converge on a single repo entry per URL.
+helm_repo_ref() {
+    local url="$1" chart="$2" name
+    name="chk-$(printf '%s' "${url}" | sha256sum | cut -c1-8)"
+    if [[ -z "${_HELM_REPO_READY[${name}]:-}" ]]; then
+        # --force-update overwrites a stale entry under the same name and, unlike
+        # a bare `helm repo add`, always (re)fetches the index into the cache.
+        helm repo add "${name}" "${url}" --force-update >/dev/null || return 1
+        _HELM_REPO_READY[${name}]=1
+    fi
+    printf '%s/%s' "${name}" "${chart}"
+}
+
 helm_upgrade_install() {
     local release="$1"
     local chart_ref="$2"
@@ -411,21 +452,22 @@ helm_upgrade_install() {
     local version="$5"
     shift 5
 
-    local repo_args=()
     if [[ "${1:-}" == "--repo-url" ]]; then
         if [[ "${chart_ref}" == */* ]]; then
             echo "chart_ref must be a short chart name when --repo-url is used: ${chart_ref}" >&2
             return 1
         fi
-        repo_args=(--repo "$2")
+        # Resolve to <repo>/<chart> rather than passing --repo; see helm_repo_ref.
+        chart_ref="$(helm_repo_ref "$2" "${chart_ref}")" || return 1
         shift 2
     fi
 
     # Rewrite oci://<host>/<path> refs through the zot pull-through cache when
-    # OCI_PROXY is set (empty = pull direct). The --repo-url branch above already
-    # errors on a chart_ref containing '/', so a chart_ref starting with oci:// only
-    # ever reaches here via the OCI path — classic index.yaml repos (cloudnative-pg,
-    # calico, kyverno-policies, policy-reporter, alloy) stay untouched by design.
+    # OCI_PROXY is set (empty = pull direct). The --repo-url branch above rejects a
+    # chart_ref containing '/' and rewrites it to <repo>/<chart>, so a chart_ref
+    # starting with oci:// only ever reaches here via the OCI path — classic
+    # index.yaml repos (cloudnative-pg, calico, kyverno-policies, policy-reporter,
+    # alloy) stay untouched by design.
     # --ca-file trusts zot's step-ca-issued edge cert for this chart download only;
     # reuses the chain traefik-edge-setup.sh already builds (zot/traefik-edge are
     # both up by the time any oci:// helm_upgrade_install call runs).
@@ -474,7 +516,6 @@ helm_upgrade_install() {
         # Wrap in `timeout` so a stuck `helm --wait` (which can blow past its own
         # --timeout) becomes a failure the retry loop can act on, not a frozen process.
         timeout --kill-after=30s 1000s helm upgrade --install "${release}" "${chart_ref}" \
-            "${repo_args[@]}" \
             "${oci_args[@]}" \
             --namespace "${namespace}" \
             --create-namespace \

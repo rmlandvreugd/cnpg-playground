@@ -121,6 +121,12 @@ CHART_REGISTRY: dict[str, ChartEntry] = {
     "CARETTA_CHART_VERSION": ChartEntry("CARETTA_CHART_VERSION", "caretta", ah_slug="groundcover/caretta", repo_url="https://caretta.app/charts"),
     "RADAR_CHART_VERSION": ChartEntry("RADAR_CHART_VERSION", "radar", ah_slug="skyhook/radar", repo_url="https://skyhook-io.github.io/helm-charts"),
     "RELOADER_CHART_VERSION": ChartEntry("RELOADER_CHART_VERSION", "reloader", ah_slug="stakater/reloader", repo_url="https://stakater.github.io/stakater-charts"),
+    # No ah_slug: the upstream chart repo is not published on ArtifactHub. The only
+    # AH package named seaweedfs-operator is the nnstd fork
+    # (https://nnstd.github.io/seaweedfs-operator, versioned 1.5.x), a different
+    # lineage from the chart we pin — using it as the slug would report bogus
+    # "updates". Version bumps here are manual; repo_url still serves --diff-values.
+    "SEAWEEDFS_OPERATOR_CHART_VERSION": ChartEntry("SEAWEEDFS_OPERATOR_CHART_VERSION", "seaweedfs-operator", repo_url="https://seaweedfs.github.io/seaweedfs-operator/"),
     # In-repo chart: no env-var in common.sh — keyed by chart name, reported as
     # "missing in common.sh" until a version variable is added.
     "demo-app": ChartEntry("demo-app", "demo-app", local_path="app/helm/demo-app"),

@@ -216,8 +216,11 @@ for region in "${REGIONS[@]}"; do
 
     echo "🛠️  Installing Calico CNI (tigera-operator ${TIGERA_OPERATOR_CHART_VERSION} with v1 CRDs) in '${K8S_CLUSTER_NAME}'..."
     kubectl create namespace tigera-operator --context "$(get_cluster_context "${region}")"
-    # helm template calico-crds projectcalico.org.v3 --version ${TIGERA_OPERATOR_CHART_VERSION} --repo https://docs.tigera.io/calico/charts | kubectl apply --context "$(get_cluster_context "${region}")" --server-side -f -
-    helm template calico-crds crd.projectcalico.org.v1 --version ${TIGERA_OPERATOR_CHART_VERSION} --repo https://docs.tigera.io/calico/charts | kubectl apply --context "$(get_cluster_context "${region}")" --server-side -f -
+    # helm_repo_ref instead of `--repo <url>`: on helm >= 4 that flag fails the
+    # whole call when *any* unrelated registered repo has no cached index. See
+    # scripts/common.sh.
+    # helm template calico-crds "$(helm_repo_ref https://docs.tigera.io/calico/charts projectcalico.org.v3)" --version ${TIGERA_OPERATOR_CHART_VERSION} | kubectl apply --context "$(get_cluster_context "${region}")" --server-side -f -
+    helm template calico-crds "$(helm_repo_ref https://docs.tigera.io/calico/charts crd.projectcalico.org.v1)" --version ${TIGERA_OPERATOR_CHART_VERSION} | kubectl apply --context "$(get_cluster_context "${region}")" --server-side -f -
     helm_upgrade_install tigera-operator tigera-operator tigera-operator "$(get_cluster_context "${region}")" \
         "${TIGERA_OPERATOR_CHART_VERSION}" \
         --repo-url https://docs.tigera.io/calico/charts \
@@ -1379,6 +1382,32 @@ TRAEFIK_IP_DASHED="${HUB_TRAEFIK_IP_DASHED}" envsubst '${TRAEFIK_IP_DASHED}' \
     < "${GIT_REPO_ROOT}/policy-reporter/ingressroute.yaml.tpl" \
     | kubectl --context "${HUB_CONTEXT}" apply -f -
 echo "✅ policy-reporter: https://policy-reporter.${HUB_TRAEFIK_IP_DASHED}.sslip.io"
+
+echo "=================================================="
+echo "🌱 Installing seaweedfs-operator on hub cluster..."
+echo "=================================================="
+
+# Operator + CRDs only. No Seaweed CR is created here: which namespace gets an
+# in-cluster SeaweedFS, and how it is sized, belongs to the layer that wants one
+# (the Loki A/B/C storage PoC puts its Seaweed CR in the grafana namespace — see
+# bead cnpg-playground-8ti). Installing the operator at the platform layer keeps
+# the CRDs in place across monitoring/teardown.sh + monitoring/setup.sh cycles.
+#
+# Placed before the netpol section below so the namespace exists when the
+# ingress allow-list is applied. No allow rule is needed for it: the apiserver
+# reaching the operator's admission webhook is already covered cluster-wide by
+# allow-from-nodes in k8s/calico/policies/10-cluster-wide.yaml.
+echo "🌱 Installing seaweedfs-operator ${SEAWEEDFS_OPERATOR_CHART_VERSION} (operator 1.0.39)..."
+helm_upgrade_install seaweedfs-operator \
+    seaweedfs-operator \
+    seaweedfs-operator "${HUB_CONTEXT}" "${SEAWEEDFS_OPERATOR_CHART_VERSION}" \
+    --repo-url https://seaweedfs.github.io/seaweedfs-operator/ \
+    --values "${GIT_REPO_ROOT}/k8s/seaweedfs-operator/values.yaml"
+kubectl --context "${HUB_CONTEXT}" -n seaweedfs-operator rollout status \
+    deployment/seaweedfs-operator --timeout=300s
+# Fail loudly here rather than leaving bead 8ti to discover a missing CRD.
+kubectl --context "${HUB_CONTEXT}" get crd seaweeds.seaweed.seaweedfs.com >/dev/null
+echo "✅ seaweedfs-operator ready (CRD seaweeds.seaweed.seaweedfs.com installed, no Seaweed CR created)"
 
 # --- Ingress allow-list + default-deny (k8s/calico/policies) ---
 # Applied last for the platform. The policies select by namespace, so the monitoring and
