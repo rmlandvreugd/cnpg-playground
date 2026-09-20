@@ -18,14 +18,18 @@ metadata:
     app.kubernetes.io/name: traefik
     app.kubernetes.io/component: metrics
 spec:
-  jobLabel: traefik
   namespaceSelector:
     matchNames:
       - traefik
   selector:
+    # component=metrics is what distinguishes the traefik-metrics Service from the main
+    # traefik LoadBalancer Service: both carry name/instance, and targetPort resolves by
+    # POD port name, so a selector without it scrapes the same pod twice — once per
+    # Service, under two different job labels.
     matchLabels:
       app.kubernetes.io/name: traefik
       app.kubernetes.io/instance: traefik-traefik
+      app.kubernetes.io/component: metrics
   endpoints:
     - path: /metrics
       targetPort: metrics
