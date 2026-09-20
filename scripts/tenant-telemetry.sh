@@ -55,6 +55,16 @@ apply() {
     # Traefik metrics ServiceMonitor (kept out of the chart, see traefik/values.yaml).
     if kc get ns traefik >/dev/null 2>&1; then
         kc apply -f "${RENDER_DIR}/traefik-servicemonitor.yaml"
+        # Upgrade path: the chart used to render its own ServiceMonitor named "traefik".
+        # A fresh install no longer does (serviceMonitor.enabled=false), but on an existing
+        # cluster it lingers and Prometheus scrapes Traefik twice — same series under two
+        # job labels, and the stale copy has no tenant relabelings.
+        if kc get servicemonitor traefik -n traefik \
+            -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}' 2>/dev/null \
+            | grep -q '^traefik$'; then
+            echo "🧹 Removing the chart-managed Traefik ServiceMonitor (superseded)..."
+            kc delete servicemonitor traefik -n traefik --ignore-not-found
+        fi
     fi
 
     # Prometheus CR: the tenant blocks are rendered, REGION/MIMIR_PUSH_URL still envsubst.
