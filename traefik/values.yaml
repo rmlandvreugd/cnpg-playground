@@ -47,6 +47,38 @@ tracing:
     enabled: true
     # transport and endpoint set at install time via --set (hub=gRPC, non-hub=HTTP)
 
+# Prometheus metrics on the :9100 metrics entrypoint. Router labels are off by default;
+# they carry the "<namespace>-<ingressroute>-<hash>@kubernetescrd" name that identifies the
+# tenant (Capsule forces the tenant prefix on its namespaces), so the ServiceMonitor can
+# derive a "tenant" label from it. Entry-point-level series have no router or service and
+# stay platform — they aggregate across tenants (bd3d.10).
+metrics:
+  prometheus:
+    entryPoint: metrics
+    addRoutersLabels: true
+    addServicesLabels: true
+    addEntryPointsLabels: true
+    service:
+      enabled: true
+    serviceMonitor:
+      enabled: true
+      # Traefik's own "service" label collides with the ServiceMonitor's target label, so
+      # Prometheus renames it to exported_service; the router label has no collision.
+      # Default everything to platform, then promote the anchored tenant prefix. Anchoring
+      # keeps the platform-hosted tenant Grafana route (grafana-grafana-rbr-ver-...)
+      # on the platform side. Entry-point-level series carry neither label and stay platform.
+      metricRelabelings:
+        - targetLabel: tenant
+          replacement: platform
+        - sourceLabels: [exported_service]
+          regex: 'rbr-.+'
+          targetLabel: tenant
+          replacement: rbr
+        - sourceLabels: [router]
+          regex: 'rbr-.+'
+          targetLabel: tenant
+          replacement: rbr
+
 additionalArguments:
   - "--global.checknewversion=false"
   - "--global.sendanonymoususage=false"
@@ -64,6 +96,14 @@ additionalArguments:
   # empty". Sources here are the kind node net (172.28.0.0/16) or the Calico
   # pod net (10.220.0.0/16) depending on hairpin SNAT.
   - "--entrypoints.websecure.forwardedHeaders.trustedIPs=172.28.0.0/16,10.220.0.0/16"
+  # traceVerbosity defaults to "minimal" (v3.5+): one server span + one ReverseProxy span,
+  # neither of which names the router or service. "detailed" adds the internal Router and
+  # Service spans carrying traefik.router.name / traefik.service.name — the only per-request
+  # signal that identifies the tenant, since every Traefik span shares the platform pod's
+  # resource. The otel-collector routes on that attribute (bd3d.10). A tenant can still turn
+  # it down per route via IngressRoute spec.routes[].observability.traceVerbosity.
+  - "--entrypoints.websecure.observability.traceVerbosity=detailed"
+  - "--entrypoints.web.observability.traceVerbosity=detailed"
 
 ports:
   postgres:

@@ -192,12 +192,28 @@ loki.process "traefik_access" {
     }
   }
 
+  // Tenant attribution (bd3d.10). The Traefik pod lives in the platform namespace, so the
+  // only per-request signal is the router/service name, which Traefik renders as
+  // "<namespace>-<ingressroute>-<hash>@kubernetescrd". Capsule forces the tenant prefix on
+  // its namespaces, so an ANCHORED match identifies the tenant. Anchoring matters: the
+  // tenant's own Grafana is "grafana-grafana-rbr-ver-..." in the platform namespace and
+  // must stay platform. Tenants are listed explicitly rather than captured with a generic
+  // prefix, so a platform namespace can never mint a Loki tenant (bd3d.7 will generate
+  // this list from the Capsule Tenants).
+  // No match (platform routers, and Traefik's own runtime lines) extracts nothing, and
+  // stage.labels only sets labels whose extracted key exists — so those keep the
+  // tenant="platform" label that discovery.relabel already put on the Traefik pod.
+  stage.regex {
+    expression = `"ServiceName":"(?P<tenant_from_service>rbr)-`
+  }
+
   // Promote low-cardinality fields to Loki labels
   stage.labels {
     values = {
       method = "method",
       status = "status",
       route  = "route",
+      tenant = "tenant_from_service",
     }
   }
 
