@@ -51,6 +51,23 @@ for region in "${REGIONS[@]}"; do
     echo "🗑️  Uninstalling Loki in '${K8S_CLUSTER_NAME}'..."
     helm_uninstall_if_present loki grafana "${CONTEXT_NAME}"
 
+    # --- seaweedfs-ab (Loki-B storage, bead 8ti) ---
+    # The Seaweed CR goes first: deleting it lets the operator tear its
+    # StatefulSets down before the secrets and the bridge they depend on vanish.
+    # The volume PVC is deliberately NOT deleted here — the monitoring loop is
+    # rerun constantly during the A/B/C PoC and re-seeding the mirror on every
+    # cycle would destroy the checkpoint the restart test depends on. A full
+    # scripts/teardown.sh removes it with the cluster.
+    echo "🗑️  Removing Seaweed CR seaweedfs-ab from grafana namespace..."
+    if kubectl --context "${CONTEXT_NAME}" get crd seaweeds.seaweed.seaweedfs.com &>/dev/null; then
+        kubectl --context "${CONTEXT_NAME}" -n grafana delete seaweed seaweedfs-ab \
+            --ignore-not-found --timeout=180s
+    fi
+    kubectl --context "${CONTEXT_NAME}" -n grafana delete service seaweedfs-ab-s3-https --ignore-not-found
+    kubectl --context "${CONTEXT_NAME}" -n grafana delete certificate seaweedfs-ab-s3-tls --ignore-not-found
+    kubectl --context "${CONTEXT_NAME}" -n grafana delete secret seaweedfs-ab-s3-tls \
+        seaweedfs-ab-s3-config seaweedfs-ab-replication --ignore-not-found
+
     echo "🗑️  Removing objectstore-local bridge from grafana namespace..."
     kubectl --context "${CONTEXT_NAME}" -n grafana delete service objectstore-local --ignore-not-found
     kubectl --context "${CONTEXT_NAME}" -n grafana delete endpoints objectstore-local --ignore-not-found
@@ -65,6 +82,30 @@ for region in "${REGIONS[@]}"; do
         kubectl --context "${CONTEXT_NAME}" delete grafana grafana -n default --ignore-not-found
         kubectl kustomize "${GIT_REPO_ROOT}/monitoring/grafana/" | \
             kubectl --context "${CONTEXT_NAME}" delete --ignore-not-found -f -
+
+        # Delete BY KIND, not just what kustomize knows about. Tenant onboarding
+        # creates its own Grafana CRs through ArgoCD (loki-rbr-ver,
+        # traefik-traces-rbr-ver, ...) which the kustomize delete above never
+        # touches, so on a --with-tenant cluster they survive to wedge the
+        # namespace below.
+        for _kind in grafanadashboards grafanadatasources grafanafolders grafanas; do
+            kubectl --context "${CONTEXT_NAME}" -n grafana \
+                delete "${_kind}.grafana.integreatly.org" --all --ignore-not-found --timeout=60s || true
+        done
+
+        # Every one of these carries operator.grafana.com/finalizer, which ONLY
+        # the Grafana Operator clears. Uninstalling the operator while any
+        # remain strands them, and `delete namespace grafana` then hangs in
+        # Terminating forever. Clear anything still left before the operator
+        # goes away.
+        for _kind in grafanadashboards grafanadatasources grafanafolders grafanas; do
+            for _obj in $(kubectl --context "${CONTEXT_NAME}" -n grafana \
+                            get "${_kind}.grafana.integreatly.org" -o name 2>/dev/null); do
+                echo "  ⚠️  ${_obj} survived delete — clearing its finalizer"
+                kubectl --context "${CONTEXT_NAME}" -n grafana patch "${_obj}" \
+                    --type=merge -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
+            done
+        done
     else
         echo "  ℹ️  Grafana CRDs absent — skipping CR delete (namespace deletion will clean up)"
     fi

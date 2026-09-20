@@ -299,6 +299,87 @@ EOF
         || echo "  ⚠️  Bucket init may have failed — verify: kubectl run mc ... mc --insecure mb store/loki"
     kubectl --context "${CONTEXT_NAME}" -n grafana delete pod loki-bucket-init --ignore-not-found
 
+    # --- Loki-B storage: in-cluster SeaweedFS + mirror to RustFS (bead 8ti) ---
+    # Loki-B itself is installed by bead dfe; this stands up the storage it will
+    # use, plus the filer.backup mirror into the RustFS loki-mirror bucket.
+    # Requires the seaweedfs-operator that scripts/setup.sh installs on the hub.
+    echo "🌱 Wiring seaweedfs-ab (Loki-B storage) into the grafana namespace..."
+    RUSTFS_CONTAINER_NAME="${RUSTFS_BASE_NAME}-${region}"
+    OBJECTSTORE_IP=$(${CONTAINER_PROVIDER} inspect "${RUSTFS_CONTAINER_NAME}" \
+        --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
+    OBJECTSTORE_IP="${OBJECTSTORE_IP}" envsubst '${OBJECTSTORE_IP}' \
+        < "${GIT_REPO_ROOT}/monitoring/seaweedfs-ab/objectstore-bridge.yaml.tpl" \
+        | kubectl --context "${CONTEXT_NAME}" apply -f -
+
+    echo "🪣 Creating RustFS mirror bucket ${RUSTFS_LOKI_MIRROR_BUCKET}..."
+    kubectl --context "${CONTEXT_NAME}" -n grafana delete pod loki-mirror-bucket-init --ignore-not-found
+    kubectl run loki-mirror-bucket-init --restart=Never \
+        --context "${CONTEXT_NAME}" \
+        -n grafana \
+        --image="${MC_IMAGE}" \
+        --pod-running-timeout=180s \
+        --command -- sh -c "mc --insecure alias set store https://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1 \
+            && mc --insecure mb --ignore-existing store/${RUSTFS_LOKI_MIRROR_BUCKET} \
+            && echo '✅ Bucket ${RUSTFS_LOKI_MIRROR_BUCKET} ready'"
+    kubectl --context "${CONTEXT_NAME}" -n grafana wait pod/loki-mirror-bucket-init \
+        --for=jsonpath='{.status.phase}'=Succeeded --timeout=180s \
+        && kubectl --context "${CONTEXT_NAME}" -n grafana logs pod/loki-mirror-bucket-init \
+        || echo "  ⚠️  Mirror bucket init may have failed"
+    kubectl --context "${CONTEXT_NAME}" -n grafana delete pod loki-mirror-bucket-init --ignore-not-found
+
+    # S3 identities for the in-cluster gateway. The secret KEY is also the
+    # filename the operator mounts and passes to `weed s3 -config=`.
+    kubectl --context "${CONTEXT_NAME}" -n grafana create secret generic seaweedfs-ab-s3-config \
+        --from-literal=seaweedfs_s3_config="{\"identities\":[\
+{\"name\":\"admin\",\"credentials\":[{\"accessKey\":\"${SEAWEEDFS_AB_S3_ADMIN_ACCESS_KEY}\",\"secretKey\":\"${SEAWEEDFS_AB_S3_ADMIN_SECRET_KEY}\"}],\"actions\":[\"Admin\",\"Read\",\"Write\"]},\
+{\"name\":\"loki\",\"credentials\":[{\"accessKey\":\"${SEAWEEDFS_AB_S3_ACCESS_KEY}\",\"secretKey\":\"${SEAWEEDFS_AB_S3_SECRET_KEY}\"}],\"actions\":[\"Read:loki\",\"Write:loki\",\"List:loki\",\"Tagging:loki\"]}]}" \
+        --dry-run=client -o yaml | kubectl --context "${CONTEXT_NAME}" apply -f -
+
+    # replication.toml for the filer.backup sidecar (RustFS sink credentials).
+    RUSTFS_LOKI_MIRROR_ACCESS_KEY="${RUSTFS_LOKI_MIRROR_ACCESS_KEY}" \
+    RUSTFS_LOKI_MIRROR_SECRET_KEY="${RUSTFS_LOKI_MIRROR_SECRET_KEY}" \
+    RUSTFS_LOKI_MIRROR_BUCKET="${RUSTFS_LOKI_MIRROR_BUCKET}" \
+    envsubst '${RUSTFS_LOKI_MIRROR_ACCESS_KEY} ${RUSTFS_LOKI_MIRROR_SECRET_KEY} ${RUSTFS_LOKI_MIRROR_BUCKET}' \
+        < "${GIT_REPO_ROOT}/monitoring/seaweedfs-ab/replication.toml.tpl" \
+        > "${TMPDIR:-/tmp}/seaweedfs-ab-replication.toml"
+    kubectl --context "${CONTEXT_NAME}" -n grafana create secret generic seaweedfs-ab-replication \
+        --from-file=replication.toml="${TMPDIR:-/tmp}/seaweedfs-ab-replication.toml" \
+        --dry-run=client -o yaml | kubectl --context "${CONTEXT_NAME}" apply -f -
+    rm -f "${TMPDIR:-/tmp}/seaweedfs-ab-replication.toml"
+
+    echo "📜 Issuing seaweedfs-ab S3 gateway TLS certificate..."
+    kubectl --context "${CONTEXT_NAME}" apply -f "${GIT_REPO_ROOT}/monitoring/seaweedfs-ab/s3-tls.yaml"
+    kubectl --context "${CONTEXT_NAME}" -n grafana wait certificate/seaweedfs-ab-s3-tls \
+        --for=condition=Ready --timeout=180s
+
+    echo "🌱 Applying Seaweed CR seaweedfs-ab..."
+    SEAWEEDFS_AB_IMAGE="${SEAWEEDFS_AB_IMAGE}" \
+    SEAWEEDFS_AB_VOLUME_SIZE="${SEAWEEDFS_AB_VOLUME_SIZE}" \
+    SEAWEEDFS_AB_INITIAL_SNAPSHOT="${SEAWEEDFS_AB_INITIAL_SNAPSHOT}" \
+    envsubst '${SEAWEEDFS_AB_IMAGE} ${SEAWEEDFS_AB_VOLUME_SIZE} ${SEAWEEDFS_AB_INITIAL_SNAPSHOT}' \
+        < "${GIT_REPO_ROOT}/monitoring/seaweedfs-ab/seaweed.yaml.tpl" \
+        | kubectl --context "${CONTEXT_NAME}" apply -f -
+    # The operator brings components up in order (master -> volume/filer -> s3),
+    # so wait on the last one rather than racing the CR's own Ready condition.
+    kubectl --context "${CONTEXT_NAME}" -n grafana rollout status deploy/seaweedfs-ab-s3 --timeout=600s \
+        || echo "  ⚠️  seaweedfs-ab S3 gateway not ready — check: kubectl -n grafana get seaweed seaweedfs-ab -o yaml"
+
+    echo "🪣 Creating the loki bucket inside seaweedfs-ab..."
+    kubectl --context "${CONTEXT_NAME}" -n grafana delete pod seaweedfs-ab-bucket-init --ignore-not-found
+    kubectl run seaweedfs-ab-bucket-init --restart=Never \
+        --context "${CONTEXT_NAME}" \
+        -n grafana \
+        --image="${MC_IMAGE}" \
+        --pod-running-timeout=180s \
+        --command -- sh -c "mc --insecure alias set ab https://seaweedfs-ab-s3-https:8333 '${SEAWEEDFS_AB_S3_ADMIN_ACCESS_KEY}' '${SEAWEEDFS_AB_S3_ADMIN_SECRET_KEY}' 2>&1 \
+            && mc --insecure mb --ignore-existing ab/loki \
+            && echo '✅ seaweedfs-ab bucket loki ready'"
+    kubectl --context "${CONTEXT_NAME}" -n grafana wait pod/seaweedfs-ab-bucket-init \
+        --for=jsonpath='{.status.phase}'=Succeeded --timeout=180s \
+        && kubectl --context "${CONTEXT_NAME}" -n grafana logs pod/seaweedfs-ab-bucket-init \
+        || echo "  ⚠️  seaweedfs-ab bucket init may have failed"
+    kubectl --context "${CONTEXT_NAME}" -n grafana delete pod seaweedfs-ab-bucket-init --ignore-not-found
+
     echo "📊 Installing Loki ${LOKI_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
     helm_upgrade_install loki oci://ghcr.io/grafana-community/helm-charts/loki \
         grafana "${CONTEXT_NAME}" "${LOKI_CHART_VERSION}" \
