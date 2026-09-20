@@ -24,4 +24,6 @@ spec:
           url: '${__value.raw}'
           datasourceUid: tempo
     secureJsonData:
-      httpHeaderValue1: platform|rbr
+      # Platform view: the platform org plus every Capsule tenant's org.
+      # >>> per-tenant: grafana-org-header (generated, see scripts/render-tenant-telemetry.py)
+      # <<< per-tenant

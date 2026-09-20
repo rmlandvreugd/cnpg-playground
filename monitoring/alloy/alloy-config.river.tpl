@@ -203,9 +203,8 @@ loki.process "traefik_access" {
   // No match (platform routers, and Traefik's own runtime lines) extracts nothing, and
   // stage.labels only sets labels whose extracted key exists — so those keep the
   // tenant="platform" label that discovery.relabel already put on the Traefik pod.
-  stage.regex {
-    expression = `"ServiceName":"(?P<tenant_from_service>rbr)-`
-  }
+  // >>> per-tenant: alloy-traefik-tenant (generated, see scripts/render-tenant-telemetry.py)
+  // <<< per-tenant
 
   // Promote low-cardinality fields to Loki labels
   stage.labels {
@@ -235,16 +234,10 @@ loki.process "events" {
   stage.static_labels {
     values = { tenant = "platform" }
   }
-  stage.match {
-    selector = `{namespace=~"rbr-.+"}`
-    stage.static_labels {
-      values = { tenant = "rbr" }
-    }
-  }
+  // >>> per-tenant: alloy-events-tenant (generated, see scripts/render-tenant-telemetry.py)
+  // <<< per-tenant
 
-  // The event body is logfmt; promote the low-cardinality fields to labels. Without this
-  // parse the stage.labels below has nothing to read (the previous config mapped keys that
-  // were never extracted, so events carried no kind/reason/type labels at all).
+  // The event body is logfmt; promote the low-cardinality fields to labels.
   stage.logfmt {
     mapping = {
       "reason" = "",

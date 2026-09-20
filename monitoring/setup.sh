@@ -110,9 +110,16 @@ for region in "${REGIONS[@]}"; do
     fi
 
     echo "📊 Applying Prometheus CR with remoteWrite → Mimir for '${region}'..."
+    # The per-tenant remoteWrite blocks are generated from the Capsule Tenants (bd3d.7);
+    # REGION/MIMIR_PUSH_URL are still envsubst.
+    PROM_CR_RENDERED="$(MIMIR_PUSH_URL="${MIMIR_PUSH_URL}" python3 \
+        "${GIT_REPO_ROOT}/scripts/render-tenant-telemetry.py" \
+        --tenants-from-cluster --context "${CONTEXT_NAME}" --arg "${MIMIR_PUSH_URL}" \
+        --out-dir "${GIT_REPO_ROOT}/k8s/rendered/tenant-telemetry" \
+        "${GIT_REPO_ROOT}/monitoring/prometheus-instance/prometheus-cr.yaml.tpl")"
     REGION="${region}" MIMIR_PUSH_URL="${MIMIR_PUSH_URL}" \
         envsubst '${REGION} ${MIMIR_PUSH_URL}' \
-        < "${GIT_REPO_ROOT}/monitoring/prometheus-instance/prometheus-cr.yaml.tpl" \
+        < "${PROM_CR_RENDERED}" \
         | kubectl --context "${CONTEXT_NAME}" apply --force-conflicts --server-side -f -
 
     # --- Tempo: hub install (first region only) ---
@@ -171,7 +178,7 @@ for region in "${REGIONS[@]}"; do
         helm_upgrade_install otel-collector \
             oci://ghcr.io/open-telemetry/opentelemetry-helm-charts/opentelemetry-collector \
             otel "${CONTEXT_NAME}" "${OTEL_COLLECTOR_CHART_VERSION}" \
-            --values "${GIT_REPO_ROOT}/monitoring/otel-collector/otel-collector-values.yaml" \
+            --values "$(render_tenant_file "${CONTEXT_NAME}" monitoring/otel-collector/otel-collector-values.yaml.tpl "${TEMPO_OTLP_ENDPOINT:-tempo-distributor.tempo.svc.cluster.local:4317}")" \
             --set "image.tag=${OTEL_COLLECTOR_IMAGE_TAG}"
 
         kubectl --context "${CONTEXT_NAME}" -n otel rollout status deploy/otel-collector-opentelemetry-collector \
@@ -241,6 +248,12 @@ for region in "${REGIONS[@]}"; do
     kubectl kustomize ${GIT_REPO_ROOT}/monitoring/grafana/ | \
       kubectl --context ${CONTEXT_NAME} apply -f -
 
+    # Platform datasources whose X-Scope-OrgID lists every Capsule tenant (bd3d.7).
+    for _ds in loki tempo mimir_tempo; do
+        kubectl --context "${CONTEXT_NAME}" apply -f \
+            "$(render_tenant_file "${CONTEXT_NAME}" "monitoring/grafana/grafana_datasource_${_ds}.yaml.tpl")"
+    done
+
     # --- Loki + Alloy (pgaudit log aggregation) ---
     echo "📊 Wiring SeaweedFS into grafana namespace for Loki..."
     SEAWEEDFS_IP=$(${CONTAINER_PROVIDER} inspect "${SEAWEEDFS_CONTAINER_NAME}" \
@@ -298,7 +311,7 @@ EOF
         grafana "${CONTEXT_NAME}" "${ALLOY_CHART_VERSION}" \
         --repo-url https://grafana.github.io/helm-charts \
         --values "${GIT_REPO_ROOT}/monitoring/alloy/alloy-values.yaml" \
-        --set-file "alloy.configMap.content=${GIT_REPO_ROOT}/monitoring/alloy/alloy-config.river"
+        --set-file "alloy.configMap.content=$(render_tenant_file "${CONTEXT_NAME}" monitoring/alloy/alloy-config.river.tpl)"
 
 # Restart the operator
 if kubectl get ns cnpg-system &> /dev/null; then
@@ -328,7 +341,12 @@ fi
     fi
 
     if kubectl --context "${CONTEXT_NAME}" get namespace calico-system &>/dev/null; then
-        echo "📊 Applying Calico metrics services and monitors..."
+        # Traefik metrics ServiceMonitor: kept out of the chart so its per-tenant relabelings
+    # can be regenerated without re-running the chart's install flags (bd3d.7).
+    kubectl --context "${CONTEXT_NAME}" apply -f \
+        "$(render_tenant_file "${CONTEXT_NAME}" monitoring/platform/traefik-servicemonitor.yaml.tpl)"
+
+    echo "📊 Applying Calico metrics services and monitors..."
         kubectl --context "${CONTEXT_NAME}" apply \
             -f "${GIT_REPO_ROOT}/monitoring/platform/calico-metrics-services.yaml" \
             -f "${GIT_REPO_ROOT}/monitoring/platform/calico-servicemonitors.yaml" \

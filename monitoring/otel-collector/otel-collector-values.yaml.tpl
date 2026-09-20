@@ -81,19 +81,11 @@ config:
     routing:
       default_pipelines: [traces/platform]
       table:
-        - condition: resource.attributes["capsule.tenant"] == "rbr"
-          pipelines: [traces/rbr]
-        # Traefik spans all carry the platform pod's resource, so tenancy has to come from
-        # the span: the Router/Service spans (traceVerbosity detailed) name the router as
-        # "<namespace>-<ingressroute>-<hash>@kubernetescrd". Capsule forces the tenant
-        # prefix on its namespaces, so an ANCHORED match identifies the tenant. Anchoring
-        # matters: the tenant's Grafana route is "grafana-grafana-rbr-ver-..." and is
-        # platform-hosted, so an unanchored "rbr" would misfile it (bd3d.10).
-        # Move semantics: the platform Grafana still sees these via its "platform|rbr"
-        # datasources, while the entrypoint span stays platform-only.
-        - context: span
-          condition: IsMatch(attributes["traefik.router.name"], "^rbr-") or IsMatch(attributes["traefik.service.name"], "^rbr-")
-          pipelines: [traces/rbr]
+        # Per tenant: spans from the tenant's namespaces (k8s_attributes sets
+        # capsule.tenant), plus Traefik's Router/Service spans, which carry the platform
+        # pod's resource and are matched on the ANCHORED router/service name instead.
+        # >>> per-tenant: otel-routing-table (generated, see scripts/render-tenant-telemetry.py)
+        # <<< per-tenant
 
   exporters:
     otlp/platform:
@@ -102,12 +94,8 @@ config:
         X-Scope-OrgID: platform
       tls:
         insecure: true
-    otlp/rbr:
-      endpoint: tempo-distributor.tempo.svc.cluster.local:4317
-      headers:
-        X-Scope-OrgID: rbr
-      tls:
-        insecure: true
+    # >>> per-tenant: otel-exporters (generated, see scripts/render-tenant-telemetry.py)
+    # <<< per-tenant
     otlphttp/logs:
       endpoint: http://loki.grafana.svc.cluster.local:3100/otlp
       # Loki runs with auth_enabled; OTLP logs arrive from platform components.
@@ -127,9 +115,8 @@ config:
       traces/platform:
         receivers: [routing]
         exporters: [otlp/platform]
-      traces/rbr:
-        receivers: [routing]
-        exporters: [otlp/rbr]
+      # >>> per-tenant: otel-pipelines (generated, see scripts/render-tenant-telemetry.py)
+      # <<< per-tenant
       logs:
         receivers: [otlp]
         processors: [memory_limiter, batch]

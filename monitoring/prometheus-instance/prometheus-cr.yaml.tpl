@@ -25,16 +25,7 @@ spec:
         - sourceLabels: [__name__]
           regex: '(up|scrape_.*|kube_.*|node_.*|kubelet_.*|apiserver_.*|cnpg_.*|pg_.*|traefik_.*)'
           action: keep
-    # Capsule tenant rbr: its namespaces' series only, into Mimir org "rbr" (the tenant
-    # Grafana datasource reads that org). Capsule forces the rbr- prefix on the tenant.
-    - url: ${MIMIR_PUSH_URL}
-      headers:
-        X-Scope-OrgID: rbr
-      writeRelabelConfigs:
-        # Either the series comes from a tenant namespace, or it is a Traefik series the
-        # ServiceMonitor tagged tenant="rbr" (those live in namespace "traefik", bd3d.10).
-        # One keep with a combined regex: separate keeps would AND, not OR.
-        - sourceLabels: [namespace, tenant]
-          separator: ';'
-          regex: '(rbr-.+;.*|.*;rbr)'
-          action: keep
+    # Per-tenant remoteWrite: each Capsule tenant's series into its own Mimir org (the
+    # tenant's Grafana datasource reads that org). Generated — do not name a tenant here.
+    # >>> per-tenant: prometheus-remote-write (generated, see scripts/render-tenant-telemetry.py)
+    # <<< per-tenant
