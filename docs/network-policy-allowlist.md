@@ -59,6 +59,22 @@ Goldmane keeps about an hour, in 15 s buckets: query windows that start after th
 Changing the allow-list: `stage`, drive the affected path (UI via Traefik, Grafana queries,
 `demo/self-service-setup.sh verify|backup|rotate app local`), check `pending` is empty, `enforce`.
 
+## Verified on a from-scratch rebuild (2026-09-20)
+
+`teardown.sh local` + `setup.sh local --with-tenant` (policies enforced before monitoring and
+the tenant install) finished with exit 0 and every pod Ready, all five ArgoCD apps
+Synced/Healthy, the CNPG cluster healthy at 3/3, and every Traefik route answering. Through
+Grafana: 85 scrape targets up, Loki labels, 11 span-metric series, Tempo traces from demo-app
+and traefik-edge. The only flow the dataplane dropped was the probe — a tenant pod calling
+`loki.grafana.svc:3100` with `X-Scope-OrgID: platform`, which returned HTTP 200 before this
+change and now times out.
+
+Unrelated to the policies, two things surfaced in that rebuild and are worth knowing:
+the tenant Grafana datasources/dashboards are created before the Grafana CR exists, so they
+sit at `NoMatchingInstance` until the operator's next resync (an annotation touch forces it);
+and the Grafana MCP holds the token it resolved at launch, so it needs a reconnect after a
+cluster rebuild.
+
 ## Findings from building it
 
 - **Host → local pod is not policed.** Kubelet probes (source = node IP) pass regardless; the
