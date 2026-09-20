@@ -82,6 +82,30 @@ for region in "${REGIONS[@]}"; do
         kubectl --context "${CONTEXT_NAME}" delete grafana grafana -n default --ignore-not-found
         kubectl kustomize "${GIT_REPO_ROOT}/monitoring/grafana/" | \
             kubectl --context "${CONTEXT_NAME}" delete --ignore-not-found -f -
+
+        # Delete BY KIND, not just what kustomize knows about. Tenant onboarding
+        # creates its own Grafana CRs through ArgoCD (loki-rbr-ver,
+        # traefik-traces-rbr-ver, ...) which the kustomize delete above never
+        # touches, so on a --with-tenant cluster they survive to wedge the
+        # namespace below.
+        for _kind in grafanadashboards grafanadatasources grafanafolders grafanas; do
+            kubectl --context "${CONTEXT_NAME}" -n grafana \
+                delete "${_kind}.grafana.integreatly.org" --all --ignore-not-found --timeout=60s || true
+        done
+
+        # Every one of these carries operator.grafana.com/finalizer, which ONLY
+        # the Grafana Operator clears. Uninstalling the operator while any
+        # remain strands them, and `delete namespace grafana` then hangs in
+        # Terminating forever. Clear anything still left before the operator
+        # goes away.
+        for _kind in grafanadashboards grafanadatasources grafanafolders grafanas; do
+            for _obj in $(kubectl --context "${CONTEXT_NAME}" -n grafana \
+                            get "${_kind}.grafana.integreatly.org" -o name 2>/dev/null); do
+                echo "  ⚠️  ${_obj} survived delete — clearing its finalizer"
+                kubectl --context "${CONTEXT_NAME}" -n grafana patch "${_obj}" \
+                    --type=merge -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
+            done
+        done
     else
         echo "  ℹ️  Grafana CRDs absent — skipping CR delete (namespace deletion will clean up)"
     fi
