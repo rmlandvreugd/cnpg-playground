@@ -757,9 +757,12 @@ ${STEP_CA_INT_CERT}" \
     echo "🔧 Installing Traefik ${TRAEFIK_CHART_VERSION} (chart) in '${K8S_CLUSTER_NAME}'..."
     if [[ "${region}" == "${HUB_REGION}" ]]; then
         # Hub: wire gRPC tracing to in-cluster OTel Collector (may not exist yet; Traefik retries)
+        # :4319 is the collector's plaintext in-cluster receiver. :4317 is mTLS
+        # (client_ca_file) and Traefik sends plaintext without a client certificate, so
+        # spans were silently dropped and Tempo held no traefik-local traces (bd3d.10).
         TRACING_SET_ARGS=(
             --set "tracing.otlp.grpc.enabled=true"
-            --set "tracing.otlp.grpc.endpoint=otel-collector-opentelemetry-collector.otel.svc.cluster.local:4317"
+            --set "tracing.otlp.grpc.endpoint=otel-collector-opentelemetry-collector.otel.svc.cluster.local:4319"
             --set "tracing.otlp.grpc.insecure=true"
         )
     else

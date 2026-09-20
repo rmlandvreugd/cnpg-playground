@@ -23,7 +23,7 @@ spec:
         X-Scope-OrgID: ${REGION}
       writeRelabelConfigs:
         - sourceLabels: [__name__]
-          regex: '(up|scrape_.*|kube_.*|node_.*|kubelet_.*|apiserver_.*|cnpg_.*|pg_.*)'
+          regex: '(up|scrape_.*|kube_.*|node_.*|kubelet_.*|apiserver_.*|cnpg_.*|pg_.*|traefik_.*)'
           action: keep
     # Capsule tenant rbr: its namespaces' series only, into Mimir org "rbr" (the tenant
     # Grafana datasource reads that org). Capsule forces the rbr- prefix on the tenant.
@@ -31,6 +31,10 @@ spec:
       headers:
         X-Scope-OrgID: rbr
       writeRelabelConfigs:
-        - sourceLabels: [namespace]
-          regex: 'rbr-.+'
+        # Either the series comes from a tenant namespace, or it is a Traefik series the
+        # ServiceMonitor tagged tenant="rbr" (those live in namespace "traefik", bd3d.10).
+        # One keep with a combined regex: separate keeps would AND, not OR.
+        - sourceLabels: [namespace, tenant]
+          separator: ';'
+          regex: '(rbr-.+;.*|.*;rbr)'
           action: keep
