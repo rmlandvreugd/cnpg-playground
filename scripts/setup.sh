@@ -216,8 +216,11 @@ for region in "${REGIONS[@]}"; do
 
     echo "🛠️  Installing Calico CNI (tigera-operator ${TIGERA_OPERATOR_CHART_VERSION} with v1 CRDs) in '${K8S_CLUSTER_NAME}'..."
     kubectl create namespace tigera-operator --context "$(get_cluster_context "${region}")"
-    # helm template calico-crds projectcalico.org.v3 --version ${TIGERA_OPERATOR_CHART_VERSION} --repo https://docs.tigera.io/calico/charts | kubectl apply --context "$(get_cluster_context "${region}")" --server-side -f -
-    helm template calico-crds crd.projectcalico.org.v1 --version ${TIGERA_OPERATOR_CHART_VERSION} --repo https://docs.tigera.io/calico/charts | kubectl apply --context "$(get_cluster_context "${region}")" --server-side -f -
+    # helm_repo_ref instead of `--repo <url>`: on helm >= 4 that flag fails the
+    # whole call when *any* unrelated registered repo has no cached index. See
+    # scripts/common.sh.
+    # helm template calico-crds "$(helm_repo_ref https://docs.tigera.io/calico/charts projectcalico.org.v3)" --version ${TIGERA_OPERATOR_CHART_VERSION} | kubectl apply --context "$(get_cluster_context "${region}")" --server-side -f -
+    helm template calico-crds "$(helm_repo_ref https://docs.tigera.io/calico/charts crd.projectcalico.org.v1)" --version ${TIGERA_OPERATOR_CHART_VERSION} | kubectl apply --context "$(get_cluster_context "${region}")" --server-side -f -
     helm_upgrade_install tigera-operator tigera-operator tigera-operator "$(get_cluster_context "${region}")" \
         "${TIGERA_OPERATOR_CHART_VERSION}" \
         --repo-url https://docs.tigera.io/calico/charts \
