@@ -80,6 +80,15 @@ def otel_routing_table(tenants: list[str], _: str) -> list[str]:
     """Route spans to a tenant's Tempo org either by the source pod's Capsule tenant
     (k8s_attributes) or, for Traefik, by the anchored router/service span attribute —
     every Traefik span carries the platform pod's resource."""
+    if not tenants:
+        # No tenant yet (monitoring/setup.sh runs before onboarding): everything is
+        # platform. The table cannot be left empty — the routing connector refuses to
+        # start on one ("invalid routing table: the routing table is empty") and the
+        # collector crash-loops — so state the platform case explicitly.
+        return [
+            "- condition: 'true'",
+            "  pipelines: [traces/platform]",
+        ]
     out: list[str] = []
     for t in tenants:
         out += [
