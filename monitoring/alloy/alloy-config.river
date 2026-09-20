@@ -228,16 +228,35 @@ loki.source.kubernetes_events "k8s_events" {
 }
 
 loki.process "events" {
-  // Events have no namespace metadata to derive a Capsule tenant from.
+  // loki.source.kubernetes_events already labels each entry with the involved object's
+  // namespace, so the Capsule tenant comes from an anchored namespace match — the same rule
+  // the pod-log and Traefik pipelines use (bd3d.5). Everything else stays platform, so
+  // cluster-scoped and platform-namespace events never reach a tenant.
   stage.static_labels {
     values = { tenant = "platform" }
   }
+  stage.match {
+    selector = `{namespace=~"rbr-.+"}`
+    stage.static_labels {
+      values = { tenant = "rbr" }
+    }
+  }
+
+  // The event body is logfmt; promote the low-cardinality fields to labels. Without this
+  // parse the stage.labels below has nothing to read (the previous config mapped keys that
+  // were never extracted, so events carried no kind/reason/type labels at all).
+  stage.logfmt {
+    mapping = {
+      "reason" = "",
+      "type"   = "",
+      "kind"   = "",
+    }
+  }
   stage.labels {
     values = {
-      "namespace" = "namespace",
-      "reason"    = "reason",
-      "type"      = "type",
-      "kind"      = "kind",
+      "reason" = "reason",
+      "type"   = "type",
+      "kind"   = "kind",
     }
   }
   forward_to = [loki.process.tenant.receiver]
