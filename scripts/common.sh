@@ -233,6 +233,25 @@ RELOADER_CHART_VERSION="${RELOADER_CHART_VERSION:-2.2.17}"
 # version; the operator image is appVersion 1.0.39. The chart has templated the
 # Seaweed CRD since 0.1.15, so crds.create (default true) installs it.
 SEAWEEDFS_OPERATOR_CHART_VERSION="${SEAWEEDFS_OPERATOR_CHART_VERSION:-0.1.42}"
+# seaweedfs-ab: the in-cluster SeaweedFS behind Loki-B in the A/B/C storage PoC
+# (monitoring layer, grafana namespace — see bead cnpg-playground-8ti). Distinct
+# from the HOST SeaweedFS container above, which backs Loki-C.
+SEAWEEDFS_AB_IMAGE="${SEAWEEDFS_AB_IMAGE:-chrislusf/seaweedfs:4.47}"
+SEAWEEDFS_AB_VOLUME_SIZE="${SEAWEEDFS_AB_VOLUME_SIZE:-20Gi}"
+# filer.backup seeding. Default is an explicit no-op: -initialSnapshot re-walks
+# the whole tree AND overwrites the saved checkpoint on every start, so leaving
+# it on would make each monitoring/setup.sh re-run re-copy everything. Set it to
+# -initialSnapshot only to re-seed an emptied mirror from a populated source.
+SEAWEEDFS_AB_INITIAL_SNAPSHOT="${SEAWEEDFS_AB_INITIAL_SNAPSHOT:--debug=false}"
+SEAWEEDFS_AB_S3_ACCESS_KEY="${SEAWEEDFS_AB_S3_ACCESS_KEY:-loki}"
+SEAWEEDFS_AB_S3_SECRET_KEY="${SEAWEEDFS_AB_S3_SECRET_KEY:-lokiABsecret}"
+SEAWEEDFS_AB_S3_ADMIN_ACCESS_KEY="${SEAWEEDFS_AB_S3_ADMIN_ACCESS_KEY:-abadmin}"
+SEAWEEDFS_AB_S3_ADMIN_SECRET_KEY="${SEAWEEDFS_AB_S3_ADMIN_SECRET_KEY:-abAdminSecret}"
+# RustFS sink for the filer.backup mirror. Credentials are the RustFS root user
+# for now; bead cnpg-playground-dfe narrows this to a dedicated IAM user.
+RUSTFS_LOKI_MIRROR_BUCKET="${RUSTFS_LOKI_MIRROR_BUCKET:-loki-mirror}"
+RUSTFS_LOKI_MIRROR_ACCESS_KEY="${RUSTFS_LOKI_MIRROR_ACCESS_KEY:-${RUSTFS_ROOT_USER}}"
+RUSTFS_LOKI_MIRROR_SECRET_KEY="${RUSTFS_LOKI_MIRROR_SECRET_KEY:-${RUSTFS_ROOT_PASSWORD}}"
 
 # Capsule + capsule-proxy + gangplank
 CAPSULE_CHART_VERSION="${CAPSULE_CHART_VERSION:-0.14.6}"

@@ -353,7 +353,7 @@ EOF
 basicConstraints=CA:FALSE
 keyUsage=critical,digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth,clientAuth
-subjectAltName=DNS:${RUSTFS_CONTAINER_NAME},DNS:${RUSTFS_CONTAINER_NAME}.cnpg-system.svc.cluster.local,DNS:${RUSTFS_CONTAINER_NAME}.mimir.svc.cluster.local,DNS:${RUSTFS_CONTAINER_NAME}.tempo.svc.cluster.local,IP:${OBJECTSTORE_IP}
+subjectAltName=DNS:${RUSTFS_CONTAINER_NAME},DNS:${RUSTFS_CONTAINER_NAME}.cnpg-system.svc.cluster.local,DNS:${RUSTFS_CONTAINER_NAME}.mimir.svc.cluster.local,DNS:${RUSTFS_CONTAINER_NAME}.tempo.svc.cluster.local,DNS:${RUSTFS_CONTAINER_NAME}.grafana.svc.cluster.local,IP:${OBJECTSTORE_IP}
 EOF
 
     RUSTFS_CSR_TMP=$(mktemp)
