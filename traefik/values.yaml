@@ -60,24 +60,12 @@ metrics:
     addEntryPointsLabels: true
     service:
       enabled: true
+    # The ServiceMonitor is NOT rendered by the chart: its per-tenant relabelings are
+    # generated from the Capsule Tenants and applied separately, so onboarding a tenant
+    # does not require re-running this chart with its install-time --set flags (bd3d.7).
+    # See monitoring/platform/traefik-servicemonitor.yaml.tpl.
     serviceMonitor:
-      enabled: true
-      # Traefik's own "service" label collides with the ServiceMonitor's target label, so
-      # Prometheus renames it to exported_service; the router label has no collision.
-      # Default everything to platform, then promote the anchored tenant prefix. Anchoring
-      # keeps the platform-hosted tenant Grafana route (grafana-grafana-rbr-ver-...)
-      # on the platform side. Entry-point-level series carry neither label and stay platform.
-      metricRelabelings:
-        - targetLabel: tenant
-          replacement: platform
-        - sourceLabels: [exported_service]
-          regex: 'rbr-.+'
-          targetLabel: tenant
-          replacement: rbr
-        - sourceLabels: [router]
-          regex: 'rbr-.+'
-          targetLabel: tenant
-          replacement: rbr
+      enabled: false
 
 additionalArguments:
   - "--global.checknewversion=false"

@@ -289,6 +289,15 @@ EOF
         "${GIT_REPO_ROOT}/scripts/netpol.sh" enforce "${MODE}"
     fi
 
+    # --- Per-tenant telemetry routing (bd3d.7) ---
+    # The platform's observability config names no tenant: Prometheus remoteWrite, the
+    # platform Grafana datasource headers, the otel-collector trace routing, the Alloy log
+    # pipelines and the Traefik ServiceMonitor are generated from the Capsule Tenants.
+    # monitoring/setup.sh ran before this tenant existed, so re-render now.
+    if kubectl get ns otel --context "${LOCAL_CONTEXT}" &>/dev/null; then
+        "${GIT_REPO_ROOT}/scripts/tenant-telemetry.sh" apply "${MODE}"
+    fi
+
     # --- ExternalSecrets ---
     echo "📋 Applying ExternalSecrets..."
     for es in superuser app readonly; do

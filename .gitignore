@@ -76,3 +76,6 @@ graphify-out
 __pycache__/
 *.pyc
 *.pyo
+
+# Rendered per-tenant telemetry config (scripts/tenant-telemetry.sh, bd3d.7)
+k8s/rendered/

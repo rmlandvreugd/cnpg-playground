@@ -556,3 +556,14 @@ install_barman_plugin() {
           --set certificate.createServerCertificate=false
     fi
 }
+
+# Render one per-tenant telemetry template (bead bd3d.7) and echo the rendered path.
+# The ">>> per-tenant" blocks are filled from the live Capsule Tenants, so no platform
+# file names a tenant. $1 kube context, $2 repo-relative template, $3 optional block arg.
+render_tenant_file() {
+    local context="$1" tpl="$2" arg="${3:-}"
+    python3 "${GIT_REPO_ROOT}/scripts/render-tenant-telemetry.py" \
+        --tenants-from-cluster --context "${context}" --arg "${arg}" \
+        --out-dir "${GIT_REPO_ROOT}/k8s/rendered/tenant-telemetry" \
+        "${GIT_REPO_ROOT}/${tpl}"
+}
