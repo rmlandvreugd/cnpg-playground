@@ -1186,7 +1186,8 @@ ${CONTAINER_PROVIDER} run \
         -s3.cert.file=/etc/seaweedfs/tls/seaweedfs_cert.pem \
         -s3.key.file=/etc/seaweedfs/tls/seaweedfs_key.pem \
         -s3.config=/etc/seaweedfs/identities.json \
-        -s3.iam.config=/etc/seaweedfs/iam.json
+        -s3.iam.config=/etc/seaweedfs/iam.json \
+        -metricsPort="${SEAWEEDFS_METRICS_PORT}"
 ${CONTAINER_PROVIDER} network connect kind "${SEAWEEDFS_CONTAINER_NAME}"
 echo "✅ SeaweedFS S3 OIDC/STS wired (clientId seaweedfs-s3, issuer ${AUTHELIA_ISSUER})"
 

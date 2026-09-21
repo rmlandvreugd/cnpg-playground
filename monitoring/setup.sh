@@ -537,6 +537,32 @@ fi
     kubectl --context "${CONTEXT_NAME}" apply \
         -f "${GIT_REPO_ROOT}/monitoring/platform/zot-servicemonitor.yaml"
 
+    # Host SeaweedFS metrics (arm C's store) + its maintenance worker. Static
+    # targets on the kind bridge, so the container IPs are resolved at apply time.
+    echo "📊 Applying host SeaweedFS ServiceMonitors (arm C store)..."
+    SEAWEEDFS_IP=$(${CONTAINER_PROVIDER} inspect "${SEAWEEDFS_CONTAINER_NAME}" \
+        --format '{{.NetworkSettings.Networks.kind.IPAddress}}' 2>/dev/null || echo "")
+    SEAWEEDFS_WORKER_IP=$(${CONTAINER_PROVIDER} inspect "${SEAWEEDFS_WORKER_CONTAINER_NAME}" \
+        --format '{{.NetworkSettings.Networks.kind.IPAddress}}' 2>/dev/null || echo "")
+    if [[ -n "${SEAWEEDFS_IP}" && -n "${SEAWEEDFS_WORKER_IP}" ]]; then
+        SEAWEEDFS_IP="${SEAWEEDFS_IP}" SEAWEEDFS_WORKER_IP="${SEAWEEDFS_WORKER_IP}" \
+        SEAWEEDFS_METRICS_PORT="${SEAWEEDFS_METRICS_PORT}" \
+        SEAWEEDFS_WORKER_METRICS_PORT="${SEAWEEDFS_WORKER_METRICS_PORT}" \
+        envsubst '${SEAWEEDFS_IP} ${SEAWEEDFS_WORKER_IP} ${SEAWEEDFS_METRICS_PORT} ${SEAWEEDFS_WORKER_METRICS_PORT}' \
+            < "${GIT_REPO_ROOT}/monitoring/platform/seaweedfs-host-servicemonitor.yaml.tpl" \
+            | kubectl --context "${CONTEXT_NAME}" apply -f -
+    else
+        echo "  ⚠️  host SeaweedFS container(s) not found — skipping arm C store metrics"
+    fi
+
+    # NOTE: arm B needs NO ServiceMonitor here. seaweedfs-operator creates one
+    # per component (master/volume/filer/s3, ownerReferences: Seaweed) as soon as
+    # a metricsPort is set on the CR. Adding our own selected the same Services
+    # and produced a second scrape of the same endpoints under an IDENTICAL job
+    # label — duplicate samples at the same timestamp, which a
+    # `count by (job, service)` check cannot even see. Setting metricsPort in
+    # monitoring/seaweedfs-ab/seaweed.yaml.tpl is the whole job.
+
     # Wire revocation-exporter (host container) into monitoring namespace — hub only
     if [[ "${region}" == "${HUB_REGION}" ]]; then
         echo "🔍 Wiring revocation exporter into monitoring namespace..."

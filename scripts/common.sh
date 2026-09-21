@@ -95,6 +95,10 @@ SEAWEEDFS_ADMIN_CONTAINER_NAME="${SEAWEEDFS_ADMIN_CONTAINER_NAME:-seaweedfs-admi
 SEAWEEDFS_WEBDAV_PORT="${SEAWEEDFS_WEBDAV_PORT:-7333}"              # WebDAV HTTPS (-cert.file/-key.file on same port)
 SEAWEEDFS_WEBDAV_CONTAINER_NAME="${SEAWEEDFS_WEBDAV_CONTAINER_NAME:-seaweedfs-webdav}"
 SEAWEEDFS_WORKER_METRICS_PORT="${SEAWEEDFS_WORKER_METRICS_PORT:-9327}"  # Worker Prometheus metrics
+# `weed server` serves /metrics only when -metricsPort is set. Without it arm C of
+# the storage PoC has container CPU/mem but nothing from the store itself, so the
+# A/B/C comparison would be store-side blind on the control arm.
+SEAWEEDFS_METRICS_PORT="${SEAWEEDFS_METRICS_PORT:-9324}"                # weed server Prometheus metrics
 SEAWEEDFS_WORKER_CONTAINER_NAME="${SEAWEEDFS_WORKER_CONTAINER_NAME:-seaweedfs-worker}"
 # Static S3 identities (-s3.config / identities.json). Machine creds — humans use OIDC/STS (-s3.iam.config).
 # loki: RW on the 'loki' bucket only (keeps Loki working; blanket Admin dropped — see SEAWEEDFS_ADMIN_* for bootstrap).
