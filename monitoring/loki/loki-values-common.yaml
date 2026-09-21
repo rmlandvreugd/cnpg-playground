@@ -1,0 +1,135 @@
+# Settings shared by ALL THREE Loki arms of the storage PoC (bead t9p7).
+#
+# This file exists so the arms cannot drift. The PoC compares object stores, so
+# every arm must be identical in retention, limits, ingester behaviour, resources
+# and scheduling — anything that differs here would show up as a storage result
+# and quietly invalidate the benchmark. Each arm's own values file carries ONLY
+# its bucket, endpoint and credentials Secret.
+#
+# Applied as the FIRST -f, with the per-arm file second:
+#   helm ... -f loki-values-common.yaml -f loki-values-<arm>.yaml
+---
+loki:
+  # Per-tenant isolation: writers set X-Scope-OrgID from the Capsule tenant label of
+  # the source namespace ('platform' otherwise); tenant Grafana queries only its own.
+  auth_enabled: true
+  querier:
+    # Platform Grafana reads 'platform|<tenant>...' in one query.
+    multi_tenant_queries_enabled: true
+  commonConfig:
+    replication_factor: 1
+
+  schemaConfig:
+    configs:
+      - from: "2024-01-01"
+        store: tsdb
+        object_store: s3
+        schema: v13
+        index:
+          prefix: loki_index_
+          period: 24h
+
+  limits_config:
+    allow_structured_metadata: true
+    # 24h so the >=26h soak in bead t9p7.3 actually observes retention deletes
+    # reaching each bucket. Was 3d, which no realistic soak would ever trigger.
+    retention_period: 24h
+    ingestion_rate_mb: 32
+    ingestion_burst_size_mb: 64
+    otlp_config:
+      resource_attributes:
+        attributes_config:
+          - action: index_label
+            attributes:
+              - service.name
+              - host.name
+
+  # Retention is what makes the delete path measurable per arm. Without
+  # retention_enabled the compactor only compacts and nothing is ever deleted
+  # from the object store, so the mirror-delete and retention checks cannot run.
+  compactor:
+    working_directory: /var/loki/compactor
+    retention_enabled: true
+    # Where delete requests are persisted. Must be the object store, not the
+    # (ephemeral) filesystem, or queued deletes are lost on restart.
+    delete_request_store: s3
+    retention_delete_delay: 2h
+    compaction_interval: 10m
+
+  storage_config:
+    # Hedging re-issues slow object-store reads, which is exactly the latency
+    # signal this PoC is trying to MEASURE — leaving the chart default (250ms,
+    # up_to 3) would mask per-store tail latency behind retries. at: 0s disables.
+    hedging:
+      at: "0s"
+      up_to: 1
+      max_per_second: 0
+
+singleBinary:
+  replicas: 1
+  nodeSelector:
+    node-role.kubernetes.io/infra: ""
+  tolerations:
+    - key: node-role.kubernetes.io/infra
+      operator: Exists
+      effect: NoSchedule
+  persistence:
+    enabled: true
+    # StorageClass 'standard' (local-path) has allowVolumeExpansion unset, so a
+    # PVC cannot be grown later — size it for the full soak up front.
+    size: 20Gi
+  podAnnotations:
+    # Rotating an S3 credential Secret must actually restart the pod; without
+    # Reloader installed (bead eff0) this annotation is inert.
+    reloader.stakater.com/auto: "true"
+  extraArgs:
+    # Lets the rendered config reference ${S3_ACCESS_KEY_ID} /
+    # ${S3_SECRET_ACCESS_KEY} from the Secret below instead of baking the
+    # secret into the ConfigMap. Without this the literals are written to
+    # ConfigMap 'loki' in PLAINTEXT, which is what the live cluster was doing.
+    - -config.expand-env=true
+  extraVolumes:
+    - name: step-ca-bundle
+      configMap:
+        name: step-ca-external-bundle
+  extraVolumeMounts:
+    - name: step-ca-bundle
+      mountPath: /etc/ssl/step-ca
+      readOnly: true
+
+# Distributed-mode components off — single binary only.
+backend:
+  replicas: 0
+read:
+  replicas: 0
+write:
+  replicas: 0
+
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
+minio:
+  enabled: false
+
+# TOP-LEVEL key. monitoring.lokiCanary is dead config in chart 13.x: setting it
+# there leaves lokiCanary.enabled at its chart default of true, which is why the
+# live cluster was running a 4-pod loki-canary DaemonSet writing ~9% of Loki-C's
+# bytes — pure noise in a storage benchmark.
+lokiCanary:
+  enabled: false
+
+monitoring:
+  selfMonitoring:
+    enabled: false
+    grafanaAgent:
+      installOperator: false
+  # Needed for the per-arm comparison: loki_s3_request_duration_seconds and the
+  # rest only reach Mimir if each release is scraped.
+  serviceMonitor:
+    enabled: true
+
+test:
+  enabled: false
+gateway:
+  enabled: false

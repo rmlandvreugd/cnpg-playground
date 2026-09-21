@@ -247,11 +247,17 @@ SEAWEEDFS_AB_S3_ACCESS_KEY="${SEAWEEDFS_AB_S3_ACCESS_KEY:-loki}"
 SEAWEEDFS_AB_S3_SECRET_KEY="${SEAWEEDFS_AB_S3_SECRET_KEY:-lokiABsecret}"
 SEAWEEDFS_AB_S3_ADMIN_ACCESS_KEY="${SEAWEEDFS_AB_S3_ADMIN_ACCESS_KEY:-abadmin}"
 SEAWEEDFS_AB_S3_ADMIN_SECRET_KEY="${SEAWEEDFS_AB_S3_ADMIN_SECRET_KEY:-abAdminSecret}"
-# RustFS sink for the filer.backup mirror. Credentials are the RustFS root user
-# for now; bead cnpg-playground-dfe narrows this to a dedicated IAM user.
+# RustFS buckets + per-bucket IAM users for the A/B/C PoC. Each user is scoped
+# to its OWN bucket by an explicit policy, so no RustFS root credential ever
+# reaches a Loki pod or the mirror sidecar. RustFS is alpha but its admin API
+# implements user add / policy create / policy attach, and cross-bucket access
+# is genuinely denied — verified against the live endpoint.
+RUSTFS_LOKI_DIRECT_BUCKET="${RUSTFS_LOKI_DIRECT_BUCKET:-loki-direct}"
+RUSTFS_LOKI_DIRECT_ACCESS_KEY="${RUSTFS_LOKI_DIRECT_ACCESS_KEY:-loki-direct}"
+RUSTFS_LOKI_DIRECT_SECRET_KEY="${RUSTFS_LOKI_DIRECT_SECRET_KEY:-lokiDirectSecret}"
 RUSTFS_LOKI_MIRROR_BUCKET="${RUSTFS_LOKI_MIRROR_BUCKET:-loki-mirror}"
-RUSTFS_LOKI_MIRROR_ACCESS_KEY="${RUSTFS_LOKI_MIRROR_ACCESS_KEY:-${RUSTFS_ROOT_USER}}"
-RUSTFS_LOKI_MIRROR_SECRET_KEY="${RUSTFS_LOKI_MIRROR_SECRET_KEY:-${RUSTFS_ROOT_PASSWORD}}"
+RUSTFS_LOKI_MIRROR_ACCESS_KEY="${RUSTFS_LOKI_MIRROR_ACCESS_KEY:-loki-mirror}"
+RUSTFS_LOKI_MIRROR_SECRET_KEY="${RUSTFS_LOKI_MIRROR_SECRET_KEY:-lokiMirrorSecret}"
 
 # Capsule + capsule-proxy + gangplank
 CAPSULE_CHART_VERSION="${CAPSULE_CHART_VERSION:-0.14.6}"

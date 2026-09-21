@@ -1,0 +1,45 @@
+# Loki-A (release "loki-rustfs") — storage arm A: RustFS directly, no gateway.
+#
+# Layered ON TOP of loki-values-common.yaml, which holds everything the three
+# arms must share. Only storage differs here.
+#
+# Endpoint uses the SHORT name: the RustFS server cert carries
+# DNS:objectstore-local as a bare SAN and does NOT cover
+# objectstore-local.grafana.svc.cluster.local on an existing cluster, so the
+# FQDN would fail verification. (scripts/setup.sh now also mints the .grafana
+# SAN, but only from the next cluster rebuild.)
+---
+# REQUIRED to run more than one Loki release in one namespace. The chart names
+# its generated config ConfigMap from `loki.name`, which defaults to the CHART
+# name, not the release — so every release would try to own a ConfigMap called
+# "loki" and the second install fails with:
+#   ConfigMap "loki" ... cannot be imported into the current release:
+#   annotation validation error: key "meta.helm.sh/release-name" must equal ...
+# It also renames the "<name>-runtime" ConfigMap, which collides the same way.
+# Because this matches the release name, loki.fullname still resolves to
+# "loki-rustfs", so the StatefulSet and Service keep the expected names.
+nameOverride: loki-rustfs
+
+loki:
+  storage:
+    type: s3
+    bucketNames:
+      chunks: loki-direct
+      ruler: loki-direct
+      admin: loki-direct
+    s3:
+      endpoint: https://objectstore-local:9000
+      region: us-east-1
+      # Expanded at runtime from the Secret below via -config.expand-env=true
+      # (set in loki-values-common.yaml) so no credential lands in the ConfigMap.
+      accessKeyId: ${S3_ACCESS_KEY_ID}
+      secretAccessKey: ${S3_SECRET_ACCESS_KEY}
+      s3ForcePathStyle: true
+      insecure: false
+      http_config:
+        ca_file: /etc/ssl/step-ca/ca-certificates.crt
+
+singleBinary:
+  extraEnvFrom:
+    - secretRef:
+        name: loki-rustfs-s3

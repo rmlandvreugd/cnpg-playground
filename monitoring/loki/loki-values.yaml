@@ -1,14 +1,14 @@
-deploymentMode: SingleBinary
-
+# Loki-C (release "loki") — storage arm C, the CONTROL: the host SeaweedFS
+# container. Same software as arm B, same location as arm A, which is what makes
+# it the control for both comparisons.
+#
+# Layered ON TOP of loki-values-common.yaml. Everything that is not storage now
+# lives there, so this arm cannot drift from the other two.
+#
+# NOTE: this release keeps the name "loki" and the bucket "loki" it has always
+# had, so existing datasources and dashboards keep working while the PoC runs.
+---
 loki:
-  # Per-tenant isolation: writers set X-Scope-OrgID from the Capsule tenant label of
-  # the source namespace ('platform' otherwise); tenant Grafana queries only its own.
-  auth_enabled: true
-  querier:
-    # Platform Grafana reads 'platform|<tenant>...' in one query.
-    multi_tenant_queries_enabled: true
-  commonConfig:
-    replication_factor: 1
   storage:
     type: s3
     bucketNames:
@@ -18,81 +18,16 @@ loki:
     s3:
       endpoint: https://seaweedfs.grafana.svc.cluster.local:8333
       region: us-east-1
-      # accessKeyId and secretAccessKey injected via --set from SEAWEEDFS_ACCESS_KEY/SECRET_KEY
+      # Previously injected with --set, which wrote the secret in PLAINTEXT into
+      # ConfigMap 'loki'. Now expanded at runtime from the Secret below.
+      accessKeyId: ${S3_ACCESS_KEY_ID}
+      secretAccessKey: ${S3_SECRET_ACCESS_KEY}
       s3ForcePathStyle: true
       insecure: false
       http_config:
         ca_file: /etc/ssl/step-ca/ca-certificates.crt
-  schemaConfig:
-    configs:
-      - from: "2024-01-01"
-        store: tsdb
-        object_store: s3
-        schema: v13
-        index:
-          prefix: loki_index_
-          period: 24h
-  limits_config:
-    allow_structured_metadata: true
-    retention_period: 3d
-    ingestion_rate_mb: 32
-    ingestion_burst_size_mb: 64
-    otlp_config:
-      resource_attributes:
-        attributes_config:
-          - action: index_label
-            attributes:
-              - service.name
-              - host.name
 
 singleBinary:
-  replicas: 1
-  nodeSelector:
-    node-role.kubernetes.io/infra: ""
-  tolerations:
-    - key: node-role.kubernetes.io/infra
-      operator: Exists
-      effect: NoSchedule
-  persistence:
-    enabled: true
-    size: 20Gi
-  extraVolumes:
-    - name: step-ca-bundle
-      configMap:
-        name: step-ca-external-bundle
-  extraVolumeMounts:
-    - name: step-ca-bundle
-      mountPath: /etc/ssl/step-ca
-      readOnly: true
-
-# Disable distributed-mode components
-backend:
-  replicas: 0
-read:
-  replicas: 0
-write:
-  replicas: 0
-
-# Disable bundled cache/minio
-chunksCache:
-  enabled: false
-resultsCache:
-  enabled: false
-minio:
-  enabled: false
-
-# Disable self-monitoring and canary (require extra dependencies)
-monitoring:
-  selfMonitoring:
-    enabled: false
-    grafanaAgent:
-      installOperator: false
-  lokiCanary:
-    enabled: false
-  serviceMonitor:
-    enabled: false
-
-test:
-  enabled: false
-gateway:
-  enabled: false
+  extraEnvFrom:
+    - secretRef:
+        name: loki-s3

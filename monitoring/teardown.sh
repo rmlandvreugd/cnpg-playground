@@ -48,8 +48,12 @@ for region in "${REGIONS[@]}"; do
     echo "🗑️  Uninstalling Alloy in '${K8S_CLUSTER_NAME}'..."
     helm_uninstall_if_present alloy grafana "${CONTEXT_NAME}"
 
-    echo "🗑️  Uninstalling Loki in '${K8S_CLUSTER_NAME}'..."
+    echo "🗑️  Uninstalling the three Loki storage arms in '${K8S_CLUSTER_NAME}'..."
     helm_uninstall_if_present loki grafana "${CONTEXT_NAME}"
+    helm_uninstall_if_present loki-rustfs grafana "${CONTEXT_NAME}"
+    helm_uninstall_if_present loki-seaweedfs grafana "${CONTEXT_NAME}"
+    kubectl --context "${CONTEXT_NAME}" -n grafana delete secret \
+        loki-s3 loki-rustfs-s3 loki-seaweedfs-s3 --ignore-not-found
 
     # --- seaweedfs-ab (Loki-B storage, bead 8ti) ---
     # The Seaweed CR goes first: deleting it lets the operator tear its

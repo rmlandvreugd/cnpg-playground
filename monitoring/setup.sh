@@ -311,21 +311,38 @@ EOF
         < "${GIT_REPO_ROOT}/monitoring/seaweedfs-ab/objectstore-bridge.yaml.tpl" \
         | kubectl --context "${CONTEXT_NAME}" apply -f -
 
-    echo "🪣 Creating RustFS mirror bucket ${RUSTFS_LOKI_MIRROR_BUCKET}..."
-    kubectl --context "${CONTEXT_NAME}" -n grafana delete pod loki-mirror-bucket-init --ignore-not-found
-    kubectl run loki-mirror-bucket-init --restart=Never \
+    # RustFS buckets + per-bucket IAM users. Each user gets an explicit policy
+    # covering ONLY its own bucket, so neither Loki-A nor the mirror sidecar ever
+    # holds the RustFS root credential.
+    echo "🪣 Creating RustFS buckets + scoped IAM users (loki-direct, loki-mirror)..."
+    kubectl --context "${CONTEXT_NAME}" -n grafana delete pod rustfs-iam-init --ignore-not-found
+    kubectl run rustfs-iam-init --restart=Never \
         --context "${CONTEXT_NAME}" \
         -n grafana \
         --image="${MC_IMAGE}" \
         --pod-running-timeout=180s \
-        --command -- sh -c "mc --insecure alias set store https://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1 \
-            && mc --insecure mb --ignore-existing store/${RUSTFS_LOKI_MIRROR_BUCKET} \
-            && echo '✅ Bucket ${RUSTFS_LOKI_MIRROR_BUCKET} ready'"
-    kubectl --context "${CONTEXT_NAME}" -n grafana wait pod/loki-mirror-bucket-init \
+        --command -- sh -c "set -e
+            mc --insecure alias set store https://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1
+            for b in ${RUSTFS_LOKI_DIRECT_BUCKET} ${RUSTFS_LOKI_MIRROR_BUCKET}; do
+                mc --insecure mb --ignore-existing store/\$b
+            done
+            add_user() {  # <bucket> <access> <secret>
+                cat > /tmp/\$1.json <<POLICY
+{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:*\"],\"Resource\":[\"arn:aws:s3:::\$1\",\"arn:aws:s3:::\$1/*\"]}]}
+POLICY
+                mc --insecure admin policy create store \$1-rw /tmp/\$1.json 2>/dev/null || true
+                mc --insecure admin user add store \$2 \$3 2>/dev/null || true
+                mc --insecure admin policy attach store \$1-rw --user \$2 2>/dev/null || true
+            }
+            add_user ${RUSTFS_LOKI_DIRECT_BUCKET} '${RUSTFS_LOKI_DIRECT_ACCESS_KEY}' '${RUSTFS_LOKI_DIRECT_SECRET_KEY}'
+            add_user ${RUSTFS_LOKI_MIRROR_BUCKET} '${RUSTFS_LOKI_MIRROR_ACCESS_KEY}' '${RUSTFS_LOKI_MIRROR_SECRET_KEY}'
+            mc --insecure admin user list store
+            echo '✅ RustFS buckets + IAM users ready'"
+    kubectl --context "${CONTEXT_NAME}" -n grafana wait pod/rustfs-iam-init \
         --for=jsonpath='{.status.phase}'=Succeeded --timeout=180s \
-        && kubectl --context "${CONTEXT_NAME}" -n grafana logs pod/loki-mirror-bucket-init \
-        || echo "  ⚠️  Mirror bucket init may have failed"
-    kubectl --context "${CONTEXT_NAME}" -n grafana delete pod loki-mirror-bucket-init --ignore-not-found
+        && kubectl --context "${CONTEXT_NAME}" -n grafana logs pod/rustfs-iam-init \
+        || echo "  ⚠️  RustFS bucket/IAM init may have failed"
+    kubectl --context "${CONTEXT_NAME}" -n grafana delete pod rustfs-iam-init --ignore-not-found
 
     # S3 identities for the in-cluster gateway. The secret KEY is also the
     # filename the operator mounts and passes to `weed s3 -config=`.
@@ -359,8 +376,16 @@ EOF
     envsubst '${SEAWEEDFS_AB_IMAGE} ${SEAWEEDFS_AB_VOLUME_SIZE} ${SEAWEEDFS_AB_INITIAL_SNAPSHOT}' \
         < "${GIT_REPO_ROOT}/monitoring/seaweedfs-ab/seaweed.yaml.tpl" \
         | kubectl --context "${CONTEXT_NAME}" apply -f -
-    # The operator brings components up in order (master -> volume/filer -> s3),
-    # so wait on the last one rather than racing the CR's own Ready condition.
+    # The operator brings components up in dependency order (master -> ready ->
+    # volume/filer -> s3), so the s3 Deployment does NOT exist at apply time.
+    # `kubectl rollout status` against a missing Deployment fails immediately
+    # with NotFound instead of waiting, so wait for the object to appear first —
+    # same shape as the calico-node wait in scripts/setup.sh.
+    echo "⏳ Waiting for the operator to create the S3 gateway Deployment..."
+    for _ in $(seq 1 120); do
+        kubectl --context "${CONTEXT_NAME}" -n grafana get deploy seaweedfs-ab-s3 &>/dev/null && break
+        sleep 5
+    done
     kubectl --context "${CONTEXT_NAME}" -n grafana rollout status deploy/seaweedfs-ab-s3 --timeout=600s \
         || echo "  ⚠️  seaweedfs-ab S3 gateway not ready — check: kubectl -n grafana get seaweed seaweedfs-ab -o yaml"
 
@@ -380,12 +405,46 @@ EOF
         || echo "  ⚠️  seaweedfs-ab bucket init may have failed"
     kubectl --context "${CONTEXT_NAME}" -n grafana delete pod seaweedfs-ab-bucket-init --ignore-not-found
 
-    echo "📊 Installing Loki ${LOKI_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
+    # --- The three Loki storage arms (bead dfe) ---
+    # A loki-rustfs      -> RustFS directly           (outside the cluster)
+    # B loki-seaweedfs   -> in-cluster SeaweedFS      (mirrored to RustFS)
+    # C loki             -> host SeaweedFS container  (control)
+    #
+    # Credentials go in a Secret and reach the config as ${S3_*} via
+    # -config.expand-env=true, set in loki-values-common.yaml. Passing them with
+    # --set (as this did before) writes them in PLAINTEXT into the release's
+    # ConfigMap, where `kubectl get cm loki -o yaml` shows the secret key.
+    echo "🔐 Creating per-arm Loki S3 credential Secrets..."
+    create_loki_s3_secret() {  # <secret-name> <access-key> <secret-key>
+        kubectl --context "${CONTEXT_NAME}" -n grafana create secret generic "$1" \
+            --from-literal=S3_ACCESS_KEY_ID="$2" \
+            --from-literal=S3_SECRET_ACCESS_KEY="$3" \
+            --dry-run=client -o yaml | kubectl --context "${CONTEXT_NAME}" apply -f -
+    }
+    create_loki_s3_secret loki-s3            "${SEAWEEDFS_ACCESS_KEY}"            "${SEAWEEDFS_SECRET_KEY}"
+    create_loki_s3_secret loki-rustfs-s3     "${RUSTFS_LOKI_DIRECT_ACCESS_KEY}"   "${RUSTFS_LOKI_DIRECT_SECRET_KEY}"
+    create_loki_s3_secret loki-seaweedfs-s3  "${SEAWEEDFS_AB_S3_ACCESS_KEY}"      "${SEAWEEDFS_AB_S3_SECRET_KEY}"
+
+    # Every arm layers the shared file first so they cannot drift: the PoC
+    # compares object stores, so any non-storage difference would masquerade as
+    # a storage result.
+    echo "📊 Installing Loki-C (control, host SeaweedFS) ${LOKI_CHART_VERSION}..."
     helm_upgrade_install loki oci://ghcr.io/grafana-community/helm-charts/loki \
         grafana "${CONTEXT_NAME}" "${LOKI_CHART_VERSION}" \
-        --values "${GIT_REPO_ROOT}/monitoring/loki/loki-values.yaml" \
-        --set "loki.storage.s3.accessKeyId=${SEAWEEDFS_ACCESS_KEY}" \
-        --set "loki.storage.s3.secretAccessKey=${SEAWEEDFS_SECRET_KEY}"
+        --values "${GIT_REPO_ROOT}/monitoring/loki/loki-values-common.yaml" \
+        --values "${GIT_REPO_ROOT}/monitoring/loki/loki-values.yaml"
+
+    echo "📊 Installing Loki-A (loki-rustfs, RustFS direct) ${LOKI_CHART_VERSION}..."
+    helm_upgrade_install loki-rustfs oci://ghcr.io/grafana-community/helm-charts/loki \
+        grafana "${CONTEXT_NAME}" "${LOKI_CHART_VERSION}" \
+        --values "${GIT_REPO_ROOT}/monitoring/loki/loki-values-common.yaml" \
+        --values "${GIT_REPO_ROOT}/monitoring/loki/loki-values-rustfs.yaml"
+
+    echo "📊 Installing Loki-B (loki-seaweedfs, in-cluster SeaweedFS) ${LOKI_CHART_VERSION}..."
+    helm_upgrade_install loki-seaweedfs oci://ghcr.io/grafana-community/helm-charts/loki \
+        grafana "${CONTEXT_NAME}" "${LOKI_CHART_VERSION}" \
+        --values "${GIT_REPO_ROOT}/monitoring/loki/loki-values-common.yaml" \
+        --values "${GIT_REPO_ROOT}/monitoring/loki/loki-values-seaweedfs.yaml"
 
     echo "📊 Installing Alloy ${ALLOY_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
     helm_upgrade_install alloy alloy \
