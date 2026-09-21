@@ -697,9 +697,9 @@ ports are what you reach from the laptop.
 
 ### Grafana Dashboards
 
-> Live snapshot: **19 GrafanaDashboard CRs**. The `*-rbr-ver` variants are created by
+> Live snapshot: **20 GrafanaDashboard CRs**. The `*-rbr-ver` variants are created by
 > tenant onboarding (`demo/self-service-setup.sh`), not by `monitoring/setup.sh`, so a
-> platform-only install shows 16.
+> platform-only install shows 17.
 
 | Dashboard | Purpose |
 |-----------|---------|
@@ -722,6 +722,7 @@ ports are what you reach from the laptop.
 | cnpg-custom-pg-rbr-ver | Tenant copy of the CNPG dashboard (ArgoCD-managed) |
 | pgaudit-dashboard-rbr-ver | Tenant copy of the pgaudit dashboard (ArgoCD-managed) |
 | traefik-traces-rbr-ver | Tenant copy of the Traefik traces dashboard (ArgoCD-managed) |
+| loki-storage-abc | A/B/C Loki storage benchmark — the three verdict panels (query latency, S3 op latency, resource cost) plus supporting signal (bead t9p7.3) |
 
 ---
 
