@@ -446,12 +446,30 @@ POLICY
         --values "${GIT_REPO_ROOT}/monitoring/loki/loki-values-common.yaml" \
         --values "${GIT_REPO_ROOT}/monitoring/loki/loki-values-seaweedfs.yaml"
 
-    echo "📊 Installing Alloy ${ALLOY_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
-    helm_upgrade_install alloy alloy \
-        grafana "${CONTEXT_NAME}" "${ALLOY_CHART_VERSION}" \
+    # k8s-monitoring replaces the hand-written 'alloy' release. It carries ALL
+    # per-tenant log routing (beads bd3d.1/.5/.10) in its extraLogProcessingStages,
+    # so the rendered values below are what enforce tenant isolation for logs —
+    # see the header of the template for the two rules that must hold.
+    #
+    # Uninstall the old release first: it tails the same pods via the API and
+    # would double-write every line into all three Lokis, which would silently
+    # break the parity gate the PoC measures.
+    echo "🗑️  Removing the superseded 'alloy' release..."
+    helm_uninstall_if_present alloy grafana "${CONTEXT_NAME}"
+
+    echo "📊 Installing k8s-monitoring ${K8S_MONITORING_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
+    K8S_MONITORING_VALUES="$(render_tenant_file "${CONTEXT_NAME}" monitoring/k8s-monitoring/k8s-monitoring-values.yaml.tpl)"
+    K8S_CLUSTER_NAME="${K8S_CLUSTER_NAME}" envsubst '${K8S_CLUSTER_NAME}' \
+        < "${K8S_MONITORING_VALUES}" > "${K8S_MONITORING_VALUES}.rendered"
+    helm_upgrade_install k8s-monitoring k8s-monitoring \
+        grafana "${CONTEXT_NAME}" "${K8S_MONITORING_CHART_VERSION}" \
         --repo-url https://grafana.github.io/helm-charts \
-        --values "${GIT_REPO_ROOT}/monitoring/alloy/alloy-values.yaml" \
-        --set-file "alloy.configMap.content=$(render_tenant_file "${CONTEXT_NAME}" monitoring/alloy/alloy-config.river.tpl)"
+        --values "${K8S_MONITORING_VALUES}.rendered"
+    # alloy-logs is a DaemonSet and must be on EVERY node (it reads that node's
+    # own container logs and journal), so wait on the DaemonSet, not a Deployment.
+    kubectl --context "${CONTEXT_NAME}" -n grafana rollout status \
+        daemonset/k8s-monitoring-alloy-logs --timeout=300s \
+        || echo "  ⚠️  alloy-logs DaemonSet not ready — check: kubectl -n grafana get pods -l app.kubernetes.io/name=alloy-logs"
 
 # Restart the operator
 if kubectl get ns cnpg-system &> /dev/null; then

@@ -40,6 +40,7 @@ policyExclude:
             - kube-system
             - kyverno
             - local-path-storage
+            - loki-bench
             - metallb-system
             - metrics-server
             - mimir
@@ -47,6 +48,8 @@ policyExclude:
             - pgadmin
             - prometheus-operator
             - radar
+            - reloader
+            - seaweedfs-operator
             - step-ca
             - tempo
             - tigera-operator
