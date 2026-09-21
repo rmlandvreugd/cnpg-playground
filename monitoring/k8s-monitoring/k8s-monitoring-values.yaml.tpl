@@ -182,6 +182,23 @@ clusterEvents:
 nodeLogs:
   enabled: true
   collector: alloy-logs
+  # REQUIRED. Loki runs with auth_enabled, so every write needs an X-Scope-OrgID.
+  # Pod logs and cluster events get theirs from their own tenant stages; without
+  # the same here the journal pipeline sends tenant="" and Loki rejects EVERY
+  # batch with:
+  #   status=401 ... error="server returned HTTP status 401 Unauthorized: no org id"
+  # The collection side works fine, so this fails as silent data loss: journal
+  # logs simply never appear, with the only evidence in the collector's own log.
+  #
+  # Node/journal logs are node-scoped, never tenant-scoped, so they are always
+  # platform.
+  extraLogProcessingStages: |-
+    stage.static_labels {
+      values = { tenant = "platform" }
+    }
+    stage.tenant {
+      label = "tenant"
+    }
   journal:
     # The kind node image has no /var/log/journal, so journald is volatile and
     # only /run/log/journal exists. Note this also SKIPS the chart's
@@ -208,15 +225,27 @@ collectors:
       # lose all logs from app and postgres nodes.
       tolerations:
         - operator: Exists
-      extraVolumes:
-        - name: runlogjournal
-          hostPath:
-            path: /run/log/journal
+      # `volumes.extra`, NOT `extraVolumes`. The Alloy CRD accepts the wrong key
+      # without complaint and the embedded alloy chart then ignores it, so the
+      # volumeMount above is rendered while its volume is not, and the operator
+      # fails the DaemonSet with:
+      #   volumeMounts[3].name: Not found: "runlogjournal"
+      volumes:
+        extra:
+          - name: runlogjournal
+            hostPath:
+              path: /run/log/journal
 
   alloy-singleton:
     enabled: true
-    # Cluster events are gathered once per cluster, not per node.
+    # Cluster events are gathered once per cluster, not per node. The collector
+    # defaults to a DaemonSet, which with two infra nodes means TWO
+    # loki.source.kubernetes_events readers and every event ingested twice —
+    # so pin it to a single-replica Deployment explicitly. The `singleton`
+    # preset does NOT do this; it only steers self-reporting.
     controller:
+      type: deployment
+      replicas: 1
       nodeSelector:
         node-role.kubernetes.io/infra: ""
       tolerations:
