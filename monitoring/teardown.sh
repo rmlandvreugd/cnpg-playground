@@ -44,8 +44,12 @@ for region in "${REGIONS[@]}"; do
     K8S_CLUSTER_NAME=$(get_cluster_name "${region}")
     CONTEXT_NAME=$(get_cluster_context "${region}")
 
-    # --- Grafana namespace: Alloy, Loki, Grafana CRs, Grafana Operator ---
-    echo "🗑️  Uninstalling Alloy in '${K8S_CLUSTER_NAME}'..."
+    # --- Grafana namespace: collectors, Loki, Grafana CRs, Grafana Operator ---
+    # k8s-monitoring supersedes the hand-written 'alloy' release (bead t9p7.2);
+    # both are removed so a teardown works whichever one the cluster has.
+    echo "🗑️  Uninstalling k8s-monitoring in '${K8S_CLUSTER_NAME}'..."
+    helm_uninstall_if_present k8s-monitoring grafana "${CONTEXT_NAME}"
+    echo "🗑️  Uninstalling the superseded Alloy release in '${K8S_CLUSTER_NAME}'..."
     helm_uninstall_if_present alloy grafana "${CONTEXT_NAME}"
 
     echo "🗑️  Uninstalling the three Loki storage arms in '${K8S_CLUSTER_NAME}'..."

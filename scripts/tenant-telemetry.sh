@@ -35,9 +35,11 @@ render() {
         "${GIT_REPO_ROOT}/monitoring/otel-collector/otel-collector-values.yaml.tpl" >/dev/null
     python3 "${RENDER}" --tenants-from-cluster --context "${CONTEXT}" \
         --out-dir "${RENDER_DIR}" \
-        "${GIT_REPO_ROOT}/monitoring/alloy/alloy-config.river.tpl" \
+        "${GIT_REPO_ROOT}/monitoring/k8s-monitoring/k8s-monitoring-values.yaml.tpl" \
         "${GIT_REPO_ROOT}/monitoring/platform/traefik-servicemonitor.yaml.tpl" \
         "${GIT_REPO_ROOT}/monitoring/grafana/grafana_datasource_loki.yaml.tpl" \
+        "${GIT_REPO_ROOT}/monitoring/grafana/grafana_datasource_loki_rustfs.yaml.tpl" \
+        "${GIT_REPO_ROOT}/monitoring/grafana/grafana_datasource_loki_seaweedfs.yaml.tpl" \
         "${GIT_REPO_ROOT}/monitoring/grafana/grafana_datasource_tempo.yaml.tpl" \
         "${GIT_REPO_ROOT}/monitoring/grafana/grafana_datasource_mimir_tempo.yaml.tpl" >/dev/null
     echo "${RENDER_DIR}"
@@ -72,18 +74,24 @@ apply() {
         envsubst '${REGION} ${MIMIR_PUSH_URL}' < "${RENDER_DIR}/prometheus-cr.yaml" \
         | kc apply --force-conflicts --server-side -f -
 
-    # otel-collector + Alloy carry their tenant routing in helm values.
+    # otel-collector + k8s-monitoring carry their tenant routing in helm values.
     helm_upgrade_install otel-collector \
         oci://ghcr.io/open-telemetry/opentelemetry-helm-charts/opentelemetry-collector \
         otel "${CONTEXT}" "${OTEL_COLLECTOR_CHART_VERSION}" \
         --values "${RENDER_DIR}/otel-collector-values.yaml" \
         --set "image.tag=${OTEL_COLLECTOR_IMAGE_TAG}"
 
-    helm_upgrade_install alloy alloy \
-        grafana "${CONTEXT}" "${ALLOY_CHART_VERSION}" \
+    # k8s-monitoring replaced the hand-written 'alloy' release (bead t9p7.2). Its
+    # podLogsViaLoki/clusterEvents extraLogProcessingStages are where per-tenant
+    # log routing lives now, so onboarding a tenant MUST re-render and upgrade
+    # this release — otherwise the new tenant's lines keep going to 'platform'.
+    K8S_CLUSTER_NAME="$(get_cluster_name "${region}")" envsubst '${K8S_CLUSTER_NAME}' \
+        < "${RENDER_DIR}/k8s-monitoring-values.yaml" \
+        > "${RENDER_DIR}/k8s-monitoring-values.rendered.yaml"
+    helm_upgrade_install k8s-monitoring k8s-monitoring \
+        grafana "${CONTEXT}" "${K8S_MONITORING_CHART_VERSION}" \
         --repo-url https://grafana.github.io/helm-charts \
-        --values "${GIT_REPO_ROOT}/monitoring/alloy/alloy-values.yaml" \
-        --set-file "alloy.configMap.content=${RENDER_DIR}/alloy-config.river"
+        --values "${RENDER_DIR}/k8s-monitoring-values.rendered.yaml"
 
     echo "✅ Per-tenant telemetry routing applied."
 }
