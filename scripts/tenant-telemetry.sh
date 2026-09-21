@@ -51,6 +51,8 @@ apply() {
 
     # Grafana datasources (platform view: platform + every tenant org).
     kc apply -f "${RENDER_DIR}/grafana_datasource_loki.yaml" \
+             -f "${RENDER_DIR}/grafana_datasource_loki_rustfs.yaml" \
+             -f "${RENDER_DIR}/grafana_datasource_loki_seaweedfs.yaml" \
              -f "${RENDER_DIR}/grafana_datasource_tempo.yaml" \
              -f "${RENDER_DIR}/grafana_datasource_mimir_tempo.yaml"
 
