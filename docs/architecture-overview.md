@@ -57,11 +57,16 @@ graph TB
         subgraph ObsLayer["Observability Layer"]
             Prom["📊 Prometheus<br/>v3.11.3"]
             Mimir["📈 Mimir<br/>Long-term Metrics"]
-            Loki["📝 Loki<br/>Log Aggregation"]
             Tempo["🔍 Tempo<br/>Distributed Tracing"]
-            Alloy["🔄 Alloy<br/>Log Collector"]
+            Alloy["🔄 Alloy<br/>(k8s-monitoring)"]
             Grafana["📊 Grafana<br/>Dashboards"]
             OTel["📡 OTel Collector<br/>Tail-based Sampling"]
+            subgraph LokiABC["📝 Loki — storage A/B/C PoC"]
+                Loki["loki (C)<br/>control"]
+                LokiRustfs["loki-rustfs (A)"]
+                LokiSeaweedfs["loki-seaweedfs (B)"]
+            end
+            SeaweedIn["📦 SeaweedFS<br/>(operator, in-cluster)"]
         end
     end
 
@@ -76,6 +81,9 @@ graph TB
     RustFS -->|S3 storage| Mimir
     RustFS -->|S3 storage| Tempo
     Seaweed -->|S3 storage| Loki
+    RustFS -->|S3 storage| LokiRustfs
+    SeaweedIn -->|S3 storage| LokiSeaweedfs
+    SeaweedIn -.->|filer.backup mirror| RustFS
     ESO -->|sync secrets| PG1
     ESO -->|sync secrets| PG2
     ESO -->|sync secrets| PG3
@@ -85,10 +93,11 @@ graph TB
     CNPG -->|manages| PG3
     Pooler -->|connections| PG1
     Prom -->|remoteWrite| Mimir
-    Alloy -->|logs| Loki
+    Alloy -->|logs| LokiABC
+    OTel -->|logs| LokiABC
     OTel -->|traces| Tempo
     Grafana -->|queries| Mimir
-    Grafana -->|queries| Loki
+    Grafana -->|queries| LokiABC
     Grafana -->|queries| Tempo
     Grafana -->|queries| Prom
     Traefik -->|traces| OTel
@@ -138,7 +147,7 @@ graph LR
 
 | Mechanism | Containers reached this way | Cluster side | How it resolves |
 |---|---|---|---|
-| **1. Direct headless `Service` + manual `Endpoints`** | step-ca, RustFS (`objectstore-local`), SeaweedFS, zot (metrics only) | `step-ca/step-ca`, `mimir,tempo/objectstore-local`, `grafana,rbr-ver-db/seaweedfs`, `otel/zot` | In-cluster DNS name resolves to the container's **kind-bridge IP**; pods dial it directly on the shared bridge. zot's `/metrics` is scraped this way (anonymous, not exposed via the edge) rather than proxied — see §7 ServiceMonitor pattern. |
+| **1. Direct headless `Service` + manual `Endpoints`** | step-ca, RustFS (`objectstore-local`), SeaweedFS, zot (metrics only) | `step-ca/step-ca`, `mimir,tempo,grafana/objectstore-local`, `grafana,rbr-ver-db/seaweedfs`, `otel/zot` | In-cluster DNS name resolves to the container's **kind-bridge IP**; pods dial it directly on the shared bridge. zot's `/metrics` is scraped this way (anonymous, not exposed via the edge) rather than proxied — see §7 ServiceMonitor pattern. |
 | **2. Via the `traefik-edge` proxy** (`*.172-28-0-250.sslip.io`) | Vault, Authelia, zot | ESO `ClusterSecretStore` (`vault-approle*`) + cert-manager `ClusterIssuer` (`vault-pki`) → `https://vault.172-28-0-250.sslip.io`; Authelia `ExternalName` → `authelia.172-28-0-250.sslip.io`; kind nodes' containerd mirrors + `helm`/`stacker`/`trivy` on the host → `https://zot.172-28-0-250.sslip.io` | The `sslip.io` hostname resolves to `172.28.0.250` (the **edge container**), which TLS-terminates and routes to the backend container. There is **no** in-cluster `vault` (or `zot`) Service. |
 | **3. Reverse: cluster ← edge** | traefik-edge → cluster | MetalLB `LoadBalancer` `otel/ext-svc-lb` at `172.28.255.240:4317/4318` | The edge container pushes **OTLP traces + logs** into the cluster over the MetalLB VIP; the cluster in turn **scrapes** the edge's Prometheus metrics at `172.28.0.250:9102`. |
 
@@ -189,6 +198,8 @@ flowchart TD
     A --> P4["Phase 4: Platform Governance Layer"]
     P4 --> P4A["Capsule + capsule-proxy<br/>(multi-tenancy)"]
     P4 --> P4B["Kyverno (policy engine)"]
+    P4 --> P4S["seaweedfs-operator<br/>(hub only; CRDs + operator,<br/>no Seaweed CR)"]
+    P4 --> P4R["Reloader<br/>(restarts workloads on<br/>ConfigMap/Secret change)"]
     P4 --> P4C["ArgoCD (GitOps)"]
     P4 --> P4D["gangplank (OIDC→kubeconfig)"]
 
@@ -242,19 +253,23 @@ flowchart LR
 flowchart TD
     M["monitoring/setup.sh local"] --> M1["Prometheus Operator<br/>+ kube-prometheus-stack"]
     M --> M2["Mimir<br/>(distributed, 3 zones)"]
-    M --> M3["Loki<br/>(single-binary)"]
+    M --> M3["Loki x3<br/>(single-binary, A/B/C)"]
     M --> M4["Tempo<br/>(distributed)"]
-    M --> M5["Alloy<br/>(log collector)"]
+    M --> M5["k8s-monitoring<br/>(nodeLogs, podLogsViaLoki,<br/>clusterEvents)"]
     M --> M6["OTel Collector<br/>(tail-based sampling)"]
     M --> M7["Grafana Operator<br/>+ Grafana + Dashboards"]
     M --> M8["CNPG PodMonitors"]
 
     M2 --> S3A["RustFS S3<br/>(mimir-blocks,<br/>mimir-alertmanager,<br/>mimir-ruler)"]
-    M3 --> S3B["SeaweedFS S3<br/>(loki)"]
+    M3 --> S3B["host SeaweedFS S3<br/>(loki) — arm C"]
+    M3 --> S3D["RustFS S3<br/>(loki-direct) — arm A"]
+    M3 --> S3E["in-cluster SeaweedFS S3<br/>(loki) — arm B"]
+    S3E -.->|filer.backup mirror| S3F["RustFS S3<br/>(loki-mirror)"]
     M4 --> S3C["RustFS S3<br/>(tempo)"]
 
     M1 -->|remoteWrite| M2
     M5 -->|push logs| M3
+    M6 -->|push logs| M3
     M6 -->|push traces| M4
     M7 -->|query| M1
     M7 -->|query| M2
@@ -265,10 +280,26 @@ flowchart TD
 ```
 
 **Key outcomes:**
-- Full observability stack: metrics (Prometheus → Mimir), logs (Alloy → Loki), traces (OTel → Tempo)
-- Grafana with 5 datasources (Prometheus [default], Mimir, Mimir-Tempo, Loki, Tempo) and 12 pre-configured dashboards
-- All long-term storage backed by RustFS S3
+- Full observability stack: metrics (Prometheus → Mimir), logs (Alloy DaemonSet + OTel → Loki), traces (OTel → Tempo)
+- Grafana with **11 GrafanaDatasource CRs** and **19 dashboards** (live counts; both include
+  the per-tenant `*-rbr-ver` variants created by tenant onboarding)
+- Long-term storage is **per signal**, not all RustFS:
+
+  | Signal | Store | Bucket |
+  |---|---|---|
+  | Metrics (Mimir) | RustFS | `mimir-blocks`, `mimir-alertmanager`, `mimir-ruler` |
+  | Traces (Tempo) | RustFS | `tempo` |
+  | Logs — arm C `loki` (control) | **host SeaweedFS** | `loki` |
+  | Logs — arm A `loki-rustfs` | RustFS | `loki-direct` |
+  | Logs — arm B `loki-seaweedfs` | **in-cluster SeaweedFS** (operator) | `loki`, mirrored to RustFS `loki-mirror` |
+
 - Hub-and-spoke architecture (hub region runs Mimir + Tempo; spokes push via Traefik IngressRoutes)
+
+> The three Loki releases are the A/B/C storage comparison from
+> [`plans/2026-09-17-loki-seaweedfs-dr-fanout-design.md`](plans/2026-09-17-loki-seaweedfs-dr-fanout-design.md).
+> Every log line is written to all three, so they hold identical data and differ only in
+> where it lands. Benchmark caveat: all three stores sit on **one WSL disk**, so the
+> results compare protocol and code paths, not independent spindles.
 
 ### 3.4 `demo/eso-vault.sh setup local` — Secrets Management Demo
 
@@ -426,12 +457,15 @@ flowchart LR
         TraefikS["Traefik<br/>(access logs + traces)"]
         TraefikEdgeS["Traefik Edge<br/>(access logs + traces<br/>+ Prometheus metrics)"]
         ZotS["zot<br/>(Prometheus metrics)"]
-        AppL["Application<br/>Logs"]
+        AppL["Application<br/>Pod Logs"]
+        NodeJ["K8s Nodes<br/>(journald /run/log/journal)"]
+        Ev["K8s Cluster<br/>Events"]
     end
 
     subgraph Collection["Collection"]
         Prom["Prometheus"]
-        Alloy["Alloy"]
+        Alloy["Alloy DaemonSet<br/>(k8s-monitoring)"]
+        AlloyS["Alloy singleton<br/>(clusterEvents)"]
         OTel["OTel Collector"]
     end
 
@@ -439,8 +473,11 @@ flowchart LR
         Mimir["Mimir"]
         Loki["Loki"]
         Tempo["Tempo"]
+        LokiA["loki-rustfs (A)"]
+        LokiB["loki-seaweedfs (B)"]
         S3["RustFS S3"]
-        Seaweed["SeaweedFS S3"]
+        Seaweed["host SeaweedFS S3"]
+        SeaweedIn["in-cluster SeaweedFS S3"]
     end
 
     subgraph Visualization["Visualization"]
@@ -451,20 +488,33 @@ flowchart LR
     K8sN --> Prom
     K8sO --> Prom
     AppL --> Alloy
+    NodeJ --> Alloy
+    Ev --> AlloyS
     TraefikS --> OTel
     TraefikEdgeS --> OTel
     ZotS --> Prom
 
     Prom -->|remoteWrite| Mimir
     Alloy -->|push| Loki
-    OTel -->|push| Tempo
+    Alloy -->|push| LokiA
+    Alloy -->|push| LokiB
+    AlloyS -->|push| Loki
+    OTel -->|push logs| Loki
+    OTel -->|push logs| LokiA
+    OTel -->|push logs| LokiB
+    OTel -->|push traces| Tempo
 
     Loki --> Seaweed
+    LokiA --> S3
+    LokiB --> SeaweedIn
+    SeaweedIn -.->|filer.backup mirror| S3
     Mimir --> S3
     Tempo --> S3
 
     Grafana --> Mimir
     Grafana --> Loki
+    Grafana --> LokiA
+    Grafana --> LokiB
     Grafana --> Tempo
     Grafana --> Prom
 ```
@@ -486,7 +536,7 @@ flowchart LR
 | k8s-local-worker6 | worker | `node-role.kubernetes.io/postgres` (taint `NoSchedule`) |
 | k8s-local-worker7 | worker | `node-role.kubernetes.io/postgres` (taint `NoSchedule`) |
 
-### Application & Infrastructure Namespaces (25)
+### Application & Infrastructure Namespaces (28)
 
 > Snapshot of a `scripts/setup.sh local --with-tenant` install (platform **and** tenant present).
 > Excludes Kubernetes system namespaces (`kube-system`, `kube-public`, `kube-node-lease`, `local-path-storage`) and the unused `default` namespace. `kubelet-csr-approver` and `metrics-server` add-ons run in `kube-system` / `metrics-server`.
@@ -502,8 +552,9 @@ flowchart LR
 | cnpg-system | CNPG operator + Barman Cloud Plugin |
 | external-secrets | External Secrets Operator |
 | gangplank | gangplank (OIDC → kubeconfig dispenser) |
-| grafana | Grafana Operator, platform Grafana, tenant Grafana, Loki, Alloy |
+| grafana | Grafana Operator, platform + tenant Grafana, the three Loki arms (`loki`, `loki-rustfs`, `loki-seaweedfs`), the in-cluster SeaweedFS pods (`seaweedfs-ab-*`), alloy-operator and its `alloy-logs` / `alloy-singleton` collectors |
 | kyverno | Kyverno policy engine + kyverno-policies |
+| loki-bench | `flog` synthetic log load for the A/B/C storage benchmark (platform namespace on purpose — Kyverno's image-registry policy only matches tenant namespaces) |
 | metallb-system | MetalLB load balancer |
 | metrics-server | Kubernetes metrics-server |
 | mimir | Mimir (long-term metrics) + RustFS S3 wiring |
@@ -514,6 +565,8 @@ flowchart LR
 | radar | Radar network observability UI |
 | rbr-ver | Tenant app namespace: `demo-app` (Litestar) |
 | rbr-ver-db | Tenant DB namespace: `verstappen` CNPG + SeaweedFS wiring |
+| reloader | Stakater Reloader — restarts workloads carrying `reloader.stakater.com/auto` when a ConfigMap/Secret changes |
+| seaweedfs-operator | seaweedfs-operator (hub-only). Owns the `Seaweed` CRDs; creates **no** `Seaweed` CR itself |
 | step-ca | step-ca service wiring (headless Endpoints) |
 | tempo | Tempo (distributed tracing) + RustFS S3 wiring |
 | tigera-operator | Tigera Operator (manages Calico) |
@@ -582,36 +635,45 @@ foundational-secrets components alongside the tenant stack (full reference:
 
 ### Helm Releases
 
-> Live snapshot (26 releases) from a `--with-tenant` install.
+> Live snapshot (**32 releases**) from a `--with-tenant` install, re-taken after the
+> k8s-monitoring swap. `k8s-monitoring-alloy-logs` and `k8s-monitoring-alloy-singleton`
+> are created by the alloy-operator that the `k8s-monitoring` chart brings in, not by
+> `monitoring/setup.sh` directly — they appear as releases in their own right.
 
 | Release | Namespace | Chart | App Version |
 |---------|-----------|-------|-------------|
-| alloy | grafana | alloy-1.8.0 | v1.16.0 |
-| argocd | argocd | argo-cd-9.7.0 | v3.4.4 |
-| barman-cloud | cnpg-system | plugin-barman-cloud-0.6.0 | v0.12.0 |
-| capsule | capsule-system | capsule-0.13.6 | 0.13.6 |
-| capsule-proxy | capsule-system | capsule-proxy-0.13.5 | 0.13.5 |
+| argocd | argocd | argo-cd-10.9.2 | v3.5.3 |
+| barman-cloud | cnpg-system | plugin-barman-cloud-0.8.0 | v0.15.0 |
+| capsule | capsule-system | capsule-0.14.6 | 0.14.6 |
+| capsule-proxy | capsule-system | capsule-proxy-0.14.1 | 0.14.1 |
 | caretta | caretta | caretta-0.0.16 | v0.0.16 |
-| cert-manager | cert-manager | cert-manager-v1.20.2 | v1.20.2 |
-| cnpg-operator | cnpg-system | cloudnative-pg-0.28.0 | 1.29.0 |
-| external-secrets | external-secrets | external-secrets-2.4.1 | v2.4.1 |
+| cert-manager | cert-manager | cert-manager-v1.21.2 | v1.21.2 |
+| cnpg-operator | cnpg-system | cloudnative-pg-0.29.0 | 1.30.0 |
+| external-secrets | external-secrets | external-secrets-2.10.0 | v2.10.0 |
 | gangplank | gangplank | gangplank-0.2.1 | 1.1.0 |
-| grafana-operator | grafana | grafana-operator-5.22.2 | v5.22.2 |
-| kube-prometheus-stack | prometheus-operator | kube-prometheus-stack-86.2.3 | v0.91.0 |
-| kubelet-csr-approver | kube-system | kubelet-csr-approver-1.2.14 | v1.2.14 |
-| kyverno | kyverno | kyverno-3.8.1 | v1.18.1 |
-| kyverno-policies | kyverno | kyverno-policies-3.8.1 | v1.18.1 |
+| grafana-operator | grafana | grafana-operator-5.25.0 | v5.25.0 |
+| k8s-monitoring | grafana | k8s-monitoring-4.5.2 | 4.5.2 |
+| k8s-monitoring-alloy-logs | grafana | alloy-1.12.1 | v1.19.2 |
+| k8s-monitoring-alloy-singleton | grafana | alloy-1.12.1 | v1.19.2 |
+| kube-prometheus-stack | prometheus-operator | kube-prometheus-stack-91.4.1 | v0.94.0 |
+| kubelet-csr-approver | kube-system | kubelet-csr-approver-1.2.15 | v1.2.15 |
+| kyverno | kyverno | kyverno-3.9.1 | v1.19.1 |
+| kyverno-policies | kyverno | kyverno-policies-3.9.1 | v1.19.1 |
 | loki | grafana | loki-13.5.0 | 3.7.1 |
+| loki-rustfs | grafana | loki-13.5.0 | 3.7.1 |
+| loki-seaweedfs | grafana | loki-13.5.0 | 3.7.1 |
 | metallb | metallb-system | metallb-0.16.1 | v0.16.1 |
-| metrics-server | metrics-server | metrics-server-3.13.1 | 0.8.1 |
-| mimir | mimir | mimir-distributed-6.0.6 | 3.0.4 |
-| otel-collector | otel | opentelemetry-collector-0.158.2 | 0.153.0 |
-| policy-reporter | policy-reporter | policy-reporter-3.7.4 | 3.7.4 |
-| radar | radar | radar-1.7.9 | 1.7.9 |
+| metrics-server | metrics-server | metrics-server-3.14.0 | 0.9.0 |
+| mimir | mimir | mimir-distributed-6.2.0 | 3.2.0 |
+| otel-collector | otel | opentelemetry-collector-0.173.1 | 0.160.0 |
+| policy-reporter | policy-reporter | policy-reporter-3.10.0 | 3.10.0 |
+| radar | radar | radar-1.14.1 | 1.14.1 |
+| reloader | reloader | reloader-2.2.17 | v1.4.22 |
+| seaweedfs-operator | seaweedfs-operator | seaweedfs-operator-0.1.42 | 1.0.39 |
 | tempo | tempo | tempo-distributed-2.25.2 | 2.10.7 |
-| tigera-operator | tigera-operator | tigera-operator-v3.32.0 | v3.32.0 |
-| traefik | traefik | traefik-41.0.1 | v3.7.5 |
-| trust-manager | cert-manager | trust-manager-v0.17.1 | v0.17.1 |
+| tigera-operator | tigera-operator | tigera-operator-v3.32.2 | v3.32.2 |
+| traefik | traefik | traefik-41.6.0 | v3.7.13 |
+| trust-manager | cert-manager | trust-manager-v0.25.0 | v0.25.0 |
 
 ### External Docker Containers
 
@@ -624,7 +686,7 @@ ports are what you reach from the laptop.
 | step-ca | smallstep/step-ca:latest | 172.28.0.13 | 8443 | 8443 | Root CA + Intermediate CA |
 | vault | hashicorp/vault:2.0 | 172.28.0.14 | 8200 (+8202 cluster) | 8200 | Secrets management, PKI, AppRole + DB engine |
 | authelia | ghcr.io/authelia/authelia:4.39.20 | 172.28.0.2 | 9091 | 9091 | OIDC identity provider (replaces Dex) |
-| objectstore-local (RustFS) | rustfs/rustfs:latest | 172.28.0.11 | 9000 | 9001 | S3 object storage (Mimir, Tempo) |
+| objectstore-local (RustFS) | rustfs/rustfs:latest | 172.28.0.11 | 9000 | 9001 | S3 object storage (Mimir, Tempo, Loki-A `loki-direct`, Loki-B mirror `loki-mirror`) |
 | seaweedfs (SeaweedFS) | chrislusf/seaweedfs:latest | 172.28.0.12 | 8333 (S3) | 8333/8334 | S3 object storage (Loki, tenant backups) |
 | seaweedfs-admin | chrislusf/seaweedfs:latest | 172.28.0.15 | 23646 | 23646 | SeaweedFS admin UI |
 | seaweedfs-webdav | chrislusf/seaweedfs:latest | — (compose net) | 7333 | 7333 | SeaweedFS WebDAV gateway |
@@ -634,6 +696,10 @@ ports are what you reach from the laptop.
 | revocation-exporter | revocation-exporter:latest | (host net) | — | — | step-ca CRL / certificate revocation metrics exporter |
 
 ### Grafana Dashboards
+
+> Live snapshot: **19 GrafanaDashboard CRs**. The `*-rbr-ver` variants are created by
+> tenant onboarding (`demo/self-service-setup.sh`), not by `monitoring/setup.sh`, so a
+> platform-only install shows 16.
 
 | Dashboard | Purpose |
 |-----------|---------|
@@ -653,6 +719,9 @@ ports are what you reach from the laptop.
 | pgaudit-dashboard | PGAudit logging |
 | pki-dashboard | PKI / certificate health |
 | traefik-traces | Traefik request tracing |
+| cnpg-custom-pg-rbr-ver | Tenant copy of the CNPG dashboard (ArgoCD-managed) |
+| pgaudit-dashboard-rbr-ver | Tenant copy of the pgaudit dashboard (ArgoCD-managed) |
+| traefik-traces-rbr-ver | Tenant copy of the Traefik traces dashboard (ArgoCD-managed) |
 
 ---
 
@@ -775,3 +844,103 @@ Related plans: [`capsule-integration-plan.md`](capsule-integration-plan.md),
 [`plan-argocd-gitops.md`](plan-argocd-gitops.md),
 [`plan-seaweedfs-oidc.md`](plan-seaweedfs-oidc.md),
 [`plan-self-service-dynamic-creds-pgadmin.md`](plan-self-service-dynamic-creds-pgadmin.md).
+
+---
+
+## 9. Tenant Telemetry Isolation
+
+Tenant telemetry **is** isolated server-side. The model is
+**exclusive writes, unioned reads**:
+
+- **Writes.** Every log line, event, span and series is written to exactly **one**
+  tenant org. For logs and events that is Alloy's `stage.tenant`, which turns the
+  per-line `tenant` label into Loki's `X-Scope-OrgID`; for traces it is the OTel
+  routing connector; for metrics it is a per-tenant Prometheus `remoteWrite`.
+  The tenant label itself comes from the source namespace's Capsule tenant label,
+  defaulting to `platform`.
+- **Reads.** The **platform** datasources read the *union* via
+  `X-Scope-OrgID: platform|<tenant>…`, generated by the `grafana-org-header` block in
+  `scripts/render-tenant-telemetry.py`. Loki has `multi_tenant_queries_enabled: true`
+  for exactly this. Tenant datasources carry only their own org.
+
+So the platform/admin view sees **every** metric, log, trace and event in the cluster,
+while a tenant sees only its own — without duplicating anything in storage.
+
+> **Reading an isolation check correctly.** Querying Loki with `X-Scope-OrgID: platform`
+> **alone** is the tenant-*exclusion* view, not what platform Grafana uses. A `0` there
+> means writes are correctly exclusive — it does **not** mean the platform cannot see the
+> data. Use `platform|<tenant>` to reproduce the admin view.
+
+One apparent exception that is not one: the `mimir` datasource reads org `local` only.
+The default `remoteWrite` sends **all** series to `local` and the per-tenant orgs are
+*additive* copies, so `local` already contains tenant series.
+
+Traefik access logs are attributed by an **anchored** router/service-name prefix, because
+Traefik runs in a platform namespace and the router name is the only per-request signal.
+Anchoring matters: `rbr-ver-demo-app-…` is the tenant's, while `pgadmin-pgadmin-rbr-ver-…`
+merely *contains* the tenant prefix and correctly stays `platform`.
+
+---
+
+## 10. Smoke Tests
+
+### 10.1 Ingress reachability (tenant + platform)
+
+```bash
+scripts/smoke-ingress.sh local
+```
+
+Probes every HTTP entry point and reports `PLATFORM` / `TENANT` / `EDGE` per route.
+Routes are **discovered** from the cluster's Traefik `IngressRoute` objects rather than
+hard-coded, so onboarding a tenant or adding a service is picked up without editing the
+script. Edge-only services (host containers behind the edge Traefik, with no in-cluster
+IngressRoute) are listed explicitly because nothing in the cluster describes them.
+
+Expected on a `--with-tenant` install: **15 routes, 0 failures** — 8 platform, 3 tenant
+(`grafana-rbr-ver`, `pgadmin-rbr-ver`, `demo-app`) and 4 edge (`zot`, `vault`, `authelia`
+and the **edge Traefik dashboard**, which is separate from the in-cluster one).
+
+What the status codes mean:
+
+| Code | Verdict | Meaning |
+|---|---|---|
+| 200/201/204 | PASS | backend answered |
+| 301/302/303/307/308 | PASS | redirect to Authelia — the route works and the service is protected |
+| 401/403 | PASS | routed; authn/authz rejected the anonymous probe (e.g. capsule-proxy 403) |
+| 405 | PASS | routed and answered, but the method is wrong (radar's `/mcp` is POST-only) |
+| 404 | **FAIL** | Traefik has no such router — usually a route torn down and never recreated |
+| 502/503 | **FAIL** | route exists, backend is down |
+| 000 | **FAIL** | DNS or connection failure |
+
+Two quirks the script handles, both of which otherwise report a healthy route as broken:
+
+- **Trailing slash.** Traefik's dashboard serves `/dashboard/` (200) and hard-404s
+  `/dashboard`. The probe retries once with a trailing slash before believing a 404.
+- **Multi-prefix routers.** `PathPrefix(/dashboard) || PathPrefix(/api)` must be probed on
+  the **first** prefix; bare `/api` 404s.
+
+If tenant routes 404, they were almost certainly removed rather than broken:
+`monitoring/teardown.sh` deletes tenant Grafana CRs **by kind**, so the tenant Grafana and
+its datasources do not survive a monitoring teardown. Re-run
+`demo/self-service-setup.sh setup local`.
+
+### 10.2 Loki storage A/B/C benchmark
+
+```bash
+scripts/loki-bench.sh status  local      # soak progress
+scripts/loki-bench.sh ingest  local      # ingest parity across the three arms
+scripts/loki-bench.sh query   local 5    # fixed LogQL set, 1h window ending 5h ago
+```
+
+Two measurement rules are built into the harness, because getting either wrong produces a
+confident but meaningless result:
+
+- **Query old ranges.** Loki serves the recent window from ingesters
+  (`query_ingesters_within` 3h, `max_chunk_age` 2h), so anything fresher than ~4h measures
+  memory rather than object storage.
+- **Compare on a settled window, never the live edge.** At the edge the arms differ purely
+  by chunk-flush timing — which is the very thing being compared. On settled data they are
+  byte-identical.
+
+The harness also warns when a window overlaps 00:00–00:30, because the nightly Barman
+backup writes into the host SeaweedFS behind arm C and would penalise C for unrelated IO.
