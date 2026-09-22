@@ -76,7 +76,14 @@ K8S_BASE_NAME=${K8S_NAME-k8s-}
 MC_IMAGE="${MC_IMAGE:-quay.io/minio/mc:latest}"
 
 # RustFS Configuration
-RUSTFS_IMAGE="${RUSTFS_IMAGE:-rustfs/rustfs:latest}"
+# Pinned by DIGEST, not :latest. RustFS is pre-1.0 (1.0.0-alpha.99) and was
+# previously tracking a moving tag, so two rebuilds could get different
+# binaries and a benchmark run was not reproducible. This digest is the
+# 2026-04-25 alpha.99 build the A/B/C results were taken against.
+# See bead cnpg-playground-rfs1: this build degrades after ~21h uptime,
+# rejecting even the configured root key with InvalidAccessKeyId while the
+# on-disk data stays intact.
+RUSTFS_IMAGE="${RUSTFS_IMAGE:-rustfs/rustfs@sha256:103dd40b84d5aa3d5ab02f3a693797eb1d14cb842554b222dfbb589f364aa47f}"
 RUSTFS_BASE_NAME="${RUSTFS_BASE_NAME:-objectstore}"
 RUSTFS_BASE_PORT=${RUSTFS_BASE_PORT:-9001}
 RUSTFS_ROOT_USER="${RUSTFS_ROOT_USER:-cnpg}"

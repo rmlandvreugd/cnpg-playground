@@ -6,6 +6,7 @@
 #   scripts/loki-bench.sh ingest  [region]              # ingest parity across arms
 #   scripts/loki-bench.sh restore [region]              # restore drill from the RustFS mirror
 #   scripts/loki-bench.sh status  [region]              # soak progress at a glance
+#   scripts/loki-bench.sh health  [region]              # is the soak still VALID?
 #
 # The three arms:
 #   A loki-rustfs     -> RustFS directly       (bucket loki-direct)
@@ -124,6 +125,62 @@ cmd_ingest() {
     "
 }
 
+
+# Is the soak still producing trustworthy data? A soak can keep running while an
+# object store has stopped accepting writes, and the verdict would then be taken
+# over a window where one arm was silently broken. Run this periodically during
+# the soak, not just at the end.
+#
+# Motivated by a real failure: RustFS (pre-1.0) degraded ~21h into a 26h run and
+# began rejecting even its own configured root key with InvalidAccessKeyId, while
+# its on-disk data stayed intact. Arm A and the mirror stopped ingesting; the
+# other two arms carried on, so nothing looked wrong from the outside.
+cmd_health() {
+    # A non-zero exit here is a RESULT (soak dirty), not a script failure, so
+    # drop common.sh's ERR trap for this path — otherwise it prints a misleading
+    # "script failed" line on top of a perfectly good verdict.
+    trap - ERR
+    local bad=0
+    echo "=== per-arm object-store errors (last 300 log lines) ==="
+    for arm in loki loki-rustfs loki-seaweedfs; do
+        local n
+        n=$(kc -n grafana logs "${arm}-0" -c loki --tail=300 2>/dev/null \
+             | grep -ciE 'InvalidAccessKeyId|AccessDenied|NoSuchBucket|failed to flush' || true)
+        if [ "${n:-0}" -gt 0 ]; then
+            printf '  ❌ %-16s %s store errors\n' "${arm}" "${n}"
+            kc -n grafana logs "${arm}-0" -c loki --tail=300 2>/dev/null \
+              | grep -iE 'InvalidAccessKeyId|AccessDenied|NoSuchBucket' | tail -1 | cut -c1-160 | sed 's/^/       /'
+            bad=$((bad + 1))
+        else
+            printf '  ✅ %-16s clean\n' "${arm}"
+        fi
+    done
+
+    echo
+    echo "=== mirror sidecar ==="
+    local m
+    m=$(kc -n grafana logs seaweedfs-ab-filer-0 -c filer-backup-rustfs --tail=300 2>/dev/null \
+         | grep -ciE 'InvalidAccessKeyId|AccessDenied|error' || true)
+    if [ "${m:-0}" -gt 0 ]; then
+        printf '  ❌ filer.backup    %s errors\n' "${m}"
+        bad=$((bad + 1))
+    else
+        printf '  ✅ filer.backup    clean\n'
+    fi
+
+    echo
+    echo "=== flog load still running? ==="
+    kc -n loki-bench get deploy flog --no-headers 2>&1 | sed 's/^/  /'
+
+    echo
+    if [ "${bad}" -gt 0 ]; then
+        echo "  VERDICT: soak is NOT clean — ${bad} component(s) erroring."
+        echo "  Results taken across this window are not trustworthy. Fix, then restart the clock."
+        return 1
+    fi
+    echo "  VERDICT: soak is clean."
+}
+
 cmd_status() {
     echo "=== flog load ==="
     kc -n loki-bench get deploy,pods 2>&1 | sed 's/^/  /' || echo "  (loki-bench absent — soak not started)"
@@ -155,6 +212,7 @@ cmd_restore() {
 
 case "${mode}" in
     query)   cmd_query ;;
+    health)  cmd_health ;;
     ingest)  cmd_ingest ;;
     restore) cmd_restore ;;
     status)  cmd_status ;;

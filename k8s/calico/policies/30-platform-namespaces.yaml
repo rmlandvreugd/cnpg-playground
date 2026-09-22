@@ -73,6 +73,13 @@ spec:
 ---
 # --- Observability backends ---------------------------------------------------------------
 # Loki (namespace grafana, :3100): Alloy and Grafana are same-namespace; add the collector.
+# Selects on COMPONENT, not name. The A/B/C storage arms set a per-release
+# nameOverride (required so three Loki releases can share one namespace without
+# fighting over the same ConfigMap), which makes app.kubernetes.io/name
+# loki-rustfs / loki-seaweedfs. A name=='loki' match therefore silently excluded
+# arms A and B, and the collector's OTLP log writes to them were dropped by the
+# default-deny — visible only in `scripts/flowlogs.sh denied`, because the Alloy
+# DaemonSet path kept working and the parity numbers still looked right.
 apiVersion: projectcalico.org/v3
 kind: GlobalNetworkPolicy
 metadata:
@@ -83,7 +90,7 @@ spec:
   order: 200
   types:
     - Ingress
-  selector: projectcalico.org/namespace == 'grafana' && app.kubernetes.io/name == 'loki' && app.kubernetes.io/component == 'single-binary'
+  selector: projectcalico.org/namespace == 'grafana' && app.kubernetes.io/component == 'single-binary'
   ingress:
     - action: Allow
       protocol: TCP
