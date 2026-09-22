@@ -24,3 +24,4 @@ resources:
   - grafana_dashboard_calico.yaml
   - grafana_dashboard_kyverno.yaml
   - grafana_dashboard_argocd.yaml
+  - grafana_dashboard_loki_storage_abc.yaml

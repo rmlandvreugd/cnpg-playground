@@ -76,7 +76,14 @@ K8S_BASE_NAME=${K8S_NAME-k8s-}
 MC_IMAGE="${MC_IMAGE:-quay.io/minio/mc:latest}"
 
 # RustFS Configuration
-RUSTFS_IMAGE="${RUSTFS_IMAGE:-rustfs/rustfs:latest}"
+# Pinned by DIGEST, not :latest. RustFS is pre-1.0 (1.0.0-alpha.99) and was
+# previously tracking a moving tag, so two rebuilds could get different
+# binaries and a benchmark run was not reproducible. This digest is the
+# 2026-04-25 alpha.99 build the A/B/C results were taken against.
+# See bead cnpg-playground-e84t: this build degrades after ~21h uptime,
+# rejecting even the configured root key with InvalidAccessKeyId while the
+# on-disk data stays intact.
+RUSTFS_IMAGE="${RUSTFS_IMAGE:-rustfs/rustfs@sha256:103dd40b84d5aa3d5ab02f3a693797eb1d14cb842554b222dfbb589f364aa47f}"
 RUSTFS_BASE_NAME="${RUSTFS_BASE_NAME:-objectstore}"
 RUSTFS_BASE_PORT=${RUSTFS_BASE_PORT:-9001}
 RUSTFS_ROOT_USER="${RUSTFS_ROOT_USER:-cnpg}"
@@ -95,6 +102,10 @@ SEAWEEDFS_ADMIN_CONTAINER_NAME="${SEAWEEDFS_ADMIN_CONTAINER_NAME:-seaweedfs-admi
 SEAWEEDFS_WEBDAV_PORT="${SEAWEEDFS_WEBDAV_PORT:-7333}"              # WebDAV HTTPS (-cert.file/-key.file on same port)
 SEAWEEDFS_WEBDAV_CONTAINER_NAME="${SEAWEEDFS_WEBDAV_CONTAINER_NAME:-seaweedfs-webdav}"
 SEAWEEDFS_WORKER_METRICS_PORT="${SEAWEEDFS_WORKER_METRICS_PORT:-9327}"  # Worker Prometheus metrics
+# `weed server` serves /metrics only when -metricsPort is set. Without it arm C of
+# the storage PoC has container CPU/mem but nothing from the store itself, so the
+# A/B/C comparison would be store-side blind on the control arm.
+SEAWEEDFS_METRICS_PORT="${SEAWEEDFS_METRICS_PORT:-9324}"                # weed server Prometheus metrics
 SEAWEEDFS_WORKER_CONTAINER_NAME="${SEAWEEDFS_WORKER_CONTAINER_NAME:-seaweedfs-worker}"
 # Static S3 identities (-s3.config / identities.json). Machine creds — humans use OIDC/STS (-s3.iam.config).
 # loki: RW on the 'loki' bucket only (keeps Loki working; blanket Admin dropped — see SEAWEEDFS_ADMIN_* for bootstrap).

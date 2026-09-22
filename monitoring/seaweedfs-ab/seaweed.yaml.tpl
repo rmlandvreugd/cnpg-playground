@@ -25,6 +25,10 @@ spec:
 
   master:
     replicas: 1
+    # Prometheus metrics. `weed` exposes /metrics only when a metricsPort is set,
+    # so leaving these unset means the storage comparison has container CPU/mem
+    # but nothing from the store itself.
+    metricsPort: 9324
     # Without this the master's topology metadata is ephemeral and every restart
     # re-learns the cluster from scratch.
     persistence:
@@ -37,12 +41,14 @@ spec:
 
   volume:
     replicas: 1
+    metricsPort: 9325
     storageClassName: standard
     requests:
       storage: ${SEAWEEDFS_AB_VOLUME_SIZE}
 
   filer:
     replicas: 1
+    metricsPort: 9326
     # REQUIRED for the mirror to be restart-safe, not just for file metadata.
     # filer.backup stores its replication checkpoint ON THE FILER (setOffset over
     # gRPC to the source filer). With an ephemeral filer store that offset dies
@@ -133,6 +139,7 @@ spec:
 
   s3:
     replicas: 1
+    metricsPort: 9327
     # The operator renders `weed s3 -port=<this>`, so HTTP must move off 8333 to
     # leave it free for the TLS listener below.
     port: 8334

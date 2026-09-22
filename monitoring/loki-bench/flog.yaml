@@ -1,0 +1,60 @@
+# Synthetic log load for the A/B/C storage benchmark (bead t9p7.3).
+#
+# Deliberately in its OWN platform namespace, not a tenant one: the Kyverno
+# restrict-image-registries policy only matches namespaces carrying a Capsule
+# tenant label, and mingrammer/flog is not on its allow-list — running this in a
+# tenant namespace would be blocked (or audited) for no benefit. loki-bench is
+# registered in kyverno/policies-values.yaml platformNamespaces.
+#
+# Because loki-bench carries no Capsule tenant label, every line here is
+# tenant="platform", so the load cannot pollute a tenant's Loki org.
+#
+# Rate: 2 replicas x 50 lines/s = 100 lines/s total, steady for the whole soak.
+# Picked to produce a few GB per arm over >=26h — enough to exercise chunk
+# flushing, compaction and the 24h retention + 2h delete delay, without filling
+# the 20Gi PVCs or making the three object stores disk-bound rather than
+# latency-bound (the latter is what the PoC is trying to measure).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: loki-bench
+  labels:
+    # Marks the namespace as platform-owned for the netpol allow-list.
+    app.kubernetes.io/part-of: cnpg-playground
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flog
+  namespace: loki-bench
+  labels:
+    app.kubernetes.io/name: flog
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: flog
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: flog
+    spec:
+      # App nodes are untainted, so no toleration is needed. Keeping the load off
+      # the infra nodes matters: Loki, the SeaweedFS cluster and the collectors
+      # all live there, and CPU contention on those nodes would show up as
+      # storage latency in the results.
+      nodeSelector:
+        node-role.kubernetes.io/app: ""
+      containers:
+        - name: flog
+          image: mingrammer/flog:0.4.3
+          # -d 20ms => 50 lines/s per replica. -l loops forever.
+          # apache_combined keeps lines a realistic ~150-250 bytes.
+          args: ["-f", "apache_combined", "-d", "20ms", "-l"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
