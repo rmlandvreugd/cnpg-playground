@@ -927,11 +927,29 @@ its datasources do not survive a monitoring teardown. Re-run
 
 ### 10.2 Loki storage A/B/C benchmark
 
+Running a soak, start to verdict:
+
 ```bash
-scripts/loki-bench.sh status  local      # soak progress
+scripts/loki-bench.sh start   local      # preconditions, apply flog, record t0
+scripts/loki-bench.sh elapsed local      # how far into the >=26h window
+scripts/loki-bench.sh health  local      # is the soak still VALID?  <-- run REPEATEDLY
 scripts/loki-bench.sh ingest  local      # ingest parity across the three arms
 scripts/loki-bench.sh query   local 5    # fixed LogQL set, 1h window ending 5h ago
 ```
+
+`start` is a deliberate, separate step — it is **not** part of
+`monitoring/setup.sh`, because it generates continuous synthetic load and should
+never be a side effect of rebuilding the cluster. It refuses to start the clock
+on an unhealthy cluster, since a 26h window is expensive to waste.
+
+**Run `health` during the soak, not only at the end.** A soak can keep running
+while one object store has quietly stopped accepting writes, and the verdict
+would then be computed over a window where an arm was broken. This is not
+hypothetical: RustFS (pre-1.0) degraded ~21h into a 26h run and began rejecting
+even its own configured root credential with `InvalidAccessKeyId` while leaving
+its on-disk data intact — see bead `cnpg-playground-e84t`. Arm A and the mirror
+stopped ingesting; the other two arms carried on and nothing looked wrong from
+the outside.
 
 Two measurement rules are built into the harness, because getting either wrong produces a
 confident but meaningless result:

@@ -6,7 +6,9 @@
 #   scripts/loki-bench.sh ingest  [region]              # ingest parity across arms
 #   scripts/loki-bench.sh restore [region]              # restore drill from the RustFS mirror
 #   scripts/loki-bench.sh status  [region]              # soak progress at a glance
+#   scripts/loki-bench.sh start   [region]              # start the soak and record t0
 #   scripts/loki-bench.sh health  [region]              # is the soak still VALID?
+#   scripts/loki-bench.sh elapsed [region]              # how far into the soak are we?
 #
 # The three arms:
 #   A loki-rustfs     -> RustFS directly       (bucket loki-direct)
@@ -181,6 +183,72 @@ cmd_health() {
     echo "  VERDICT: soak is clean."
 }
 
+
+# Where t0 is recorded. Kept in the repo rather than /tmp so it survives a reboot
+# and a different shell — the verdict window depends on it.
+SOAK_STATE="${GIT_REPO_ROOT}/k8s/rendered/loki-bench-soak-start"
+
+# Start the soak. Deliberately NOT part of monitoring/setup.sh: this generates
+# continuous synthetic load, so it must be an explicit act rather than a side
+# effect of rebuilding the cluster.
+cmd_start() {
+    trap - ERR
+    echo "=== preconditions ==="
+    local bad=0 notrunning r
+    notrunning=$(kc get pods -A --no-headers 2>/dev/null | grep -vcE 'Running|Completed' || true)
+    echo "  pods not Running/Completed : ${notrunning}"
+    [ "${notrunning:-0}" -gt 0 ] && bad=1
+    for arm in loki loki-rustfs loki-seaweedfs; do
+        r=$(kc -n grafana get sts "${arm}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null)
+        printf '  %-16s ready=%s\n' "${arm}" "${r:-0}"
+        [ "${r:-0}" = "1" ] || bad=1
+    done
+    if [ "${bad}" -ne 0 ]; then
+        echo
+        echo "  cluster is not clean — fix before starting a 26h clock."
+        return 1
+    fi
+
+    echo
+    echo "=== applying flog load ==="
+    kc apply -f "${GIT_REPO_ROOT}/monitoring/loki-bench/flog.yaml"
+    kc -n loki-bench rollout status deploy/flog --timeout=300s
+
+    echo
+    echo "=== confirming all three arms are ingesting it ==="
+    sleep 90
+    LOKI_BENCH_SETTLE=60 LOKI_BENCH_WINDOW=1m cmd_ingest
+
+    echo
+    mkdir -p "$(dirname "${SOAK_STATE}")"
+    date -Is > "${SOAK_STATE}"
+    echo "=== SOAK STARTED: $(cat "${SOAK_STATE}") ==="
+    echo "    >=26h elapses: $(date -Is -d "$(cat "${SOAK_STATE}") + 26 hours")"
+    echo
+    echo "  Check it is still VALID periodically, not just at the end:"
+    echo "    scripts/loki-bench.sh health ${region}"
+    echo "  A store can stop accepting writes mid-soak while everything still looks up."
+}
+
+cmd_elapsed() {
+    trap - ERR
+    if [ ! -f "${SOAK_STATE}" ]; then
+        echo "  no soak recorded — run: scripts/loki-bench.sh start ${region}"
+        return 1
+    fi
+    local t0 s n e
+    t0=$(cat "${SOAK_STATE}")
+    s=$(date -d "${t0}" +%s); n=$(date +%s); e=$(( (n - s) / 60 ))
+    echo "  started : ${t0}"
+    echo "  elapsed : ${e} min ($(( e / 60 ))h $(( e % 60 ))m) of >=1560 min (26h)"
+    echo "  ends    : $(date -Is -d "${t0} + 26 hours")"
+    if [ "${e}" -ge 1560 ]; then
+        echo "  soak window COMPLETE"
+    else
+        echo "  remaining: $(( (1560 - e) / 60 ))h $(( (1560 - e) % 60 ))m"
+    fi
+}
+
 cmd_status() {
     echo "=== flog load ==="
     kc -n loki-bench get deploy,pods 2>&1 | sed 's/^/  /' || echo "  (loki-bench absent — soak not started)"
@@ -211,6 +279,8 @@ cmd_restore() {
 }
 
 case "${mode}" in
+    start)   cmd_start ;;
+    elapsed) cmd_elapsed ;;
     query)   cmd_query ;;
     health)  cmd_health ;;
     ingest)  cmd_ingest ;;
