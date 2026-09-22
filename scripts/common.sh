@@ -80,7 +80,7 @@ MC_IMAGE="${MC_IMAGE:-quay.io/minio/mc:latest}"
 # previously tracking a moving tag, so two rebuilds could get different
 # binaries and a benchmark run was not reproducible. This digest is the
 # 2026-04-25 alpha.99 build the A/B/C results were taken against.
-# See bead cnpg-playground-rfs1: this build degrades after ~21h uptime,
+# See bead cnpg-playground-e84t: this build degrades after ~21h uptime,
 # rejecting even the configured root key with InvalidAccessKeyId while the
 # on-disk data stays intact.
 RUSTFS_IMAGE="${RUSTFS_IMAGE:-rustfs/rustfs@sha256:103dd40b84d5aa3d5ab02f3a693797eb1d14cb842554b222dfbb589f364aa47f}"
