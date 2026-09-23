@@ -1,0 +1,44 @@
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: allow-cnpg-operator-demo-local
+  labels:
+    app.kubernetes.io/part-of: playground-netpol
+spec:
+  order: 200
+  types:
+    - Ingress
+  selector: >-
+    projectcalico.org/namespace == 'demo-local-db' &&
+    cnpg.io/cluster == 'pg-local'
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source:
+        namespaceSelector: kubernetes.io/metadata.name == 'cnpg-system'
+        selector: app.kubernetes.io/name == 'cloudnative-pg'
+      destination:
+        ports: [8000]
+
+---
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: allow-cnpg-cluster-demo-local
+  labels:
+    app.kubernetes.io/part-of: playground-netpol
+spec:
+  order: 200
+  types:
+    - Ingress
+  selector: >-
+    projectcalico.org/namespace == 'demo-local-db' &&
+    cnpg.io/cluster == 'pg-local'
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source:
+        namespaceSelector: kubernetes.io/metadata.name == 'demo-local-db'
+        selector: cnpg.io/cluster == 'pg-local'
+      destination:
+        ports: [5432, 8000]
