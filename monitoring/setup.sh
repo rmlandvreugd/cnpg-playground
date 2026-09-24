@@ -537,23 +537,23 @@ fi
     kubectl --context "${CONTEXT_NAME}" apply \
         -f "${GIT_REPO_ROOT}/monitoring/platform/zot-servicemonitor.yaml"
 
-    # # Host SeaweedFS metrics (arm C's store) + its maintenance worker. Static
-    # # targets on the kind bridge, so the container IPs are resolved at apply time.
-    # echo "📊 Applying host SeaweedFS ServiceMonitors (arm C store)..."
-    # SEAWEEDFS_IP=$(${CONTAINER_PROVIDER} inspect "${SEAWEEDFS_CONTAINER_NAME}" \
-    #     --format '{{.NetworkSettings.Networks.kind.IPAddress}}' 2>/dev/null || echo "")
-    # SEAWEEDFS_WORKER_IP=$(${CONTAINER_PROVIDER} inspect "${SEAWEEDFS_WORKER_CONTAINER_NAME}" \
-    #     --format '{{.NetworkSettings.Networks.kind.IPAddress}}' 2>/dev/null || echo "")
-    # if [[ -n "${SEAWEEDFS_IP}" && -n "${SEAWEEDFS_WORKER_IP}" ]]; then
-    #     SEAWEEDFS_IP="${SEAWEEDFS_IP}" SEAWEEDFS_WORKER_IP="${SEAWEEDFS_WORKER_IP}" \
-    #     SEAWEEDFS_METRICS_PORT="${SEAWEEDFS_METRICS_PORT}" \
-    #     SEAWEEDFS_WORKER_METRICS_PORT="${SEAWEEDFS_WORKER_METRICS_PORT}" \
-    #     envsubst '${SEAWEEDFS_IP} ${SEAWEEDFS_WORKER_IP} ${SEAWEEDFS_METRICS_PORT} ${SEAWEEDFS_WORKER_METRICS_PORT}' \
-    #         < "${GIT_REPO_ROOT}/monitoring/platform/seaweedfs-host-servicemonitor.yaml.tpl" \
-    #         | kubectl --context "${CONTEXT_NAME}" apply -f -
-    # else
-    #     echo "  ⚠️  host SeaweedFS container(s) not found — skipping arm C store metrics"
-    # fi
+    # Host SeaweedFS metrics (arm C's store). A static target on the kind
+    # bridge, so the container IP is resolved at apply time. Server only: the
+    # maintenance worker is not on the kind network (see the template header).
+    echo "📊 Applying host SeaweedFS ServiceMonitor (arm C store)..."
+    SEAWEEDFS_IP=$(${CONTAINER_PROVIDER} inspect "${SEAWEEDFS_CONTAINER_NAME}" \
+        --format '{{.NetworkSettings.Networks.kind.IPAddress}}' 2>/dev/null || echo "")
+    # Validate the shape, not just non-emptiness: a container missing from the
+    # kind network makes the Go template print "<no value>", which passes -n and
+    # then gets the Endpoints object rejected by the API server.
+    if [[ "${SEAWEEDFS_IP}" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+        SEAWEEDFS_IP="${SEAWEEDFS_IP}" SEAWEEDFS_METRICS_PORT="${SEAWEEDFS_METRICS_PORT}" \
+        envsubst '${SEAWEEDFS_IP} ${SEAWEEDFS_METRICS_PORT}' \
+            < "${GIT_REPO_ROOT}/monitoring/platform/seaweedfs-host-servicemonitor.yaml.tpl" \
+            | kubectl --context "${CONTEXT_NAME}" apply -f -
+    else
+        echo "  ⚠️  host SeaweedFS has no kind-network IP (got '${SEAWEEDFS_IP}') — skipping arm C store metrics"
+    fi
 
     # NOTE: arm B needs NO ServiceMonitor here. seaweedfs-operator creates one
     # per component (master/volume/filer/s3, ownerReferences: Seaweed) as soon as

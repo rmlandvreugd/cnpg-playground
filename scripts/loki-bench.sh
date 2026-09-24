@@ -103,28 +103,35 @@ cmd_query() {
 
 # LOKI_BENCH_SETTLE / LOKI_BENCH_WINDOW let the same check run early in a soak
 # (when nothing is old enough to be settled yet) and on settled data later.
-SETTLE="${LOKI_BENCH_SETTLE:-600}"     # seconds to skip at the live edge
-WINDOW="${LOKI_BENCH_WINDOW:-30m}"     # range to aggregate over
-
+# Read at CALL time: resolving them once at script load meant a per-call
+# override (`LOKI_BENCH_SETTLE=60 cmd_ingest`) was silently ignored — `start`
+# then "confirmed" ingestion against a window older than the load itself, saw
+# zeros on every arm, and started the clock anyway.
+#
+# Returns non-zero if any arm reports zero lines, so callers can refuse to
+# proceed rather than print zeros and carry on.
 cmd_ingest() {
-    echo "Ingest parity over ${WINDOW} ending ${SETTLE}s ago, org=${ORG}"
+    local settle="${LOKI_BENCH_SETTLE:-600}" window="${LOKI_BENCH_WINDOW:-30m}" out
+    echo "Ingest parity over ${window} ending ${settle}s ago, org=${ORG}"
     echo "NOTE: always use a settled window. At the live edge the arms differ purely"
     echo "      by chunk-flush timing, which is the thing being measured."
     echo
-    runner_pod loki-bench-ingest "
-        END=\$(( \$(date +%s) - ${SETTLE} ))
+    out=$(runner_pod loki-bench-ingest "
+        END=\$(( \$(date +%s) - ${settle} ))
         for h in ${ARMS}; do
           b=\$(curl -sS --get \"http://\$h.grafana.svc.cluster.local:3100/loki/api/v1/query\" \
                 -H 'X-Scope-OrgID: ${ORG}' \
-                --data-urlencode 'query=sum(bytes_over_time({namespace=\"loki-bench\"}[${WINDOW}]))' \
+                --data-urlencode 'query=sum(bytes_over_time({namespace=\"loki-bench\"}[${window}]))' \
                 --data-urlencode \"time=\$END\" 2>/dev/null | tr ',' '\n' | grep -A1 '\"value\"' | tail -1 | tr -dc '0-9')
           l=\$(curl -sS --get \"http://\$h.grafana.svc.cluster.local:3100/loki/api/v1/query\" \
                 -H 'X-Scope-OrgID: ${ORG}' \
-                --data-urlencode 'query=sum(count_over_time({namespace=\"loki-bench\"}[${WINDOW}]))' \
+                --data-urlencode 'query=sum(count_over_time({namespace=\"loki-bench\"}[${window}]))' \
                 --data-urlencode \"time=\$END\" 2>/dev/null | tr ',' '\n' | grep -A1 '\"value\"' | tail -1 | tr -dc '0-9')
           printf '  %-18s bytes=%-12s lines=%s\n' \"\$h\" \"\${b:-0}\" \"\${l:-0}\"
         done
-    "
+    ")
+    echo "${out}"
+    ! printf '%s\n' "${out}" | grep -q 'lines=0$'
 }
 
 
@@ -139,44 +146,75 @@ cmd_ingest() {
 # other two arms carried on, so nothing looked wrong from the outside.
 cmd_health() {
     # A non-zero exit here is a RESULT (soak dirty), not a script failure, so
-    # drop common.sh's ERR trap for this path — otherwise it prints a misleading
-    # "script failed" line on top of a perfectly good verdict.
+    # drop common.sh's ERR trap for this path.
     trap - ERR
-    local bad=0
-    echo "=== per-arm object-store errors (last 300 log lines) ==="
+    # Time-bounded, not "last N lines": a line-count window cannot tell an error
+    # from an hour ago from one happening now, so a recovered component kept
+    # failing the check and a quiet failing one could pass it.
+    local since="${LOKI_BENCH_HEALTH_SINCE:-30m}" bad=0 n
+    local pat='InvalidAccessKeyId|AccessDenied|NoSuchBucket|bucket does not exist|failed to flush|500 Internal Server Error'
+
+    echo "=== Loki arms: object-store errors in the last ${since} ==="
     for arm in loki loki-rustfs loki-seaweedfs; do
-        local n
-        n=$(kc -n grafana logs "${arm}-0" -c loki --tail=300 2>/dev/null \
-             | grep -ciE 'InvalidAccessKeyId|AccessDenied|NoSuchBucket|failed to flush' || true)
+        n=$(kc -n grafana logs "${arm}-0" -c loki --since="${since}" 2>/dev/null | grep -ciE "${pat}" || true)
         if [ "${n:-0}" -gt 0 ]; then
-            printf '  ❌ %-16s %s store errors\n' "${arm}" "${n}"
-            kc -n grafana logs "${arm}-0" -c loki --tail=300 2>/dev/null \
-              | grep -iE 'InvalidAccessKeyId|AccessDenied|NoSuchBucket' | tail -1 | cut -c1-160 | sed 's/^/       /'
-            bad=$((bad + 1))
+            printf '  ❌ %-16s %s store errors\n' "${arm}" "${n}"; bad=$((bad + 1))
         else
             printf '  ✅ %-16s clean\n' "${arm}"
         fi
     done
 
     echo
-    echo "=== mirror sidecar ==="
-    local m
-    m=$(kc -n grafana logs seaweedfs-ab-filer-0 -c filer-backup-rustfs --tail=300 2>/dev/null \
+    echo "=== mirror sidecar (last ${since}) ==="
+    n=$(kc -n grafana logs seaweedfs-ab-filer-0 -c filer-backup-rustfs --since="${since}" 2>/dev/null \
          | grep -ciE 'InvalidAccessKeyId|AccessDenied|error' || true)
-    if [ "${m:-0}" -gt 0 ]; then
-        printf '  ❌ filer.backup    %s errors\n' "${m}"
-        bad=$((bad + 1))
+    if [ "${n:-0}" -gt 0 ]; then printf '  ❌ filer.backup    %s errors\n' "${n}"; bad=$((bad + 1))
+    else printf '  ✅ filer.backup    clean\n'; fi
+
+    # Mimir and Tempo share RustFS with arm A. In the second soak they reported
+    # the RustFS failure ("bucket does not exist") while this check only looked
+    # at Loki, so the failure went unnoticed until verdict time.
+    echo
+    echo "=== Mimir / Tempo long-term store (last ${since}) ==="
+    local ns
+    for ns in mimir tempo; do
+        n=$(kc -n "${ns}" logs -l 'app.kubernetes.io/component in (ingester,compactor,store-gateway)' \
+              --since="${since}" --prefix 2>/dev/null | grep -ciE "${pat}" || true)
+        if [ "${n:-0}" -gt 0 ]; then printf '  ❌ %-16s %s store errors\n' "${ns}" "${n}"; bad=$((bad + 1))
+        else printf '  ✅ %-16s clean\n' "${ns}"; fi
+    done
+
+    # Log-silence is not correctness: a store can accept requests and return
+    # nothing. After RustFS failed, arm A answered every stored window with an
+    # EMPTY result and no error. So ask each arm the same question about data
+    # old enough to be store-served, and require the same answer.
+    echo
+    echo "=== store-served answers (1h window ending 5h ago, all namespaces) ==="
+    local ans
+    ans=$(runner_pod loki-bench-health "
+        T=\$(( \$(date +%s) - 5*3600 ))
+        for h in ${ARMS}; do
+          v=\$(curl -sS --get \"http://\$h.grafana.svc.cluster.local:3100/loki/api/v1/query\" \
+                -H 'X-Scope-OrgID: ${ORG}' \
+                --data-urlencode 'query=sum(count_over_time({namespace=~\".+\"}[1h]))' \
+                --data-urlencode \"time=\$T\" 2>/dev/null | tr ',' '\n' | grep -A1 '\"value\"' | tail -1 | tr -dc '0-9')
+          echo \"\$h \${v:-0}\"
+        done
+    ")
+    printf '%s\n' "${ans}" | sed 's/^/  /'
+    if [ "$(printf '%s\n' "${ans}" | awk 'NF==2 {print $2}' | sort -u | wc -l)" -gt 1 ]; then
+        echo "  ❌ arms DISAGREE on the same stored window"; bad=$((bad + 1))
     else
-        printf '  ✅ filer.backup    clean\n'
+        echo "  ✅ arms agree"
     fi
 
     echo
     echo "=== flog load still running? ==="
-    kc -n loki-bench get deploy flog --no-headers 2>&1 | sed 's/^/  /'
+    kc -n loki-bench get deploy flog --no-headers 2>&1 | sed 's/^/  /' || true
 
     echo
     if [ "${bad}" -gt 0 ]; then
-        echo "  VERDICT: soak is NOT clean — ${bad} component(s) erroring."
+        echo "  VERDICT: soak is NOT clean — ${bad} check(s) failing."
         echo "  Results taken across this window are not trustworthy. Fix, then restart the clock."
         return 1
     fi
@@ -217,7 +255,11 @@ cmd_start() {
     echo
     echo "=== confirming all three arms are ingesting it ==="
     sleep 90
-    LOKI_BENCH_SETTLE=60 LOKI_BENCH_WINDOW=1m cmd_ingest
+    if ! LOKI_BENCH_SETTLE=30 LOKI_BENCH_WINDOW=1m cmd_ingest; then
+        echo
+        echo "  At least one arm shows NO ingested load. Not starting the clock."
+        return 1
+    fi
 
     echo
     mkdir -p "$(dirname "${SOAK_STATE}")"
@@ -256,11 +298,8 @@ cmd_status() {
     echo "=== arm StatefulSets ==="
     kc -n grafana get sts 2>&1 | grep -E 'NAME|loki' | sed 's/^/  /'
     echo
-    echo "=== bucket contents (object counts) ==="
-    runner_pod loki-bench-status "
-        echo '  (see scripts/loki-bench.sh restore for the mirror comparison)'
-    " >/dev/null 2>&1 || true
-    cmd_ingest
+    echo "=== ingest parity ==="
+    cmd_ingest || true
 }
 
 # Restore drill: does the RustFS mirror actually hold a usable copy of arm B?
@@ -274,7 +313,10 @@ cmd_restore() {
     echo "  mirror can hold keys the source no longer has. Re-seed first with:"
     echo "    SEAWEEDFS_AB_INITIAL_SNAPSHOT=-initialSnapshot monitoring/setup.sh ${region}"
     echo
-    echo "  Not yet implemented — see bead cnpg-playground-t9p7.3."
+    echo "  NOT IMPLEMENTED. The 2026-09-24 drill was recorded as FAIL without being"
+    echo "  run: RustFS (bead e84t) listed 0 objects in loki-mirror while 2,298 sat on"
+    echo "  disk, and the mirror held ~500 objects its source had already deleted."
+    echo "  Verdict and evidence: docs/plans/2026-09-17-loki-seaweedfs-dr-fanout-design.md §5a."
     return 1
 }
 
