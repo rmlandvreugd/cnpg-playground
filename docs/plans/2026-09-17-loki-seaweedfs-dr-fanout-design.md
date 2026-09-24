@@ -346,11 +346,13 @@ RustFS mirror target therefore both hides its data and silently accumulates stal
 
 ### Verdict
 
-- **A — RustFS direct: REJECTED on reliability.** It had the best S3-level latency while healthy,
+- **A — RustFS direct: REJECTED on reliability, for the alpha.99 build.** This is
+  provisional: the cause is fixed in 1.0.0 (see *Root cause* below), and a 1.0.0 re-run is
+  pending. It had the best S3-level latency while healthy,
   which is moot: it failed in **both** soaks (at ~21.6h and ~46h uptime, same pinned build).
   After the failure it served no data, and a restart restored it for only minutes before listing
   and deletes failed again.
-- **DR mirror to RustFS: REJECTED** (restore drill FAIL, same cause).
+- **DR mirror to RustFS: REJECTED for alpha.99** (restore drill FAIL, same cause). Also provisional.
 - **C — host SeaweedFS (control): KEEP.** Correct, retention works, lowest flush backpressure,
   better S3 tail latency than B on reads and writes, and no in-cluster cost.
 - **B — in-cluster SeaweedFS: not adopted.** Correct and retention works, but it has no
@@ -369,6 +371,61 @@ This verdict is a recommendation from this data, not a production benchmark.
   load average peaked near 135). This affects B and C equally, but it inflates both.
 - `scripts/loki-bench.sh health` did not detect this soak's failure. It only greps the last
   300 lines of the Loki arms and the mirror, and does not check Mimir or Tempo.
+
+### Root cause of the RustFS failure, and what it means for arm A (added 2026-09-24)
+
+The failure is a known defect of the **1.0.0-alpha.99** build, not of RustFS as a store. It is
+fixed in **1.0.0 GA** (2026-09-16). So the A and mirror rejections above are **provisional**:
+they reject that build. They do not yet say how RustFS compares to SeaweedFS.
+
+**Mechanism.** The evidence is RustFS's own JSON log (`/logs` in the container) plus the alpha.99
+source.
+
+1. At 06:01:39Z the WSL2 VM stalled for a few seconds. Node metrics at 06:00 show `node_load1`
+   at 403, busy CPU falling from 7.1 to 4.1 cores, fewer writes, and one missed scrape.
+2. One `walk_dir` call, the directory walk behind every listing, exceeded its 5 s budget
+   (`op=walk_dir timeout_ms=5000`).
+3. In alpha.99, `mark_failure()` sets the drive status to FAULTY on the **first** timeout. From
+   then on, every drive operation returns `FaultyDisk`.
+4. Nothing clears that state. The main store's drives are created with `health_check: false`
+   (`store/init.rs`), so the recovery monitor never starts. The logs contain zero recovery-probe
+   lines.
+5. With a single drive, a faulty drive means no quorum for anything:
+   - IAM config reads fail with `InsufficientReadQuorum` on `.rustfs.sys/config/iam/...`. This
+     surfaces as `InvalidAccessKeyId`, even for the root key.
+   - Writes fail with `ErasureWriteQuorum`.
+   - Listings come back empty or as `NoSuchBucket`.
+
+   The data on disk is untouched throughout.
+6. A restart clears the in-memory flag. The next slow walk trips it again: after the 06:32
+   restart this happened at 06:39:25. That explains why the restart helped only for minutes.
+
+The same failure is reported upstream as rustfs/rustfs#2686 (faulty under load, never recovers),
+#2658 (`/health/ready` stays 200 while faulty), #5938 (faulty handles need a restart) and #3191
+(a listing timeout cascades into `NoSuchBucket`).
+
+**Reproduced.** `scripts/rustfs-disk-stall-test.sh` runs a throwaway RustFS on an ext4 loop
+device, keeps PUT + LIST traffic going, and uses `fsfreeze` to stall the disk:
+
+| build | before the stall | 30 s / 2 min / 5 min after thaw |
+|---|---|---|
+| alpha.99 | **already failed**: one `walk_dir` timeout under ordinary parallel load, then faulty for good | auth FAIL, auth FAIL, auth FAIL |
+| 1.0.0 (defaults), 45 s stall | 1500/1500, put ok | 1500/1500 put ok, at every check |
+| 1.0.0 with `high_latency`, 45 s and 75 s stalls | 1500/1500, put ok | 1500/1500 put ok, at every check |
+
+1.0.0 creates the drives with `health_check: true`, so its recovery probe brings the drive back
+online. It also adds `RUSTFS_DRIVE_TIMEOUT_PROFILE=high_latency` (60 s budgets) and
+`RUSTFS_DRIVE_TIMEOUT_HEALTH_ACTION=ignore_scanner`. Neither setting was needed to recover.
+
+**To finish the A/B/C comparison:**
+
+1. Rebuild with `RUSTFS_IMAGE` pinned to the 1.0.0 digest (`scripts/common.sh`). Use a **full**
+   rebuild so there is no in-place alpha → GA data migration.
+2. Run a new soak of at least 48 h, so that it covers at least two 06:00Z host stalls, and run
+   `loki-bench.sh health` during it. The pass criterion is that arm A answers exactly like B and C
+   on store-served windows, and Mimir and Tempo show no store errors.
+3. Re-run the restore drill from `loki-mirror`.
+4. Revise A and the mirror in the verdict above from those results.
 
 ---
 

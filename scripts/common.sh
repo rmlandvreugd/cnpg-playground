@@ -76,14 +76,19 @@ K8S_BASE_NAME=${K8S_NAME-k8s-}
 MC_IMAGE="${MC_IMAGE:-quay.io/minio/mc:latest}"
 
 # RustFS Configuration
-# Pinned by DIGEST, not :latest. RustFS is pre-1.0 (1.0.0-alpha.99) and was
-# previously tracking a moving tag, so two rebuilds could get different
-# binaries and a benchmark run was not reproducible. This digest is the
-# 2026-04-25 alpha.99 build the A/B/C results were taken against.
-# See bead cnpg-playground-e84t: this build degrades after ~21h uptime,
-# rejecting even the configured root key with InvalidAccessKeyId while the
-# on-disk data stays intact.
-RUSTFS_IMAGE="${RUSTFS_IMAGE:-rustfs/rustfs@sha256:103dd40b84d5aa3d5ab02f3a693797eb1d14cb842554b222dfbb589f364aa47f}"
+# Pinned by DIGEST (multi-arch index of the 1.0.0 GA release, 2026-09-16), not
+# a tag, so two rebuilds always get the same binary.
+#
+# Was 1.0.0-alpha.99 (sha256:103dd40b...). That build failed permanently after
+# ONE slow disk call (bead cnpg-playground-e84t): a walk_dir over its 5s budget
+# marks the single drive FAULTY on the first failure, and the main drives were
+# created with health_check=false, so no recovery probe ever clears it. With one
+# drive, faulty == no quorum: IAM reads fail (InvalidAccessKeyId even for root),
+# writes fail, listings come back empty. A multi-second WSL2 host stall was
+# enough to trigger it. 1.0.0 creates the drives with health_check=true and
+# recovers: in a fsfreeze test (45s and 75s disk stalls) 1.0.0 served again
+# within 30s of thaw, while alpha.99 went faulty and never recovered.
+RUSTFS_IMAGE="${RUSTFS_IMAGE:-rustfs/rustfs@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff}"
 RUSTFS_BASE_NAME="${RUSTFS_BASE_NAME:-objectstore}"
 RUSTFS_BASE_PORT=${RUSTFS_BASE_PORT:-9001}
 RUSTFS_ROOT_USER="${RUSTFS_ROOT_USER:-cnpg}"
