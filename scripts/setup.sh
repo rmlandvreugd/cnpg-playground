@@ -522,10 +522,13 @@ JSON
         # Pre-create Barman backup buckets (CNPG backups migrated off RustFS onto SeaweedFS).
         # Uses the bootstrap 'admin' identity (CreateBucket needs Admin); barman/loki stay least-privilege.
         echo "🪣 Creating SeaweedFS backup buckets (${SEAWEEDFS_BACKUP_BUCKET}, ${SEAWEEDFS_VER_BACKUP_BUCKET}, ${SEAWEEDFS_ZOT_BUCKET})..."
-        # NB: minio/mc has ENTRYPOINT [mc], so override with --entrypoint sh to run a shell.
-        retry 12 5 ${CONTAINER_PROVIDER} run --rm --network kind --entrypoint sh "${MC_IMAGE}" -c "
-            mc --insecure alias set sw https://${SEAWEEDFS_IP}:8333 '${SEAWEEDFS_ADMIN_ACCESS_KEY}' '${SEAWEEDFS_ADMIN_SECRET_KEY}' \
-            && mc --insecure mb --ignore-existing sw/${SEAWEEDFS_BACKUP_BUCKET} sw/${SEAWEEDFS_VER_BACKUP_BUCKET} sw/${SEAWEEDFS_ZOT_BUCKET} \
+        # NB: rustfs/rc has ENTRYPOINT [rc], so override with --entrypoint sh to run a shell.
+        # rc bucket create takes one bucket per call.
+        retry 12 5 ${CONTAINER_PROVIDER} run --rm --network kind --entrypoint sh "${RC_IMAGE}" -c "
+            rc alias set sw https://${SEAWEEDFS_IP}:8333 '${SEAWEEDFS_ADMIN_ACCESS_KEY}' '${SEAWEEDFS_ADMIN_SECRET_KEY}' --insecure >/dev/null \
+            && rc bucket create --ignore-existing sw/${SEAWEEDFS_BACKUP_BUCKET} \
+            && rc bucket create --ignore-existing sw/${SEAWEEDFS_VER_BACKUP_BUCKET} \
+            && rc bucket create --ignore-existing sw/${SEAWEEDFS_ZOT_BUCKET} \
             && echo '✅ SeaweedFS backup buckets ready'" \
             || echo "  ⚠️  Backup bucket init failed — verify SeaweedFS S3 gateway is up and 'admin' identity is valid"
 

@@ -70,12 +70,12 @@ for region in "${REGIONS[@]}"; do
         kubectl run mimir-bucket-init --restart=Never \
             --context "${CONTEXT_NAME}" \
             -n mimir \
-            --image="${MC_IMAGE}" \
+            --image="${RC_IMAGE}" \
             --pod-running-timeout=180s \
-            --command -- sh -c "mc --insecure alias set store https://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1 \
-                && mc --insecure mb --ignore-existing store/mimir-blocks \
-                && mc --insecure mb --ignore-existing store/mimir-alertmanager \
-                && mc --insecure mb --ignore-existing store/mimir-ruler \
+            --command -- sh -c "rc alias set store https://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' --insecure >/dev/null 2>&1 \
+                && rc bucket create --ignore-existing store/mimir-blocks \
+                && rc bucket create --ignore-existing store/mimir-alertmanager \
+                && rc bucket create --ignore-existing store/mimir-ruler \
                 && echo '✅ Mimir buckets ready'"
         kubectl --context "${CONTEXT_NAME}" -n mimir wait pod/mimir-bucket-init \
             --for=jsonpath='{.status.phase}'=Succeeded --timeout=180s \
@@ -139,10 +139,10 @@ for region in "${REGIONS[@]}"; do
         kubectl run tempo-bucket-init --restart=Never \
             --context "${CONTEXT_NAME}" \
             -n tempo \
-            --image="${MC_IMAGE}" \
+            --image="${RC_IMAGE}" \
             --pod-running-timeout=180s \
-            --command -- sh -c "mc --insecure alias set store https://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1 \
-                && mc --insecure mb --ignore-existing store/tempo \
+            --command -- sh -c "rc alias set store https://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' --insecure >/dev/null 2>&1 \
+                && rc bucket create --ignore-existing store/tempo \
                 && echo '✅ Bucket tempo ready'"
         kubectl --context "${CONTEXT_NAME}" -n tempo wait pod/tempo-bucket-init \
             --for=jsonpath='{.status.phase}'=Succeeded --timeout=180s \
@@ -288,15 +288,15 @@ EOF
     kubectl run loki-bucket-init --restart=Never \
         --context "${CONTEXT_NAME}" \
         -n grafana \
-        --image="${MC_IMAGE}" \
+        --image="${RC_IMAGE}" \
         --pod-running-timeout=180s \
-        --command -- sh -c "mc --insecure alias set store https://seaweedfs:8333 '${SEAWEEDFS_ADMIN_ACCESS_KEY}' '${SEAWEEDFS_ADMIN_SECRET_KEY}' 2>&1 \
-            && mc --insecure mb --ignore-existing store/loki \
+        --command -- sh -c "rc alias set store https://seaweedfs:8333 '${SEAWEEDFS_ADMIN_ACCESS_KEY}' '${SEAWEEDFS_ADMIN_SECRET_KEY}' --insecure 2>&1 \
+            && rc bucket create --ignore-existing store/loki \
             && echo '✅ Bucket loki ready'"
     kubectl --context "${CONTEXT_NAME}" -n grafana wait pod/loki-bucket-init \
         --for=jsonpath='{.status.phase}'=Succeeded --timeout=180s \
         && kubectl --context "${CONTEXT_NAME}" -n grafana logs pod/loki-bucket-init \
-        || echo "  ⚠️  Bucket init may have failed — verify: kubectl run mc ... mc --insecure mb store/loki"
+        || echo "  ⚠️  Bucket init may have failed — verify: kubectl run rc ... rc bucket create store/loki"
     kubectl --context "${CONTEXT_NAME}" -n grafana delete pod loki-bucket-init --ignore-not-found
 
     # --- Loki-B storage: in-cluster SeaweedFS + mirror to RustFS (bead 8ti) ---
@@ -319,24 +319,24 @@ EOF
     kubectl run rustfs-iam-init --restart=Never \
         --context "${CONTEXT_NAME}" \
         -n grafana \
-        --image="${MC_IMAGE}" \
+        --image="${RC_IMAGE}" \
         --pod-running-timeout=180s \
         --command -- sh -c "set -e
-            mc --insecure alias set store https://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' >/dev/null 2>&1
+            rc alias set store https://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' --insecure >/dev/null 2>&1
             for b in ${RUSTFS_LOKI_DIRECT_BUCKET} ${RUSTFS_LOKI_MIRROR_BUCKET}; do
-                mc --insecure mb --ignore-existing store/\$b
+                rc bucket create --ignore-existing store/\$b
             done
             add_user() {  # <bucket> <access> <secret>
                 cat > /tmp/\$1.json <<POLICY
 {\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:*\"],\"Resource\":[\"arn:aws:s3:::\$1\",\"arn:aws:s3:::\$1/*\"]}]}
 POLICY
-                mc --insecure admin policy create store \$1-rw /tmp/\$1.json 2>/dev/null || true
-                mc --insecure admin user add store \$2 \$3 2>/dev/null || true
-                mc --insecure admin policy attach store \$1-rw --user \$2 2>/dev/null || true
+                rc admin policy create store \$1-rw /tmp/\$1.json 2>/dev/null || true
+                rc admin user add store \$2 \$3 2>/dev/null || true
+                rc admin policy attach store \$1-rw --user \$2 2>/dev/null || true
             }
             add_user ${RUSTFS_LOKI_DIRECT_BUCKET} '${RUSTFS_LOKI_DIRECT_ACCESS_KEY}' '${RUSTFS_LOKI_DIRECT_SECRET_KEY}'
             add_user ${RUSTFS_LOKI_MIRROR_BUCKET} '${RUSTFS_LOKI_MIRROR_ACCESS_KEY}' '${RUSTFS_LOKI_MIRROR_SECRET_KEY}'
-            mc --insecure admin user list store
+            rc admin user list store
             echo '✅ RustFS buckets + IAM users ready'"
     kubectl --context "${CONTEXT_NAME}" -n grafana wait pod/rustfs-iam-init \
         --for=jsonpath='{.status.phase}'=Succeeded --timeout=180s \
@@ -394,10 +394,10 @@ POLICY
     kubectl run seaweedfs-ab-bucket-init --restart=Never \
         --context "${CONTEXT_NAME}" \
         -n grafana \
-        --image="${MC_IMAGE}" \
+        --image="${RC_IMAGE}" \
         --pod-running-timeout=180s \
-        --command -- sh -c "mc --insecure alias set ab https://seaweedfs-ab-s3-https:8333 '${SEAWEEDFS_AB_S3_ADMIN_ACCESS_KEY}' '${SEAWEEDFS_AB_S3_ADMIN_SECRET_KEY}' 2>&1 \
-            && mc --insecure mb --ignore-existing ab/loki \
+        --command -- sh -c "rc alias set ab https://seaweedfs-ab-s3-https:8333 '${SEAWEEDFS_AB_S3_ADMIN_ACCESS_KEY}' '${SEAWEEDFS_AB_S3_ADMIN_SECRET_KEY}' --insecure 2>&1 \
+            && rc bucket create --ignore-existing ab/loki \
             && echo '✅ seaweedfs-ab bucket loki ready'"
     kubectl --context "${CONTEXT_NAME}" -n grafana wait pod/seaweedfs-ab-bucket-init \
         --for=jsonpath='{.status.phase}'=Succeeded --timeout=180s \
@@ -537,23 +537,23 @@ fi
     kubectl --context "${CONTEXT_NAME}" apply \
         -f "${GIT_REPO_ROOT}/monitoring/platform/zot-servicemonitor.yaml"
 
-    # # Host SeaweedFS metrics (arm C's store) + its maintenance worker. Static
-    # # targets on the kind bridge, so the container IPs are resolved at apply time.
-    # echo "📊 Applying host SeaweedFS ServiceMonitors (arm C store)..."
-    # SEAWEEDFS_IP=$(${CONTAINER_PROVIDER} inspect "${SEAWEEDFS_CONTAINER_NAME}" \
-    #     --format '{{.NetworkSettings.Networks.kind.IPAddress}}' 2>/dev/null || echo "")
-    # SEAWEEDFS_WORKER_IP=$(${CONTAINER_PROVIDER} inspect "${SEAWEEDFS_WORKER_CONTAINER_NAME}" \
-    #     --format '{{.NetworkSettings.Networks.kind.IPAddress}}' 2>/dev/null || echo "")
-    # if [[ -n "${SEAWEEDFS_IP}" && -n "${SEAWEEDFS_WORKER_IP}" ]]; then
-    #     SEAWEEDFS_IP="${SEAWEEDFS_IP}" SEAWEEDFS_WORKER_IP="${SEAWEEDFS_WORKER_IP}" \
-    #     SEAWEEDFS_METRICS_PORT="${SEAWEEDFS_METRICS_PORT}" \
-    #     SEAWEEDFS_WORKER_METRICS_PORT="${SEAWEEDFS_WORKER_METRICS_PORT}" \
-    #     envsubst '${SEAWEEDFS_IP} ${SEAWEEDFS_WORKER_IP} ${SEAWEEDFS_METRICS_PORT} ${SEAWEEDFS_WORKER_METRICS_PORT}' \
-    #         < "${GIT_REPO_ROOT}/monitoring/platform/seaweedfs-host-servicemonitor.yaml.tpl" \
-    #         | kubectl --context "${CONTEXT_NAME}" apply -f -
-    # else
-    #     echo "  ⚠️  host SeaweedFS container(s) not found — skipping arm C store metrics"
-    # fi
+    # Host SeaweedFS metrics (arm C's store). A static target on the kind
+    # bridge, so the container IP is resolved at apply time. Server only: the
+    # maintenance worker is not on the kind network (see the template header).
+    echo "📊 Applying host SeaweedFS ServiceMonitor (arm C store)..."
+    SEAWEEDFS_IP=$(${CONTAINER_PROVIDER} inspect "${SEAWEEDFS_CONTAINER_NAME}" \
+        --format '{{.NetworkSettings.Networks.kind.IPAddress}}' 2>/dev/null || echo "")
+    # Validate the shape, not just non-emptiness: a container missing from the
+    # kind network makes the Go template print "<no value>", which passes -n and
+    # then gets the Endpoints object rejected by the API server.
+    if [[ "${SEAWEEDFS_IP}" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+        SEAWEEDFS_IP="${SEAWEEDFS_IP}" SEAWEEDFS_METRICS_PORT="${SEAWEEDFS_METRICS_PORT}" \
+        envsubst '${SEAWEEDFS_IP} ${SEAWEEDFS_METRICS_PORT}' \
+            < "${GIT_REPO_ROOT}/monitoring/platform/seaweedfs-host-servicemonitor.yaml.tpl" \
+            | kubectl --context "${CONTEXT_NAME}" apply -f -
+    else
+        echo "  ⚠️  host SeaweedFS has no kind-network IP (got '${SEAWEEDFS_IP}') — skipping arm C store metrics"
+    fi
 
     # NOTE: arm B needs NO ServiceMonitor here. seaweedfs-operator creates one
     # per component (master/volume/filer/s3, ownerReferences: Seaweed) as soon as

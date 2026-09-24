@@ -6,8 +6,12 @@
 # "in-cluster vs host SeaweedFS" claim unfalsifiable.
 #
 # `weed server` serves /metrics only when -metricsPort is set — see
-# SEAWEEDFS_METRICS_PORT in scripts/common.sh. The maintenance worker already had
-# its own -metricsPort and is scraped here too.
+# SEAWEEDFS_METRICS_PORT in scripts/common.sh.
+#
+# The maintenance worker is deliberately NOT scraped: it is attached only to the
+# default docker bridge, not the kind network, so it has no address a pod can
+# reach. An earlier version templated its kind IP anyway, got an empty string,
+# and the Endpoints object was rejected (`ip: <no value>`), failing setup.
 #
 # Headless Service + manual Endpoints is the established pattern for host
 # containers on the kind bridge (mirrors zot-servicemonitor.yaml and
@@ -41,34 +45,6 @@ subsets:
         port: ${SEAWEEDFS_METRICS_PORT}
         protocol: TCP
 ---
-apiVersion: v1
-kind: Service
-metadata:
-  name: seaweedfs-worker-metrics
-  namespace: otel
-  labels:
-    app.kubernetes.io/name: seaweedfs-worker-metrics
-spec:
-  clusterIP: None
-  ports:
-    - name: metrics
-      port: ${SEAWEEDFS_WORKER_METRICS_PORT}
-      targetPort: ${SEAWEEDFS_WORKER_METRICS_PORT}
-      protocol: TCP
----
-apiVersion: v1
-kind: Endpoints
-metadata:
-  name: seaweedfs-worker-metrics
-  namespace: otel
-subsets:
-  - addresses:
-      - ip: ${SEAWEEDFS_WORKER_IP}
-    ports:
-      - name: metrics
-        port: ${SEAWEEDFS_WORKER_METRICS_PORT}
-        protocol: TCP
----
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -78,21 +54,6 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: seaweedfs-host-metrics
-  endpoints:
-    - port: metrics
-      path: /metrics
-      scheme: http
-      interval: 30s
----
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: seaweedfs-worker
-  namespace: otel
-spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: seaweedfs-worker-metrics
   endpoints:
     - port: metrics
       path: /metrics

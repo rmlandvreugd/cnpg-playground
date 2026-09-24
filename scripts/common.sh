@@ -70,20 +70,33 @@ fi
 K8S_CONTEXT_PREFIX=${K8S_CONTEXT_PREFIX-kind-}
 K8S_BASE_NAME=${K8S_NAME-k8s-}
 
-# mc (S3 client), used for bucket bootstrap against RustFS/SeaweedFS. minio/mc was
-# pulled from Docker Hub (docker.io/minio/mc:latest now 404s — "repository does not
-# exist"); MinIO publishes it on quay.io instead.
-MC_IMAGE="${MC_IMAGE:-quay.io/minio/mc:latest}"
+# rc (RustFS's S3 CLI, https://github.com/rustfs/cli), used for bucket + IAM
+# bootstrap against both RustFS and SeaweedFS. Replaces minio/mc (bead
+# cnpg-playground-z6x): mc was an unpinned :latest on quay.io after its Docker
+# Hub repo disappeared. rc v0.1.36 was tested against RustFS 1.0.0 and
+# SeaweedFS over self-signed HTTPS: every bootstrap flow here is idempotent,
+# and the scoped IAM policies are enforced.
+# Two differences from mc: --insecure goes on `rc alias set` (it is stored per
+# alias) instead of on every call, and `rc bucket create` takes one bucket at
+# a time. The image's ENTRYPOINT is `rc`, it runs as the non-root user `rc`,
+# and it ships sh, so `--entrypoint sh` / `--command -- sh -c` work as before.
+# Pinned by digest (multi-arch index of v0.1.36).
+RC_IMAGE="${RC_IMAGE:-rustfs/rc@sha256:ab024bfebee49a750ce886b4c70963ccd9ddaa03f491704a90710641d7a26699}"
 
 # RustFS Configuration
-# Pinned by DIGEST, not :latest. RustFS is pre-1.0 (1.0.0-alpha.99) and was
-# previously tracking a moving tag, so two rebuilds could get different
-# binaries and a benchmark run was not reproducible. This digest is the
-# 2026-04-25 alpha.99 build the A/B/C results were taken against.
-# See bead cnpg-playground-e84t: this build degrades after ~21h uptime,
-# rejecting even the configured root key with InvalidAccessKeyId while the
-# on-disk data stays intact.
-RUSTFS_IMAGE="${RUSTFS_IMAGE:-rustfs/rustfs@sha256:103dd40b84d5aa3d5ab02f3a693797eb1d14cb842554b222dfbb589f364aa47f}"
+# Pinned by DIGEST (multi-arch index of the 1.0.0 GA release, 2026-09-16), not
+# a tag, so two rebuilds always get the same binary.
+#
+# Was 1.0.0-alpha.99 (sha256:103dd40b...). That build failed permanently after
+# ONE slow disk call (bead cnpg-playground-e84t): a walk_dir over its 5s budget
+# marks the single drive FAULTY on the first failure, and the main drives were
+# created with health_check=false, so no recovery probe ever clears it. With one
+# drive, faulty == no quorum: IAM reads fail (InvalidAccessKeyId even for root),
+# writes fail, listings come back empty. A multi-second WSL2 host stall was
+# enough to trigger it. 1.0.0 creates the drives with health_check=true and
+# recovers: in a fsfreeze test (45s and 75s disk stalls) 1.0.0 served again
+# within 30s of thaw, while alpha.99 went faulty and never recovered.
+RUSTFS_IMAGE="${RUSTFS_IMAGE:-rustfs/rustfs@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff}"
 RUSTFS_BASE_NAME="${RUSTFS_BASE_NAME:-objectstore}"
 RUSTFS_BASE_PORT=${RUSTFS_BASE_PORT:-9001}
 RUSTFS_ROOT_USER="${RUSTFS_ROOT_USER:-cnpg}"
@@ -111,7 +124,7 @@ SEAWEEDFS_WORKER_CONTAINER_NAME="${SEAWEEDFS_WORKER_CONTAINER_NAME:-seaweedfs-wo
 # loki: RW on the 'loki' bucket only (keeps Loki working; blanket Admin dropped — see SEAWEEDFS_ADMIN_* for bootstrap).
 SEAWEEDFS_ACCESS_KEY="${SEAWEEDFS_ACCESS_KEY:-loki}"
 SEAWEEDFS_SECRET_KEY="${SEAWEEDFS_SECRET_KEY:-lokiS3secret}"
-# admin: full Admin — used only to bootstrap buckets (mc mb) during setup, not handed to any workload.
+# admin: full Admin — used only to bootstrap buckets (rc bucket create) during setup, not handed to any workload.
 SEAWEEDFS_ADMIN_ACCESS_KEY="${SEAWEEDFS_ADMIN_ACCESS_KEY:-swadmin}"
 SEAWEEDFS_ADMIN_SECRET_KEY="${SEAWEEDFS_ADMIN_SECRET_KEY:-swadminS3secret}"
 # barman: RW/List on the backup buckets — used by CNPG/Barman ObjectStores (migrated off RustFS).
