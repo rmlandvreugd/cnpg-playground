@@ -56,8 +56,10 @@ for region in "${REGIONS[@]}"; do
     helm_uninstall_if_present loki grafana "${CONTEXT_NAME}"
     helm_uninstall_if_present loki-rustfs grafana "${CONTEXT_NAME}"
     helm_uninstall_if_present loki-seaweedfs grafana "${CONTEXT_NAME}"
+    # Only present if a `loki-bench.sh restore` was kept (LOKI_BENCH_RESTORE_KEEP=1) or interrupted.
+    helm_uninstall_if_present loki-restore grafana "${CONTEXT_NAME}"
     kubectl --context "${CONTEXT_NAME}" -n grafana delete secret \
-        loki-s3 loki-rustfs-s3 loki-seaweedfs-s3 --ignore-not-found
+        loki-s3 loki-rustfs-s3 loki-seaweedfs-s3 loki-restore-s3 --ignore-not-found
 
     # --- seaweedfs-ab (Loki-B storage, bead 8ti) ---
     # The Seaweed CR goes first: deleting it lets the operator tear its

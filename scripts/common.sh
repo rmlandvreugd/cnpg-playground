@@ -282,6 +282,12 @@ RUSTFS_LOKI_DIRECT_SECRET_KEY="${RUSTFS_LOKI_DIRECT_SECRET_KEY:-lokiDirectSecret
 RUSTFS_LOKI_MIRROR_BUCKET="${RUSTFS_LOKI_MIRROR_BUCKET:-loki-mirror}"
 RUSTFS_LOKI_MIRROR_ACCESS_KEY="${RUSTFS_LOKI_MIRROR_ACCESS_KEY:-loki-mirror}"
 RUSTFS_LOKI_MIRROR_SECRET_KEY="${RUSTFS_LOKI_MIRROR_SECRET_KEY:-lokiMirrorSecret}"
+# Read-only view of loki-mirror for the restore drill (scripts/loki-bench.sh
+# restore). The mirror user above is read-write because filer.backup writes and
+# deletes through it; a restore must never be able to change the copy it is
+# proving, so it gets its own Get/List-only user, created and removed by the drill.
+RUSTFS_LOKI_RESTORE_ACCESS_KEY="${RUSTFS_LOKI_RESTORE_ACCESS_KEY:-loki-restore}"
+RUSTFS_LOKI_RESTORE_SECRET_KEY="${RUSTFS_LOKI_RESTORE_SECRET_KEY:-lokiRestoreSecret}"
 
 # Capsule + capsule-proxy + gangplank
 CAPSULE_CHART_VERSION="${CAPSULE_CHART_VERSION:-0.14.6}"

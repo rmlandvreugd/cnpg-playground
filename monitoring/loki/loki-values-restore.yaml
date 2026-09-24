@@ -1,0 +1,55 @@
+# Restore-drill Loki (release "loki-restore") — reads the RustFS loki-mirror
+# bucket, the filer.backup copy of arm B, to prove the copy is usable.
+# Installed and removed by `scripts/loki-bench.sh restore`; never by setup.sh.
+#
+# Layered ON TOP of loki-values-common.yaml so the schema is exactly arm B's
+# (a restore with a different schema_config would read nothing and prove
+# nothing). Everything below exists to make this Loki READ-ONLY toward the
+# mirror, which must stay a faithful copy while the soak is still running:
+#   - credentials are a Get/List-only RustFS user (the drill refuses to start
+#     if that user can write), so no write can land even by accident;
+#   - retention is off, so the compactor never tries to delete from the mirror;
+#   - no writer is pointed at it (k8s-monitoring and the OTel collector send
+#     only to the three arms), so its ingester never has anything to flush.
+---
+# REQUIRED for a second Loki release in the namespace — see loki-values-rustfs.yaml.
+nameOverride: loki-restore
+
+loki:
+  storage:
+    type: s3
+    bucketNames:
+      chunks: loki-mirror
+      ruler: loki-mirror
+      admin: loki-mirror
+    s3:
+      # Bare name, as for arm A: the RustFS cert carries DNS:objectstore-local.
+      endpoint: https://objectstore-local:9000
+      region: us-east-1
+      accessKeyId: ${S3_ACCESS_KEY_ID}
+      secretAccessKey: ${S3_SECRET_ACCESS_KEY}
+      s3ForcePathStyle: true
+      insecure: false
+      http_config:
+        ca_file: /etc/ssl/step-ca/ca-certificates.crt
+
+  compactor:
+    retention_enabled: false
+
+  # Would try to (re)write loki_cluster_seed.json into the mirror.
+  analytics:
+    reporting_enabled: false
+
+singleBinary:
+  # Throwaway: no PVC left behind after `helm uninstall`.
+  persistence:
+    enabled: false
+  extraEnvFrom:
+    - secretRef:
+        name: loki-restore-s3
+
+monitoring:
+  # Its metrics would land in Mimir next to the three arms and pollute the
+  # per-arm dashboards.
+  serviceMonitor:
+    enabled: false
