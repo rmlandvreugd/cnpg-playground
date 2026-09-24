@@ -70,10 +70,18 @@ fi
 K8S_CONTEXT_PREFIX=${K8S_CONTEXT_PREFIX-kind-}
 K8S_BASE_NAME=${K8S_NAME-k8s-}
 
-# mc (S3 client), used for bucket bootstrap against RustFS/SeaweedFS. minio/mc was
-# pulled from Docker Hub (docker.io/minio/mc:latest now 404s — "repository does not
-# exist"); MinIO publishes it on quay.io instead.
-MC_IMAGE="${MC_IMAGE:-quay.io/minio/mc:latest}"
+# rc (RustFS's S3 CLI, https://github.com/rustfs/cli), used for bucket + IAM
+# bootstrap against both RustFS and SeaweedFS. Replaces minio/mc (bead
+# cnpg-playground-z6x): mc was an unpinned :latest on quay.io after its Docker
+# Hub repo disappeared. rc v0.1.36 was tested against RustFS 1.0.0 and
+# SeaweedFS over self-signed HTTPS: every bootstrap flow here is idempotent,
+# and the scoped IAM policies are enforced.
+# Two differences from mc: --insecure goes on `rc alias set` (it is stored per
+# alias) instead of on every call, and `rc bucket create` takes one bucket at
+# a time. The image's ENTRYPOINT is `rc`, it runs as the non-root user `rc`,
+# and it ships sh, so `--entrypoint sh` / `--command -- sh -c` work as before.
+# Pinned by digest (multi-arch index of v0.1.36).
+RC_IMAGE="${RC_IMAGE:-rustfs/rc@sha256:ab024bfebee49a750ce886b4c70963ccd9ddaa03f491704a90710641d7a26699}"
 
 # RustFS Configuration
 # Pinned by DIGEST (multi-arch index of the 1.0.0 GA release, 2026-09-16), not
@@ -116,7 +124,7 @@ SEAWEEDFS_WORKER_CONTAINER_NAME="${SEAWEEDFS_WORKER_CONTAINER_NAME:-seaweedfs-wo
 # loki: RW on the 'loki' bucket only (keeps Loki working; blanket Admin dropped — see SEAWEEDFS_ADMIN_* for bootstrap).
 SEAWEEDFS_ACCESS_KEY="${SEAWEEDFS_ACCESS_KEY:-loki}"
 SEAWEEDFS_SECRET_KEY="${SEAWEEDFS_SECRET_KEY:-lokiS3secret}"
-# admin: full Admin — used only to bootstrap buckets (mc mb) during setup, not handed to any workload.
+# admin: full Admin — used only to bootstrap buckets (rc bucket create) during setup, not handed to any workload.
 SEAWEEDFS_ADMIN_ACCESS_KEY="${SEAWEEDFS_ADMIN_ACCESS_KEY:-swadmin}"
 SEAWEEDFS_ADMIN_SECRET_KEY="${SEAWEEDFS_ADMIN_SECRET_KEY:-swadminS3secret}"
 # barman: RW/List on the backup buckets — used by CNPG/Barman ObjectStores (migrated off RustFS).

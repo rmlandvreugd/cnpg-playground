@@ -15,9 +15,9 @@
 set -uo pipefail
 [ $# -ge 3 ] || { sed -n '2,14p' "$0"; exit 2; }
 LABEL=$1; FREEZE=$2; IMG=$3; shift 3
-MC="${MC_IMAGE:-quay.io/minio/mc:latest}"
+RC="${RC_IMAGE:-rustfs/rc:latest}"
 W=$(mktemp -d)
-N=rustfs-stall-$LABEL; C=mc-stall-$LABEL; V=vol-stall-$LABEL
+N=rustfs-stall-$LABEL; C=rc-stall-$LABEL; V=vol-stall-$LABEL
 HELPER="docker run --rm --privileged -v $W:/w debian:bookworm-slim"
 log() { echo "[$LABEL $(date -u +%H:%M:%S)] $*"; }
 
@@ -43,21 +43,23 @@ IP=$(docker inspect "$N" --format '{{.NetworkSettings.Networks.bridge.IPAddress}
 log "rustfs $(docker exec "$N" rustfs --version 2>/dev/null | head -1) at $IP"
 
 # 3. client: bulk-seed 1500 objects in a Loki-like layout, scoped user, then PUT+LIST forever
-docker run -d --name "$C" --network bridge --entrypoint sh "$MC" -c "
-  mkdir -p /seed && i=0; while [ \$i -lt 1500 ]; do d=/seed/platform/fp\$((i % 150)); mkdir -p \$d; echo x > \$d/chunk\$i; i=\$((i+1)); done
-  mc alias set s http://$IP:9000 frzadmin frzsecret123 >/dev/null
-  mc mb s/loki-direct >/dev/null && mc cp --recursive --quiet /seed/ s/loki-direct/ >/dev/null
-  mc admin user add s lokidirect lokiDirectSecret >/dev/null; mc admin policy attach s readwrite --user lokidirect >/dev/null
-  mc alias set u http://$IP:9000 lokidirect lokiDirectSecret >/dev/null
+docker run -d --name "$C" --network bridge --entrypoint sh "$RC" -c "
+  mkdir -p /tmp/seed && i=0; while [ \$i -lt 1500 ]; do d=/tmp/seed/platform/fp\$((i % 150)); mkdir -p \$d; echo x > \$d/chunk\$i; i=\$((i+1)); done
+  rc alias set s http://$IP:9000 frzadmin frzsecret123 >/dev/null
+  rc bucket create s/loki-direct >/dev/null && cd /tmp/seed && rc put -q -r platform s/loki-direct/platform/ >/dev/null
+  rc admin user add s lokidirect lokiDirectSecret >/dev/null; rc admin policy attach s readwrite --user lokidirect >/dev/null
+  rc alias set u http://$IP:9000 lokidirect lokiDirectSecret >/dev/null
   echo SEEDED
-  j=0; while true; do echo y | mc pipe u/loki-direct/live/o\$j >/dev/null 2>&1; mc ls --recursive u/loki-direct >/dev/null 2>&1; j=\$((j+1)); done" >/dev/null
+  j=0; while true; do echo y | rc pipe u/loki-direct/live/o\$j >/dev/null 2>&1; rc object list -r u/loki-direct >/dev/null 2>&1; j=\$((j+1)); done" >/dev/null
 until docker logs "$C" 2>&1 | grep -q SEEDED; do sleep 2; done
 
 check() {
-  docker run --rm --network bridge --entrypoint sh "$MC" -c "
-    mc alias set u http://$IP:9000 lokidirect lokiDirectSecret >/dev/null 2>&1 || { echo 'AUTH=FAIL'; exit; }
-    n=\$(mc ls --recursive u/loki-direct/platform 2>/dev/null | wc -l); echo \"list=\$n/1500\"
-    echo z | mc pipe u/loki-direct/probe\$\$ >/dev/null 2>&1 && echo put=ok || echo put=FAIL" | tr '\n' ' '
+  # Probe auth with a real request, so a broken server reads as AUTH=FAIL, not list=0.
+  docker run --rm --network bridge --entrypoint sh "$RC" -c "
+    rc alias set u http://$IP:9000 lokidirect lokiDirectSecret >/dev/null 2>&1
+    rc bucket list u/ >/dev/null 2>&1 || { echo 'AUTH=FAIL'; exit; }
+    n=\$(rc --json object list -r u/loki-direct/platform/ 2>/dev/null | grep -o '\"key\"' | wc -l); echo \"list=\$n/1500\"
+    echo z | rc pipe u/loki-direct/probe\$\$ >/dev/null 2>&1 && echo put=ok || echo put=FAIL" | tr '\n' ' '
 }
 log "before:          $(check)"
 
