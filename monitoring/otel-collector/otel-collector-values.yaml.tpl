@@ -103,21 +103,6 @@ config:
         X-Scope-OrgID: platform
       tls:
         insecure: true
-    # Arms A and B of the storage PoC (bead t9p7.2). OTLP logs must reach all
-    # three Lokis, or the parity gate (equal bytes across arms) fails for the
-    # portion of logs that arrives via OTLP rather than the Alloy DaemonSet.
-    otlphttp/logs-rustfs:
-      endpoint: http://loki-rustfs.grafana.svc.cluster.local:3100/otlp
-      headers:
-        X-Scope-OrgID: platform
-      tls:
-        insecure: true
-    otlphttp/logs-seaweedfs:
-      endpoint: http://loki-seaweedfs.grafana.svc.cluster.local:3100/otlp
-      headers:
-        X-Scope-OrgID: platform
-      tls:
-        insecure: true
     debug:
       verbosity: basic   # remove or set verbosity: detailed for trace debugging
 
@@ -135,7 +120,7 @@ config:
       logs:
         receivers: [otlp]
         processors: [memory_limiter, batch]
-        exporters: [otlphttp/logs, otlphttp/logs-rustfs, otlphttp/logs-seaweedfs]
+        exporters: [otlphttp/logs]
 
 ports:
   otlp:

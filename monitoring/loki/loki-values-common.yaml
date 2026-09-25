@@ -1,13 +1,17 @@
-# Settings shared by ALL THREE Loki arms of the storage PoC (bead t9p7).
+# Settings shared by the platform Loki (loki-values.yaml) and the throwaway
+# restore-drill Loki (loki-values-restore.yaml, `scripts/loki-bench.sh restore`).
 #
-# This file exists so the arms cannot drift. The PoC compares object stores, so
-# every arm must be identical in retention, limits, ingester behaviour, resources
-# and scheduling — anything that differs here would show up as a storage result
-# and quietly invalidate the benchmark. Each arm's own values file carries ONLY
-# its bucket, endpoint and credentials Secret.
+# Split out during the storage PoC (epic t9p7) so its three arms could not
+# drift; it now guarantees the restore drill reads the DR mirror with exactly
+# the platform Loki's schema. Each values file layered on top carries ONLY its
+# bucket, endpoint and credentials Secret.
 #
-# Applied as the FIRST -f, with the per-arm file second:
-#   helm ... -f loki-values-common.yaml -f loki-values-<arm>.yaml
+# Several settings below were chosen FOR the PoC and still apply: 24h
+# retention, hedging disabled, retention/delete path enabled. Revisit them as
+# platform choices rather than benchmark ones.
+#
+# Applied as the FIRST -f:
+#   helm ... -f loki-values-common.yaml -f loki-values.yaml
 ---
 loki:
   # Per-tenant isolation: writers set X-Scope-OrgID from the Capsule tenant label of

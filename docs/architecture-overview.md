@@ -61,11 +61,7 @@ graph TB
             Alloy["🔄 Alloy<br/>(k8s-monitoring)"]
             Grafana["📊 Grafana<br/>Dashboards"]
             OTel["📡 OTel Collector<br/>Tail-based Sampling"]
-            subgraph LokiABC["📝 Loki — storage A/B/C PoC"]
-                Loki["loki (C)<br/>control"]
-                LokiRustfs["loki-rustfs (A)"]
-                LokiSeaweedfs["loki-seaweedfs (B)"]
-            end
+            Loki["📝 Loki<br/>single-binary"]
             SeaweedIn["📦 SeaweedFS<br/>(operator, in-cluster)"]
         end
     end
@@ -80,9 +76,7 @@ graph TB
     RustFS -->|S3 backups| Barman
     RustFS -->|S3 storage| Mimir
     RustFS -->|S3 storage| Tempo
-    Seaweed -->|S3 storage| Loki
-    RustFS -->|S3 storage| LokiRustfs
-    SeaweedIn -->|S3 storage| LokiSeaweedfs
+    SeaweedIn -->|S3 storage| Loki
     SeaweedIn -.->|filer.backup mirror| RustFS
     ESO -->|sync secrets| PG1
     ESO -->|sync secrets| PG2
@@ -93,11 +87,11 @@ graph TB
     CNPG -->|manages| PG3
     Pooler -->|connections| PG1
     Prom -->|remoteWrite| Mimir
-    Alloy -->|logs| LokiABC
-    OTel -->|logs| LokiABC
+    Alloy -->|logs| Loki
+    OTel -->|logs| Loki
     OTel -->|traces| Tempo
     Grafana -->|queries| Mimir
-    Grafana -->|queries| LokiABC
+    Grafana -->|queries| Loki
     Grafana -->|queries| Tempo
     Grafana -->|queries| Prom
     Traefik -->|traces| OTel
@@ -128,8 +122,8 @@ graph LR
     subgraph Cluster["Kind cluster (pods)"]
         CM["cert-manager"]
         ESO["External Secrets Operator"]
-        MimirTempo["Mimir + Tempo"]
-        LokiTenant["Loki + verstappen backups"]
+        MimirTempo["Mimir + Tempo<br/>+ Loki DR mirror"]
+        LokiTenant["verstappen backups"]
         OTel["OTel Collector<br/>ext-svc-lb 172.28.255.240:4317/4318"]
         Consumers["ESO / cert-manager<br/>(Vault clients)"]
         Prom["Prometheus<br/>(otel ns)"]
@@ -147,7 +141,7 @@ graph LR
 
 | Mechanism | Containers reached this way | Cluster side | How it resolves |
 |---|---|---|---|
-| **1. Direct headless `Service` + manual `Endpoints`** | step-ca, RustFS (`objectstore-local`), SeaweedFS, zot (metrics only) | `step-ca/step-ca`, `mimir,tempo,grafana/objectstore-local`, `grafana,rbr-ver-db/seaweedfs`, `otel/zot` | In-cluster DNS name resolves to the container's **kind-bridge IP**; pods dial it directly on the shared bridge. zot's `/metrics` is scraped this way (anonymous, not exposed via the edge) rather than proxied — see §7 ServiceMonitor pattern. |
+| **1. Direct headless `Service` + manual `Endpoints`** | step-ca, RustFS (`objectstore-local`), SeaweedFS, zot (metrics only) | `step-ca/step-ca`, `mimir,tempo,grafana/objectstore-local` (grafana: the Loki DR mirror sidecar), `rbr-ver-db/seaweedfs`, `otel/zot` | In-cluster DNS name resolves to the container's **kind-bridge IP**; pods dial it directly on the shared bridge. zot's `/metrics` is scraped this way (anonymous, not exposed via the edge) rather than proxied — see §7 ServiceMonitor pattern. |
 | **2. Via the `traefik-edge` proxy** (`*.172-28-0-250.sslip.io`) | Vault, Authelia, zot | ESO `ClusterSecretStore` (`vault-approle*`) + cert-manager `ClusterIssuer` (`vault-pki`) → `https://vault.172-28-0-250.sslip.io`; Authelia `ExternalName` → `authelia.172-28-0-250.sslip.io`; kind nodes' containerd mirrors + `helm`/`stacker`/`trivy` on the host → `https://zot.172-28-0-250.sslip.io` | The `sslip.io` hostname resolves to `172.28.0.250` (the **edge container**), which TLS-terminates and routes to the backend container. There is **no** in-cluster `vault` (or `zot`) Service. |
 | **3. Reverse: cluster ← edge** | traefik-edge → cluster | MetalLB `LoadBalancer` `otel/ext-svc-lb` at `172.28.255.240:4317/4318` | The edge container pushes **OTLP traces + logs** into the cluster over the MetalLB VIP; the cluster in turn **scrapes** the edge's Prometheus metrics at `172.28.0.250:9102`. |
 
@@ -253,7 +247,7 @@ flowchart LR
 flowchart TD
     M["monitoring/setup.sh local"] --> M1["Prometheus Operator<br/>+ kube-prometheus-stack"]
     M --> M2["Mimir<br/>(distributed, 3 zones)"]
-    M --> M3["Loki x3<br/>(single-binary, A/B/C)"]
+    M --> M3["Loki<br/>(single-binary)"]
     M --> M4["Tempo<br/>(distributed)"]
     M --> M5["k8s-monitoring<br/>(nodeLogs, podLogsViaLoki,<br/>clusterEvents)"]
     M --> M6["OTel Collector<br/>(tail-based sampling)"]
@@ -261,9 +255,7 @@ flowchart TD
     M --> M8["CNPG PodMonitors"]
 
     M2 --> S3A["RustFS S3<br/>(mimir-blocks,<br/>mimir-alertmanager,<br/>mimir-ruler)"]
-    M3 --> S3B["host SeaweedFS S3<br/>(loki) — arm C"]
-    M3 --> S3D["RustFS S3<br/>(loki-direct) — arm A"]
-    M3 --> S3E["in-cluster SeaweedFS S3<br/>(loki) — arm B"]
+    M3 --> S3E["in-cluster SeaweedFS S3<br/>seaweedfs-ab (loki)"]
     S3E -.->|filer.backup mirror| S3F["RustFS S3<br/>(loki-mirror)"]
     M4 --> S3C["RustFS S3<br/>(tempo)"]
 
@@ -281,7 +273,7 @@ flowchart TD
 
 **Key outcomes:**
 - Full observability stack: metrics (Prometheus → Mimir), logs (Alloy DaemonSet + OTel → Loki), traces (OTel → Tempo)
-- Grafana with **11 GrafanaDatasource CRs** and **19 dashboards** (live counts; both include
+- Grafana with **9 GrafanaDatasource CRs** and **18 dashboards** (counts after bead j9wn; both include
   the per-tenant `*-rbr-ver` variants created by tenant onboarding)
 - Long-term storage is **per signal**, not all RustFS:
 
@@ -289,17 +281,17 @@ flowchart TD
   |---|---|---|
   | Metrics (Mimir) | RustFS | `mimir-blocks`, `mimir-alertmanager`, `mimir-ruler` |
   | Traces (Tempo) | RustFS | `tempo` |
-  | Logs — arm C `loki` (control) | **host SeaweedFS** | `loki` |
-  | Logs — arm A `loki-rustfs` | RustFS | `loki-direct` |
-  | Logs — arm B `loki-seaweedfs` | **in-cluster SeaweedFS** (operator) | `loki`, mirrored to RustFS `loki-mirror` |
+  | Logs (Loki) | **in-cluster SeaweedFS** `seaweedfs-ab` (operator) | `loki`, mirrored to RustFS `loki-mirror` for DR |
 
 - Hub-and-spoke architecture (hub region runs Mimir + Tempo; spokes push via Traefik IngressRoutes)
 
-> The three Loki releases are the A/B/C storage comparison from
-> [`plans/2026-09-17-loki-seaweedfs-dr-fanout-design.md`](plans/2026-09-17-loki-seaweedfs-dr-fanout-design.md).
-> Every log line is written to all three, so they hold identical data and differ only in
-> where it lands. Benchmark caveat: all three stores sit on **one WSL disk**, so the
-> results compare protocol and code paths, not independent spindles.
+> Loki's store was chosen by the A/B/C storage comparison in
+> [`plans/2026-09-17-loki-seaweedfs-dr-fanout-design.md`](plans/2026-09-17-loki-seaweedfs-dr-fanout-design.md)
+> (§5a). The three stores (RustFS direct, in-cluster SeaweedFS, host SeaweedFS) measured
+> the same query latency; the in-cluster SeaweedFS was kept because it is the only one with
+> a proven DR copy (`scripts/loki-bench.sh restore` passes against `loki-mirror`), and the
+> other two arms were decommissioned (bead `j9wn`). All stores sit on **one WSL disk**, so
+> the mirror is a logical DR copy, not a geographic one.
 
 ### 3.4 `demo/eso-vault.sh setup local` — Secrets Management Demo
 
@@ -473,11 +465,8 @@ flowchart LR
         Mimir["Mimir"]
         Loki["Loki"]
         Tempo["Tempo"]
-        LokiA["loki-rustfs (A)"]
-        LokiB["loki-seaweedfs (B)"]
         S3["RustFS S3"]
-        Seaweed["host SeaweedFS S3"]
-        SeaweedIn["in-cluster SeaweedFS S3"]
+        SeaweedIn["in-cluster SeaweedFS S3<br/>(seaweedfs-ab)"]
     end
 
     subgraph Visualization["Visualization"]
@@ -496,25 +485,17 @@ flowchart LR
 
     Prom -->|remoteWrite| Mimir
     Alloy -->|push| Loki
-    Alloy -->|push| LokiA
-    Alloy -->|push| LokiB
     AlloyS -->|push| Loki
     OTel -->|push logs| Loki
-    OTel -->|push logs| LokiA
-    OTel -->|push logs| LokiB
     OTel -->|push traces| Tempo
 
-    Loki --> Seaweed
-    LokiA --> S3
-    LokiB --> SeaweedIn
+    Loki --> SeaweedIn
     SeaweedIn -.->|filer.backup mirror| S3
     Mimir --> S3
     Tempo --> S3
 
     Grafana --> Mimir
     Grafana --> Loki
-    Grafana --> LokiA
-    Grafana --> LokiB
     Grafana --> Tempo
     Grafana --> Prom
 ```
@@ -552,9 +533,9 @@ flowchart LR
 | cnpg-system | CNPG operator + Barman Cloud Plugin |
 | external-secrets | External Secrets Operator |
 | gangplank | gangplank (OIDC → kubeconfig dispenser) |
-| grafana | Grafana Operator, platform + tenant Grafana, the three Loki arms (`loki`, `loki-rustfs`, `loki-seaweedfs`), the in-cluster SeaweedFS pods (`seaweedfs-ab-*`), alloy-operator and its `alloy-logs` / `alloy-singleton` collectors |
+| grafana | Grafana Operator, platform + tenant Grafana, Loki (`loki`), its in-cluster SeaweedFS store (`seaweedfs-ab-*`, incl. the `filer.backup` DR mirror sidecar), alloy-operator and its `alloy-logs` / `alloy-singleton` collectors |
 | kyverno | Kyverno policy engine + kyverno-policies |
-| loki-bench | `flog` synthetic log load for the A/B/C storage benchmark (platform namespace on purpose — Kyverno's image-registry policy only matches tenant namespaces) |
+| loki-bench | `flog` synthetic log load for `scripts/loki-bench.sh` soaks — only present while a soak runs (platform namespace on purpose — Kyverno's image-registry policy only matches tenant namespaces) |
 | metallb-system | MetalLB load balancer |
 | metrics-server | Kubernetes metrics-server |
 | mimir | Mimir (long-term metrics) + RustFS S3 wiring |
@@ -635,7 +616,7 @@ foundational-secrets components alongside the tenant stack (full reference:
 
 ### Helm Releases
 
-> Live snapshot (**32 releases**) from a `--with-tenant` install, re-taken after the
+> Live snapshot (**30 releases** after bead j9wn removed `loki-rustfs` / `loki-seaweedfs`) from a `--with-tenant` install, re-taken after the
 > k8s-monitoring swap. `k8s-monitoring-alloy-logs` and `k8s-monitoring-alloy-singleton`
 > are created by the alloy-operator that the `k8s-monitoring` chart brings in, not by
 > `monitoring/setup.sh` directly — they appear as releases in their own right.
@@ -660,8 +641,6 @@ foundational-secrets components alongside the tenant stack (full reference:
 | kyverno | kyverno | kyverno-3.9.1 | v1.19.1 |
 | kyverno-policies | kyverno | kyverno-policies-3.9.1 | v1.19.1 |
 | loki | grafana | loki-13.5.0 | 3.7.1 |
-| loki-rustfs | grafana | loki-13.5.0 | 3.7.1 |
-| loki-seaweedfs | grafana | loki-13.5.0 | 3.7.1 |
 | metallb | metallb-system | metallb-0.16.1 | v0.16.1 |
 | metrics-server | metrics-server | metrics-server-3.14.0 | 0.9.0 |
 | mimir | mimir | mimir-distributed-6.2.0 | 3.2.0 |
@@ -686,8 +665,8 @@ ports are what you reach from the laptop.
 | step-ca | smallstep/step-ca:latest | 172.28.0.13 | 8443 | 8443 | Root CA + Intermediate CA |
 | vault | hashicorp/vault:2.0 | 172.28.0.14 | 8200 (+8202 cluster) | 8200 | Secrets management, PKI, AppRole + DB engine |
 | authelia | ghcr.io/authelia/authelia:4.39.20 | 172.28.0.2 | 9091 | 9091 | OIDC identity provider (replaces Dex) |
-| objectstore-local (RustFS) | rustfs/rustfs:latest | 172.28.0.11 | 9000 | 9001 | S3 object storage (Mimir, Tempo, Loki-A `loki-direct`, Loki-B mirror `loki-mirror`) |
-| seaweedfs (SeaweedFS) | chrislusf/seaweedfs:latest | 172.28.0.12 | 8333 (S3) | 8333/8334 | S3 object storage (Loki, tenant backups) |
+| objectstore-local (RustFS) | rustfs/rustfs:1.0.0 (pinned digest) | 172.28.0.11 | 9000 | 9001 | S3 object storage (Mimir, Tempo, Loki DR mirror `loki-mirror`) |
+| seaweedfs (SeaweedFS) | chrislusf/seaweedfs:latest | 172.28.0.12 | 8333 (S3) | 8333/8334 | S3 object storage (CNPG/tenant backups, zot) |
 | seaweedfs-admin | chrislusf/seaweedfs:latest | 172.28.0.15 | 23646 | 23646 | SeaweedFS admin UI |
 | seaweedfs-webdav | chrislusf/seaweedfs:latest | — (compose net) | 7333 | 7333 | SeaweedFS WebDAV gateway |
 | seaweedfs-worker | chrislusf/seaweedfs:latest | — (compose net) | 9327 | 9327 | SeaweedFS maintenance worker |
@@ -722,7 +701,6 @@ ports are what you reach from the laptop.
 | cnpg-custom-pg-rbr-ver | Tenant copy of the CNPG dashboard (ArgoCD-managed) |
 | pgaudit-dashboard-rbr-ver | Tenant copy of the pgaudit dashboard (ArgoCD-managed) |
 | traefik-traces-rbr-ver | Tenant copy of the Traefik traces dashboard (ArgoCD-managed) |
-| loki-storage-abc | A/B/C Loki storage benchmark — the three verdict panels (query latency, S3 op latency, resource cost) plus supporting signal (bead t9p7.3) |
 
 ---
 
@@ -925,41 +903,39 @@ If tenant routes 404, they were almost certainly removed rather than broken:
 its datasources do not survive a monitoring teardown. Re-run
 `demo/self-service-setup.sh setup local`.
 
-### 10.2 Loki storage A/B/C benchmark
+### 10.2 Loki storage: health, DR restore drill, soaks
 
-Running a soak, start to verdict:
+Loki stores in the in-cluster SeaweedFS `seaweedfs-ab`, mirrored by `filer.backup` to the
+RustFS bucket `loki-mirror`. The store was chosen by the A/B/C comparison (design doc
+[`plans/2026-09-17-loki-seaweedfs-dr-fanout-design.md`](plans/2026-09-17-loki-seaweedfs-dr-fanout-design.md)
+§5a); the other two arms were decommissioned in bead `j9wn`.
 
 ```bash
-scripts/loki-bench.sh start   local      # preconditions, apply flog, record t0
-scripts/loki-bench.sh elapsed local      # how far into the >=26h window
-scripts/loki-bench.sh health  local      # is the soak still VALID?  <-- run REPEATEDLY
-scripts/loki-bench.sh ingest  local      # ingest parity across the three arms
-scripts/loki-bench.sh query   local 5    # fixed LogQL set, 1h window ending 5h ago
+scripts/loki-bench.sh health  local      # Loki store errors, mirror sidecar, Mimir/Tempo, stored window served
+scripts/loki-bench.sh restore local      # DR drill: throwaway Loki on loki-mirror must match `loki`
 ```
 
-`start` is a deliberate, separate step — it is **not** part of
-`monitoring/setup.sh`, because it generates continuous synthetic load and should
-never be a side effect of rebuilding the cluster. It refuses to start the clock
-on an unhealthy cluster, since a 26h window is expensive to waste.
+`restore` is safe to run any time: it uses a read-only RustFS user (and refuses to run if
+that user can write), leaves `loki` untouched, and removes everything it created. PASS means
+identical counts on 1h windows ending 5/10/15/20h ago, so it needs ~21h of history.
 
-**Run `health` during the soak, not only at the end.** A soak can keep running
-while one object store has quietly stopped accepting writes, and the verdict
-would then be computed over a window where an arm was broken. This is not
-hypothetical: RustFS (pre-1.0) degraded ~21h into a 26h run and began rejecting
-even its own configured root credential with `InvalidAccessKeyId` while leaving
-its on-disk data intact — see bead `cnpg-playground-e84t`. Arm A and the mirror
-stopped ingesting; the other two arms carried on and nothing looked wrong from
-the outside.
+**Soaks** (`start` / `elapsed` / `status` / `query` / `ingest`) are still available for
+re-measuring a storage change, e.g. against a candidate release with
+`LOKI_BENCH_ARMS="loki loki-candidate"`. `start` is a deliberate, separate step, never part
+of `monitoring/setup.sh`: it applies continuous `flog` load in namespace `loki-bench`
+(`kubectl delete ns loki-bench` ends it).
 
-Two measurement rules are built into the harness, because getting either wrong produces a
-confident but meaningless result:
+Measurement rules built into the harness, because getting either wrong produces a confident
+but meaningless result:
 
 - **Query old ranges.** Loki serves the recent window from ingesters
   (`query_ingesters_within` 3h, `max_chunk_age` 2h), so anything fresher than ~4h measures
-  memory rather than object storage.
-- **Compare on a settled window, never the live edge.** At the edge the arms differ purely
-  by chunk-flush timing — which is the very thing being compared. On settled data they are
-  byte-identical.
+  memory rather than object storage. The restore drill warns for the same reason.
+- **Compare on a settled window, never the live edge.** At the edge two Lokis differ purely
+  by chunk-flush timing.
+- **Run `health` during a soak, not only at the end.** RustFS 1.0.0-alpha.99 once went
+  permanently faulty mid-soak while the other arms carried on (bead `e84t`, fixed by pinning
+  1.0.0), and only a periodic health check caught it.
 
-The harness also warns when a window overlaps 00:00–00:30, because the nightly Barman
-backup writes into the host SeaweedFS behind arm C and would penalise C for unrelated IO.
+The harness also warns when a query window overlaps 00:00–00:30, when the nightly Barman
+backup loads the shared VM disk.

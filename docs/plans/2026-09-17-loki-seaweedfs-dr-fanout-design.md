@@ -359,6 +359,9 @@ is A being about 15% faster on `count_5m`, which is too small to act on.
 - **C (host SeaweedFS):** equivalent to A on everything measured, and already the platform default.
 
 Choosing between them is now an architecture decision, not a performance one (bead `j9wn`).
+
+**Decision (2026-09-26): keep B, decommission A and C.** B's in-cluster SeaweedFS with its RustFS
+DR mirror is now the platform Loki, running as release `loki`. See decision log #24.
 Caveat, as before: every store shares one WSL2 VM and one disk. "Outside" is a Docker hop, and the
 "DR" copy is logical, not geographic.
 
@@ -574,6 +577,7 @@ the top of §5a. Step 2's two 06:00Z stall windows were not reached, see there):
 | 21 | Keep today's label shape (`pod` as label, `job="k8s-events"`); dashboards unchanged | 2026-09-18 (rev 4) |
 | 22 | Tenant Grafana keeps Loki-C only; no tenant datasources for Loki-A/B | 2026-09-18 (rev 4) |
 | 23 | Tenant isolation for **logs, metrics and traces** is a separate **P1** epic; not part of this PoC. If Loki auth lands first, apply it identically to all three Lokis. | 2026-09-18 (rev 4) |
+| 24 | **Keep B, decommission A and C** (user decision, bead `j9wn`). B's storage (seaweedfs-ab + `filer.backup` mirror to RustFS `loki-mirror`) becomes the platform Loki under release name **`loki`**, so every consumer of `loki.grafana.svc` is unchanged. Removed: `loki-rustfs` + RustFS `loki-direct` bucket/user; C's store (host SeaweedFS `loki` bucket + identity, grafana-ns bridge); the PoC fan-out (extra datasources, k8s-monitoring destinations, OTel exporters, `loki-storage-abc` dashboard). Host SeaweedFS stays (CNPG backups, zot). | 2026-09-26 |
 
 ---
 
