@@ -375,6 +375,14 @@ POLICY
         loki-rustfs-s3 loki-seaweedfs-s3 --ignore-not-found
     # Arm C's bridge to the host SeaweedFS; nothing in grafana uses it any more.
     kubectl --context "${CONTEXT_NAME}" -n grafana delete service,endpoints seaweedfs --ignore-not-found
+    # The PoC's Grafana objects are no longer applied, but applying does not
+    # delete: without this they would linger, pointing at releases that are gone.
+    if kubectl --context "${CONTEXT_NAME}" get crd grafanadatasources.grafana.integreatly.org &>/dev/null; then
+        kubectl --context "${CONTEXT_NAME}" -n grafana delete grafanadatasource \
+            loki-rustfs loki-seaweedfs --ignore-not-found
+        kubectl --context "${CONTEXT_NAME}" -n grafana delete grafanadashboard \
+            loki-storage-abc --ignore-not-found
+    fi
 
     # Credentials go in a Secret and reach the config as ${S3_*} via
     # -config.expand-env=true, set in loki-values-common.yaml. Passing them with
