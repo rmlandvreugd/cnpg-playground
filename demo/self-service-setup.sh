@@ -250,6 +250,19 @@ EOF
     kubectl wait tenant/rbr --context "${LOCAL_CONTEXT}" \
         --for=jsonpath='{.status.state}'=Active --timeout=60s || true
 
+    # --- Per-tenant telemetry routing (bd3d.7) ---
+    # The platform's observability config names no tenant: Prometheus remoteWrite, the
+    # platform Grafana datasource headers, the otel-collector trace routing, the Alloy log
+    # pipelines and the Traefik ServiceMonitor are generated from the Capsule Tenants.
+    # monitoring/setup.sh ran before this tenant existed, so re-render now - and do it
+    # HERE, right after the Tenant exists and BEFORE any of its namespaces (bead tvdd).
+    # The render only needs the Tenant object, and apply blocks until the event collector
+    # has loaded the routing, so no event from a tenant namespace (the CNPG cluster, its
+    # PDBs...) can be emitted while events still route to "platform".
+    if kubectl get ns otel --context "${LOCAL_CONTEXT}" &>/dev/null; then
+        "${GIT_REPO_ROOT}/scripts/tenant-telemetry.sh" apply "${MODE}"
+    fi
+
     # Capsule only lets a *tenant owner* create a tenant-owned namespace (the webhook
     # rejects both a plain cluster-admin create and a forged ownerReference: "only
     # tenant owners can create tenant-owned namespaces"). We run as cluster-admin, so
@@ -294,15 +307,6 @@ EOF
         --context "${LOCAL_CONTEXT}" &>/dev/null; then
         echo "🛡️  Re-applying ingress allow-list for tenant namespaces..."
         "${GIT_REPO_ROOT}/scripts/netpol.sh" enforce "${MODE}"
-    fi
-
-    # --- Per-tenant telemetry routing (bd3d.7) ---
-    # The platform's observability config names no tenant: Prometheus remoteWrite, the
-    # platform Grafana datasource headers, the otel-collector trace routing, the Alloy log
-    # pipelines and the Traefik ServiceMonitor are generated from the Capsule Tenants.
-    # monitoring/setup.sh ran before this tenant existed, so re-render now.
-    if kubectl get ns otel --context "${LOCAL_CONTEXT}" &>/dev/null; then
-        "${GIT_REPO_ROOT}/scripts/tenant-telemetry.sh" apply "${MODE}"
     fi
 
     # --- ExternalSecrets ---
