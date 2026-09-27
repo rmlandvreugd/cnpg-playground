@@ -1,0 +1,114 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-tenant-grafana-objects
+  annotations:
+    policies.kyverno.io/title: Tenants may only ship dashboards, and only to their own Grafana
+    policies.kyverno.io/description: >-
+      Tenants own their Grafana dashboards (namespace <tenant>-ops, bd3d.11) but not
+      their datasources: a GrafanaDatasource in a tenant namespace could set
+      X-Scope-OrgID to another tenant or "platform" and undo the per-tenant log,
+      metric and trace isolation. The grafana-operator watches every namespace and
+      acts with platform privileges, so this policy is the guard for both paths a
+      tenant has - kubectl as tenant owner and ArgoCD project <tenant> (ArgoCD applies
+      as its own privileged account, which RBAC alone would not stop).
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    # Only GrafanaDashboard. Everything else is platform-owned, including kinds that
+    # would reach past the tenant's own instance: GrafanaServiceAccount (mints an admin
+    # token into the tenant namespace), GrafanaManifest (arbitrary Grafana resources),
+    # contact points / notification policies / alert rules on a shared instance.
+    - name: only-dashboards
+      match:
+        any:
+          - resources:
+              kinds:
+                - grafana.integreatly.org/*/*
+              namespaceSelector:
+                matchExpressions:
+                  - key: capsule.clastix.io/tenant
+                    operator: Exists
+      exclude:
+        any:
+          - resources:
+              kinds:
+                - grafana.integreatly.org/*/GrafanaDashboard
+      validate:
+        message: >-
+          Only GrafanaDashboard is allowed in tenant namespaces; {{request.object.kind}}
+          is platform-owned (datasources would bypass the tenant's X-Scope-OrgID).
+        deny: {}
+
+    # The dashboard must target the tenant's own Grafana instance, and nothing else.
+    # Instances carry label dashboards=grafana-<tenant>-<env> (grafana-rbr-ver); the
+    # platform instance is dashboards=grafana. matchExpressions are refused because
+    # they can widen the match past what this check sees.
+    - name: dashboard-targets-own-instance
+      match:
+        any:
+          - resources:
+              kinds:
+                - grafana.integreatly.org/*/GrafanaDashboard
+              namespaceSelector:
+                matchExpressions:
+                  - key: capsule.clastix.io/tenant
+                    operator: Exists
+      context:
+        - name: tenant
+          apiCall:
+            urlPath: "/api/v1/namespaces/{{request.namespace}}"
+            jmesPath: 'metadata.labels."capsule.clastix.io/tenant"'
+      validate:
+        message: >-
+          spec.instanceSelector must be exactly matchLabels {dashboards: grafana-{{tenant}}-<env>}
+          (the tenant's own Grafana), with no other labels and no matchExpressions.
+        deny:
+          conditions:
+            any:
+              - key: "{{ length(request.object.spec.instanceSelector.matchExpressions || `[]`) }}"
+                operator: GreaterThan
+                value: 0
+              - key: "{{ length(keys(request.object.spec.instanceSelector.matchLabels || `{}`)) }}"
+                operator: NotEquals
+                value: 1
+              - key: "{{ request.object.spec.instanceSelector.matchLabels.dashboards || '' }}"
+                operator: NotEquals
+                value: "grafana-{{tenant}}-?*"
+
+    # Content must be inline or from a ConfigMap in the same namespace. The other sources
+    # make the PLATFORM operator act for the tenant: fetch arbitrary URLs from inside the
+    # grafana namespace (url, grafanaCom, oci, jsonnetLib), evaluate jsonnet, install
+    # Grafana plugins, or publish the dashboard without authentication (publicSharing).
+    - name: dashboard-content-inline-only
+      match:
+        any:
+          - resources:
+              kinds:
+                - grafana.integreatly.org/*/GrafanaDashboard
+              namespaceSelector:
+                matchExpressions:
+                  - key: capsule.clastix.io/tenant
+                    operator: Exists
+      validate:
+        message: >-
+          Tenant dashboards may only use spec.json, spec.gzipJson or spec.configMapRef;
+          url, urlAuthorization, grafanaCom, oci, jsonnet, jsonnetLib, envs, envFrom,
+          plugins and publicSharing are platform-only.
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec | keys(@) }}"
+                operator: AnyIn
+                value:
+                  - url
+                  - urlAuthorization
+                  - grafanaCom
+                  - oci
+                  - jsonnet
+                  - jsonnetLib
+                  - envs
+                  - envFrom
+                  - plugins
+                  - publicSharing

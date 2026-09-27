@@ -1,0 +1,21 @@
+# Lets a Capsule tenant owner manage GrafanaDashboards in the tenant's own namespaces
+# (bead bd3d.11). Bound per tenant through Tenant.spec.additionalRoleBindings, so it only
+# ever applies inside that tenant's namespaces.
+#
+# Deliberately dashboards only, and deliberately NOT aggregated into "admin": every other
+# grafana.integreatly.org kind is platform-owned (a GrafanaDatasource could rewrite
+# X-Scope-OrgID and read another tenant's data). RBAC is not the real guard though -
+# ArgoCD applies as its own privileged account - so the Kyverno ClusterPolicy
+# manifests/kyverno/restrict-tenant-grafana-objects.yaml enforces the same rules on
+# every path: dashboards only, aimed at the tenant's own Grafana instance, inline content.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tenant-grafana-dashboards
+rules:
+  - apiGroups: ["grafana.integreatly.org"]
+    resources: ["grafanadashboards"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["grafana.integreatly.org"]
+    resources: ["grafanadashboards/status"]
+    verbs: ["get"]

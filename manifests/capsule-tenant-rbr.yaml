@@ -17,6 +17,13 @@ spec:
         - apiGroup: rbac.authorization.k8s.io
           kind: Group
           name: oidc:rbr-po
+    # Tenant-owned dashboards (namespace rbr-ops, bd3d.11). Datasources stay platform-owned;
+    # Kyverno restrict-tenant-grafana-objects limits what a tenant dashboard may target.
+    - clusterRoleName: tenant-grafana-dashboards
+      subjects:
+        - apiGroup: rbac.authorization.k8s.io
+          kind: Group
+          name: oidc:rbr-db-admin
   ingressOptions:
     hostnameCollisionScope: Tenant
   resourceQuotas:

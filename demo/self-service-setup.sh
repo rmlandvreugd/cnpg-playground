@@ -258,11 +258,18 @@ EOF
     # Capsule's mutating webhook then injects the Tenant ownerReference automatically.
     # Use `create` not `apply`: the provisioner role lacks `get`, which apply needs.
     echo "🏗️  Creating tenant namespaces as tenant owner (Capsule injects ownerReference)..."
-    for ns in rbr-ver rbr-ver-db; do
+    # rbr-ops holds the tenant-owned Grafana dashboards (bd3d.11): no workloads, so no
+    # CNPG driver-group label. It is covered by the per-tenant ingress policy and the
+    # Kyverno default NetworkPolicy like any rbr-* namespace (both select on the tenant
+    # label), and needs no ingress of its own - the grafana-operator reads the
+    # dashboards through the API server.
+    for ns in rbr-ver rbr-ver-db rbr-ops; do
         if kubectl get namespace "${ns}" --context "${LOCAL_CONTEXT}" &>/dev/null; then
             echo "   namespace ${ns} already exists, skipping"
             continue
         fi
+        driver_label=""
+        [ "${ns}" != "rbr-ops" ] && driver_label="    cnpg.io/driver-group: ver"
         kubectl --context "${LOCAL_CONTEXT}" \
             --as=capsule-bot --as-group=oidc:rbr-db-admin --as-group=system:authenticated \
             create -f - <<EOF
@@ -272,7 +279,7 @@ metadata:
   name: ${ns}
   labels:
     capsule.clastix.io/tenant: rbr
-    cnpg.io/driver-group: ver
+${driver_label}
 EOF
     done
     echo "✅ Tenant namespaces ready"
@@ -614,15 +621,21 @@ EOF
         < "${SELF_SERVICE_YAML}/grafana/grafana-rbr-ver.yaml.tpl" \
         | kubectl apply --context "${LOCAL_CONTEXT}" -f -
 
-    # GrafanaDatasources + dashboards
+    # GrafanaDatasources: platform-owned, in the platform namespace grafana (they carry
+    # the tenant's X-Scope-OrgID).
     kubectl apply --context "${LOCAL_CONTEXT}" \
         -f "${SELF_SERVICE_YAML}/grafana/grafanadatasource-prometheus-rbr-ver.yaml" \
         -f "${SELF_SERVICE_YAML}/grafana/grafanadatasource-loki-rbr-ver.yaml" \
         -f "${SELF_SERVICE_YAML}/grafana/grafanadatasource-tempo-rbr-ver.yaml" \
-        -f "${SELF_SERVICE_YAML}/grafana/grafanadatasource-mimir-tempo-rbr-ver.yaml" \
-        -f "${SELF_SERVICE_YAML}/grafana/grafanadashboard-pgaudit-rbr-ver.yaml" \
-        -f "${SELF_SERVICE_YAML}/grafana/grafanadashboard-traefik-traces-rbr-ver.yaml" \
-        -f "${SELF_SERVICE_YAML}/grafana/grafanadashboard-cnpg-custom-rbr-ver.yaml"
+        -f "${SELF_SERVICE_YAML}/grafana/grafanadatasource-mimir-tempo-rbr-ver.yaml"
+
+    # Dashboards: tenant-owned, in rbr-ops (bd3d.11; ArgoCD app grafana-dashboards-rbr,
+    # project rbr). Remove copies left in grafana by the pre-bd3d.11 layout first - the
+    # platform app has prune=false, and two objects with the same dashboard uid would
+    # fight over the same dashboard in the tenant's Grafana.
+    kubectl delete grafanadashboard -n grafana --context "${LOCAL_CONTEXT}" --ignore-not-found \
+        pgaudit-dashboard-rbr-ver traefik-traces-rbr-ver cnpg-custom-pg-rbr-ver
+    kubectl apply --context "${LOCAL_CONTEXT}" -f "${SELF_SERVICE_YAML}/rbr-ops/"
 
     # IngressRoute (HTTPS via cert-manager TLS)
     TRAEFIK_IP_DASHED="${TRAEFIK_IP_DASHED}" \
@@ -921,7 +934,12 @@ teardown)
     kubectl delete externalsecret verstappen-superuser verstappen-app verstappen-readonly \
         -n rbr-ver-db --context "${LOCAL_CONTEXT}" --ignore-not-found --wait
 
-    kubectl delete namespace rbr-ver-db rbr-ver \
+    # Tenant dashboards (bd3d.11) before their namespace, so the grafana-operator can run
+    # the finalizers that remove them from the tenant's Grafana.
+    kubectl delete grafanadashboard --all -n rbr-ops \
+        --context "${LOCAL_CONTEXT}" --ignore-not-found --wait
+
+    kubectl delete namespace rbr-ver-db rbr-ver rbr-ops \
         --context "${LOCAL_CONTEXT}" \
         --ignore-not-found
 
@@ -951,9 +969,10 @@ teardown)
     echo "📊 Removing Grafana rbr-ver resources..."
     kubectl delete ingressroute grafana-rbr-ver \
         -n grafana --context "${LOCAL_CONTEXT}" --ignore-not-found
-    kubectl delete grafanadatasource prometheus-rbr-ver loki-rbr-ver \
+    kubectl delete grafanadatasource prometheus-rbr-ver loki-rbr-ver tempo-rbr-ver mimir-tempo-rbr-ver \
         -n grafana --context "${LOCAL_CONTEXT}" --ignore-not-found
-    kubectl delete grafanadashboard pgaudit-dashboard-rbr-ver \
+    # Pre-bd3d.11 layout kept the tenant dashboards in grafana; clean those up too.
+    kubectl delete grafanadashboard pgaudit-dashboard-rbr-ver traefik-traces-rbr-ver cnpg-custom-pg-rbr-ver \
         -n grafana --context "${LOCAL_CONTEXT}" --ignore-not-found
     kubectl delete grafana grafana-rbr-ver-deployment \
         -n grafana --context "${LOCAL_CONTEXT}" --ignore-not-found
