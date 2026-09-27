@@ -44,14 +44,15 @@ spec:
         {
           "id": 1,
           "title": "Audit Events per Minute",
+          "description": "CNPG emits pgaudit as structured JSON (logger=pgaudit, fields under record.audit), not as text with an AUDIT: prefix, so the queries parse json and filter on logger. The CNPG metrics exporter is excluded: its session SETs are audited on every scrape and are ~99% of all audit lines.",
           "type": "timeseries",
           "gridPos": {"x": 0, "y": 0, "w": 24, "h": 8},
           "datasource": {"type": "loki", "uid": "${datasource}"},
           "targets": [
             {
               "refId": "A",
-              "expr": "sum by (cluster, command) (count_over_time({cluster=~\"$cluster\"} |= `AUDIT:` [1m]))",
-              "legendFormat": "{{cluster}} / {{command}}"
+              "expr": "sum by (cluster, record_audit_class, record_audit_command) (count_over_time({cluster=~\"$cluster\", container=\"postgres\"} | json | logger=\"pgaudit\" | record_user_name!=\"cnpg_metrics_exporter\" [1m]))",
+              "legendFormat": "{{cluster}} / {{record_audit_class}} {{record_audit_command}}"
             }
           ]
         },
@@ -64,7 +65,7 @@ spec:
           "targets": [
             {
               "refId": "A",
-              "expr": "{cluster=~\"$cluster\"} |= `AUDIT:`"
+              "expr": "{cluster=~\"$cluster\", container=\"postgres\"} | json | logger=\"pgaudit\" | record_user_name!=\"cnpg_metrics_exporter\" | line_format \"{{.record_user_name}}@{{.record_database_name}} [{{.record_audit_class}}] {{.record_audit_command}}: {{.record_audit_statement}}\""
             }
           ],
           "options": {
