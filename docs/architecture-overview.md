@@ -660,6 +660,15 @@ All external containers share the **`kind` Docker bridge** (`172.28.0.0/16`) wit
 nodes; the "IP (kind)" column is the address the cluster wires to (see §2.1). Host-published
 ports are what you reach from the laptop.
 
+These addresses are **fixed** (`*_KIND_IP` in `scripts/common.sh`, attached with
+`kind_connect_static`), and the network is created with `--ip-range 172.28.1.0/24`, so docker
+hands out dynamic addresses (the kind nodes) only from `172.28.1.x`. Before this (bead `7lod`)
+everything was dynamic from `.2` upward in start order: after a WSL/docker restart the host
+SeaweedFS came up on RustFS's `.11`, RustFS could not start, and every static Endpoints bridge
+built from those addresses pointed at the wrong container. A `kind` network created before
+this change has no range; `scripts/setup.sh` recreates it when nothing is attached (after
+`scripts/teardown.sh`) and otherwise warns.
+
 | Container | Image | IP (kind) | Container port | Host port | Purpose |
 |-----------|-------|-----------|----------------|-----------|---------|
 | step-ca | smallstep/step-ca:latest | 172.28.0.13 | 8443 | 8443 | Root CA + Intermediate CA |

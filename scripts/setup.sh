@@ -62,6 +62,16 @@ echo
 # 'kind' (traefik-edge, zot, seaweedfs, vault, step-ca, authelia) and MetalLB's pool
 # (derived at runtime from the network's actual subnet — see get_kind_ipv4_subnet)
 # then land on this range instead of whatever was auto-picked.
+#
+# --ip-range confines DYNAMIC allocation (the kind nodes) to KIND_NETWORK_DYNAMIC_RANGE,
+# so it can never hand out one of the FIXED host-container addresses from common.sh
+# (bead 7lod). A network created before that has no range; it is recreated when
+# nothing is attached to it (i.e. after scripts/teardown.sh), otherwise we warn.
+create_kind_network() {
+    echo "🌐 Creating docker network 'kind' (subnet ${KIND_NETWORK_SUBNET}, dynamic range ${KIND_NETWORK_DYNAMIC_RANGE})..."
+    $CONTAINER_PROVIDER network create --driver bridge --subnet "${KIND_NETWORK_SUBNET}" \
+        --ip-range "${KIND_NETWORK_DYNAMIC_RANGE}" kind > /dev/null
+}
 if $CONTAINER_PROVIDER network inspect kind &>/dev/null; then
     existing_subnet=$(get_kind_ipv4_subnet kind)
     if [ "${existing_subnet}" != "${KIND_NETWORK_SUBNET}" ]; then
@@ -69,10 +79,23 @@ if $CONTAINER_PROVIDER network inspect kind &>/dev/null; then
         echo "Run './scripts/teardown.sh' (or 'docker network rm kind' if no cluster is using it) and re-run setup."
         exit 1
     fi
-    echo "✅ Docker network 'kind' already exists with the expected subnet ${KIND_NETWORK_SUBNET}."
+    existing_range=$(get_kind_ip_range kind)
+    if [ "$CONTAINER_PROVIDER" != "podman" ] && [ "${existing_range}" != "${KIND_NETWORK_DYNAMIC_RANGE}" ]; then
+        if [ -z "$($CONTAINER_PROVIDER ps -aq --filter network=kind)" ]; then
+            echo "🔁 Docker network 'kind' has dynamic range '${existing_range:-none}', expected ${KIND_NETWORK_DYNAMIC_RANGE}; nothing is attached, recreating it."
+            $CONTAINER_PROVIDER network rm kind > /dev/null
+            create_kind_network
+        else
+            echo "⚠️  Docker network 'kind' has dynamic range '${existing_range:-none}', expected ${KIND_NETWORK_DYNAMIC_RANGE}."
+            echo "   Containers are attached, so it is left as is. Host containers still get fixed"
+            echo "   addresses, but a dynamic allocation can collide with one of them while it is down."
+            echo "   Run './scripts/teardown.sh' and re-run setup to recreate the network."
+        fi
+    else
+        echo "✅ Docker network 'kind' already exists with subnet ${KIND_NETWORK_SUBNET} (dynamic range ${existing_range:-n/a})."
+    fi
 else
-    echo "🌐 Creating docker network 'kind' with subnet ${KIND_NETWORK_SUBNET}..."
-    $CONTAINER_PROVIDER network create --driver bridge --subnet "${KIND_NETWORK_SUBNET}" kind > /dev/null
+    create_kind_network
 fi
 
 # --- Script Setup ---
@@ -320,10 +343,10 @@ spec:
   - kind-pool
 EOF
 
-    echo "🌐 Connecting containers to the Kind network..."
-    $CONTAINER_PROVIDER network connect kind "${RUSTFS_CONTAINER_NAME}"
+    echo "🌐 Connecting containers to the Kind network (fixed addresses, bead 7lod)..."
+    kind_connect_static "${RUSTFS_CONTAINER_NAME}" "$(rustfs_kind_ip "${region_index}")"
     if [[ "${region}" == "${HUB_REGION}" ]]; then
-        $CONTAINER_PROVIDER network connect kind "${SEAWEEDFS_CONTAINER_NAME}"
+        kind_connect_static "${SEAWEEDFS_CONTAINER_NAME}" "${SEAWEEDFS_KIND_IP}"
     fi
 
     # Provision TLS cert for RustFS and restart with TLS enabled
@@ -397,7 +420,7 @@ EOF
         -e RUSTFS_CONSOLE_ENABLE=true \
         --restart unless-stopped \
         "${RUSTFS_IMAGE}" --console-enable /data
-    ${CONTAINER_PROVIDER} network connect kind --ip "${OBJECTSTORE_IP}" "${RUSTFS_CONTAINER_NAME}"
+    kind_connect_static "${RUSTFS_CONTAINER_NAME}" "${OBJECTSTORE_IP}"
 
     # Provision TLS cert for SeaweedFS and restart with TLS enabled (hub region only)
     if [[ "${region}" == "${HUB_REGION}" ]]; then
@@ -511,7 +534,7 @@ JSON
                 -s3.cert.file=/etc/seaweedfs/tls/seaweedfs_cert.pem \
                 -s3.key.file=/etc/seaweedfs/tls/seaweedfs_key.pem \
                 -s3.config=/etc/seaweedfs/identities.json
-        ${CONTAINER_PROVIDER} network connect kind "${SEAWEEDFS_CONTAINER_NAME}"
+        kind_connect_static "${SEAWEEDFS_CONTAINER_NAME}" "${SEAWEEDFS_KIND_IP}"
 
         # Pre-create Barman backup buckets (CNPG backups migrated off RustFS onto SeaweedFS).
         # Uses the bootstrap 'admin' identity (CreateBucket needs Admin); barman/loki stay least-privilege.
@@ -585,10 +608,10 @@ TOML
                 -workingDir=/tmp/seaweedfs-worker
     fi
 
-    $CONTAINER_PROVIDER network connect kind "${STEP_CA_CONTAINER_NAME}" 2>/dev/null || true
-    $CONTAINER_PROVIDER network connect kind "${VAULT_CONTAINER_NAME}" 2>/dev/null || true
-    $CONTAINER_PROVIDER network connect kind "${AUTHELIA_CONTAINER_NAME}" 2>/dev/null || true
-    $CONTAINER_PROVIDER network connect kind "${SEAWEEDFS_ADMIN_CONTAINER_NAME}" 2>/dev/null || true
+    kind_connect_static "${STEP_CA_CONTAINER_NAME}"         "${STEP_CA_KIND_IP}"         || true
+    kind_connect_static "${VAULT_CONTAINER_NAME}"           "${VAULT_KIND_IP}"           || true
+    kind_connect_static "${AUTHELIA_CONTAINER_NAME}"        "${AUTHELIA_KIND_IP}"        || true
+    kind_connect_static "${SEAWEEDFS_ADMIN_CONTAINER_NAME}" "${SEAWEEDFS_ADMIN_KIND_IP}" || true
 
     # Provision per-service TLS certs for the edge Traefik, then start the container.
     "${SCRIPT_DIR}/traefik-edge-setup.sh"
@@ -1185,7 +1208,7 @@ ${CONTAINER_PROVIDER} run \
         -s3.config=/etc/seaweedfs/identities.json \
         -s3.iam.config=/etc/seaweedfs/iam.json \
         -metricsPort="${SEAWEEDFS_METRICS_PORT}"
-${CONTAINER_PROVIDER} network connect kind "${SEAWEEDFS_CONTAINER_NAME}"
+kind_connect_static "${SEAWEEDFS_CONTAINER_NAME}" "${SEAWEEDFS_KIND_IP}"
 echo "✅ SeaweedFS S3 OIDC/STS wired (clientId seaweedfs-s3, issuer ${AUTHELIA_ISSUER})"
 
 echo "🔑 Installing gangplank (OIDC kubeconfig dispenser)..."

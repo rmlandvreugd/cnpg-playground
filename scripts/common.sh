@@ -195,6 +195,27 @@ AUTHELIA_JWT_SECRET="${AUTHELIA_JWT_SECRET:-authelia-jwt-secret-dev}"
 # the K8s podSubnet/serviceSubnet in k8s/kind-cluster.yaml.tpl — keep those consistent
 # if this ever changes.
 KIND_NETWORK_SUBNET="${KIND_NETWORK_SUBNET:-172.28.0.0/16}"
+# Where docker may hand out DYNAMIC addresses on 'kind' (the kind nodes). Every host
+# container instead gets a FIXED address outside this range (below, and
+# TRAEFIK_EDGE_IP / ZOT_IP), attached via kind_connect_static.
+#
+# Why (bead cnpg-playground-7lod): without a range and fixed addresses, docker
+# allocates from .2 upward in start order. After a WSL/docker restart the host
+# SeaweedFS came up on 172.28.0.11, the address docker had remembered for RustFS,
+# so objectstore-local could not start ("Address already in use"). Every in-cluster
+# bridge is a static Endpoints built from those addresses, so Mimir, Tempo, Loki's
+# DR mirror, the CNPG backups and the host metrics all broke with it.
+# The range and the fixed addresses must not overlap each other or MetalLB's pool
+# (X.X.255.200-250 for the hub region, see get_ip_range in setup.sh).
+KIND_NETWORK_DYNAMIC_RANGE="${KIND_NETWORK_DYNAMIC_RANGE:-172.28.1.0/24}"
+# Fixed kind-network addresses of the host containers. These are the addresses
+# they already had, so nothing that references them changes.
+AUTHELIA_KIND_IP="${AUTHELIA_KIND_IP:-172.28.0.2}"
+RUSTFS_KIND_IP="${RUSTFS_KIND_IP:-172.28.0.11}"          # hub region; others: rustfs_kind_ip
+SEAWEEDFS_KIND_IP="${SEAWEEDFS_KIND_IP:-172.28.0.12}"
+STEP_CA_KIND_IP="${STEP_CA_KIND_IP:-172.28.0.13}"
+VAULT_KIND_IP="${VAULT_KIND_IP:-172.28.0.14}"
+SEAWEEDFS_ADMIN_KIND_IP="${SEAWEEDFS_ADMIN_KIND_IP:-172.28.0.15}"
 
 # External Edge Traefik (host container on kind network — fronts vault/authelia/seaweedfs)
 TRAEFIK_EDGE_IMAGE="${TRAEFIK_EDGE_IMAGE:-traefik:v3.7.5}"
@@ -440,6 +461,50 @@ get_kind_ipv4_subnet() {
     else
         $CONTAINER_PROVIDER network inspect "$network" \
             -f '{{range .IPAM.Config}}{{.Subnet}}{{"\n"}}{{end}}' | grep '\.' | head -n 1
+    fi
+}
+
+# Returns the dynamic-allocation range of a container network (empty if none).
+get_kind_ip_range() {
+    local network="${1:-kind}"
+    if [ "$CONTAINER_PROVIDER" = "podman" ]; then
+        $CONTAINER_PROVIDER network inspect "$network" \
+            -f '{{range .Subnets}}{{with .LeaseRange}}{{.StartIP}}-{{.EndIP}}{{end}}{{end}}' 2>/dev/null
+    else
+        # Docker renders an unset range as "invalid Prefix"; keep only a real CIDR.
+        $CONTAINER_PROVIDER network inspect "$network" \
+            -f '{{range .IPAM.Config}}{{.IPRange}}{{end}}' 2>/dev/null | grep -E '^[0-9.]+/[0-9]+$' || true
+    fi
+}
+
+# kind_connect_static <container> <ip>
+# Attach a host container to the 'kind' network at a FIXED address (bead 7lod).
+# Idempotent: a no-op if it is already there with that address; reattaches it if
+# it is on 'kind' with a different (e.g. dynamically assigned) one. A plain
+# `network connect` without --ip lets docker pick by start order, and after a
+# restart two host containers can swap addresses.
+# Returns non-zero if the container does not exist, so callers keep `|| true`
+# where the container is optional.
+kind_connect_static() {
+    local name="$1" ip="$2" current
+    current=$($CONTAINER_PROVIDER inspect "${name}" \
+        --format '{{with index .NetworkSettings.Networks "kind"}}{{.IPAddress}}{{end}}' 2>/dev/null) || return 1
+    [[ "${current}" == "${ip}" ]] && return 0
+    if [[ -n "${current}" ]]; then
+        $CONTAINER_PROVIDER network disconnect kind "${name}" >/dev/null
+    fi
+    $CONTAINER_PROVIDER network connect --ip "${ip}" kind "${name}"
+}
+
+# rustfs_kind_ip <region-index>
+# Fixed kind address of objectstore-<region>: RUSTFS_KIND_IP for the hub (index 0),
+# then .21, .22, ... for further regions — clear of the other fixed addresses.
+rustfs_kind_ip() {
+    local idx="${1:-0}"
+    if [[ "${idx}" -eq 0 ]]; then
+        echo "${RUSTFS_KIND_IP}"
+    else
+        echo "${RUSTFS_KIND_IP%.*}.$((20 + idx))"
     fi
 }
 
