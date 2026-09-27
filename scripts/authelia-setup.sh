@@ -180,7 +180,8 @@ ${CONTAINER_PROVIDER} run -d \
 # and this script runs more than once during setup, so we (re)attach here rather
 # than rely on a one-shot connect elsewhere that a later recreate would undo.
 # Guarded: the kind network may not exist yet on the earliest invocation.
-${CONTAINER_PROVIDER} network connect kind "${AUTHELIA_CONTAINER_NAME}" 2>/dev/null || true
+# Fixed address (bead 7lod), so a restart cannot hand it to another container.
+kind_connect_static "${AUTHELIA_CONTAINER_NAME}" "${AUTHELIA_KIND_IP}" 2>/dev/null || true
 
 # Poll OIDC discovery endpoint for readiness.
 # Authelia derives the effective OIDC issuer per request and refuses discovery
