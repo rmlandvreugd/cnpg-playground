@@ -204,7 +204,6 @@ for region in "${REGIONS[@]}"; do
                         --values "${GIT_REPO_ROOT}/traefik/values.yaml" \
                         --set "tracing.otlp.http.enabled=true" \
                         --set "tracing.otlp.http.endpoint=http://otel-push.${HUB_TRAEFIK_DASHED}.sslip.io/v1/traces" \
-                        --set "tracing.serviceName=traefik-${non_hub_region}" \
                         --set "tracing.resourceAttributes.cluster=${non_hub_region}"
                 fi
             done
