@@ -10,6 +10,13 @@ spec:
     matchExpressions:
       - key: cnpg.io/cluster
         operator: Exists
+      # Instances only. CNPG also sets cnpg.io/cluster on the PgBouncer pods of
+      # every Pooler, so without this they were scraped twice — here AND by the
+      # cnpg-poolers PodMonitor — doubling every cnpg_pgbouncer_* series
+      # (246 each under job cnpg-clusters and cnpg-poolers). Bead rk2c.
+      - key: cnpg.io/podRole
+        operator: In
+        values: [instance]
   podMetricsEndpoints:
     - port: metrics
       path: /metrics
