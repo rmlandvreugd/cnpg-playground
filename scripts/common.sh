@@ -115,15 +115,12 @@ SEAWEEDFS_ADMIN_CONTAINER_NAME="${SEAWEEDFS_ADMIN_CONTAINER_NAME:-seaweedfs-admi
 SEAWEEDFS_WEBDAV_PORT="${SEAWEEDFS_WEBDAV_PORT:-7333}"              # WebDAV HTTPS (-cert.file/-key.file on same port)
 SEAWEEDFS_WEBDAV_CONTAINER_NAME="${SEAWEEDFS_WEBDAV_CONTAINER_NAME:-seaweedfs-webdav}"
 SEAWEEDFS_WORKER_METRICS_PORT="${SEAWEEDFS_WORKER_METRICS_PORT:-9327}"  # Worker Prometheus metrics
-# `weed server` serves /metrics only when -metricsPort is set. Without it arm C of
-# the storage PoC has container CPU/mem but nothing from the store itself, so the
-# A/B/C comparison would be store-side blind on the control arm.
+# `weed server` serves /metrics only when -metricsPort is set. Without it the host
+# SeaweedFS (CNPG backups, zot) exposes container CPU/mem but nothing from the store.
 SEAWEEDFS_METRICS_PORT="${SEAWEEDFS_METRICS_PORT:-9324}"                # weed server Prometheus metrics
 SEAWEEDFS_WORKER_CONTAINER_NAME="${SEAWEEDFS_WORKER_CONTAINER_NAME:-seaweedfs-worker}"
 # Static S3 identities (-s3.config / identities.json). Machine creds — humans use OIDC/STS (-s3.iam.config).
-# loki: RW on the 'loki' bucket only (keeps Loki working; blanket Admin dropped — see SEAWEEDFS_ADMIN_* for bootstrap).
-SEAWEEDFS_ACCESS_KEY="${SEAWEEDFS_ACCESS_KEY:-loki}"
-SEAWEEDFS_SECRET_KEY="${SEAWEEDFS_SECRET_KEY:-lokiS3secret}"
+# (No 'loki' identity any more: Loki moved to the in-cluster seaweedfs-ab — bead j9wn.)
 # admin: full Admin — used only to bootstrap buckets (rc bucket create) during setup, not handed to any workload.
 SEAWEEDFS_ADMIN_ACCESS_KEY="${SEAWEEDFS_ADMIN_ACCESS_KEY:-swadmin}"
 SEAWEEDFS_ADMIN_SECRET_KEY="${SEAWEEDFS_ADMIN_SECRET_KEY:-swadminS3secret}"
@@ -271,17 +268,20 @@ SEAWEEDFS_AB_S3_ACCESS_KEY="${SEAWEEDFS_AB_S3_ACCESS_KEY:-loki}"
 SEAWEEDFS_AB_S3_SECRET_KEY="${SEAWEEDFS_AB_S3_SECRET_KEY:-lokiABsecret}"
 SEAWEEDFS_AB_S3_ADMIN_ACCESS_KEY="${SEAWEEDFS_AB_S3_ADMIN_ACCESS_KEY:-abadmin}"
 SEAWEEDFS_AB_S3_ADMIN_SECRET_KEY="${SEAWEEDFS_AB_S3_ADMIN_SECRET_KEY:-abAdminSecret}"
-# RustFS buckets + per-bucket IAM users for the A/B/C PoC. Each user is scoped
-# to its OWN bucket by an explicit policy, so no RustFS root credential ever
-# reaches a Loki pod or the mirror sidecar. RustFS is alpha but its admin API
-# implements user add / policy create / policy attach, and cross-bucket access
-# is genuinely denied — verified against the live endpoint.
-RUSTFS_LOKI_DIRECT_BUCKET="${RUSTFS_LOKI_DIRECT_BUCKET:-loki-direct}"
-RUSTFS_LOKI_DIRECT_ACCESS_KEY="${RUSTFS_LOKI_DIRECT_ACCESS_KEY:-loki-direct}"
-RUSTFS_LOKI_DIRECT_SECRET_KEY="${RUSTFS_LOKI_DIRECT_SECRET_KEY:-lokiDirectSecret}"
+# RustFS bucket + scoped IAM user for Loki's DR mirror (filer.backup from
+# seaweedfs-ab). The user is limited to its OWN bucket by an explicit policy, so
+# no RustFS root credential ever reaches the mirror sidecar; cross-bucket access
+# is genuinely denied — verified against the live endpoint. (The storage PoC's
+# loki-direct bucket/user for arm A was dropped with that arm, bead j9wn.)
 RUSTFS_LOKI_MIRROR_BUCKET="${RUSTFS_LOKI_MIRROR_BUCKET:-loki-mirror}"
 RUSTFS_LOKI_MIRROR_ACCESS_KEY="${RUSTFS_LOKI_MIRROR_ACCESS_KEY:-loki-mirror}"
 RUSTFS_LOKI_MIRROR_SECRET_KEY="${RUSTFS_LOKI_MIRROR_SECRET_KEY:-lokiMirrorSecret}"
+# Read-only view of loki-mirror for the restore drill (scripts/loki-bench.sh
+# restore). The mirror user above is read-write because filer.backup writes and
+# deletes through it; a restore must never be able to change the copy it is
+# proving, so it gets its own Get/List-only user, created and removed by the drill.
+RUSTFS_LOKI_RESTORE_ACCESS_KEY="${RUSTFS_LOKI_RESTORE_ACCESS_KEY:-loki-restore}"
+RUSTFS_LOKI_RESTORE_SECRET_KEY="${RUSTFS_LOKI_RESTORE_SECRET_KEY:-lokiRestoreSecret}"
 
 # Capsule + capsule-proxy + gangplank
 CAPSULE_CHART_VERSION="${CAPSULE_CHART_VERSION:-0.14.6}"

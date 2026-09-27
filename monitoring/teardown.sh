@@ -52,20 +52,25 @@ for region in "${REGIONS[@]}"; do
     echo "🗑️  Uninstalling the superseded Alloy release in '${K8S_CLUSTER_NAME}'..."
     helm_uninstall_if_present alloy grafana "${CONTEXT_NAME}"
 
-    echo "🗑️  Uninstalling the three Loki storage arms in '${K8S_CLUSTER_NAME}'..."
+    echo "🗑️  Uninstalling Loki in '${K8S_CLUSTER_NAME}'..."
     helm_uninstall_if_present loki grafana "${CONTEXT_NAME}"
+    # Storage-PoC arms (epic t9p7), decommissioned in bead j9wn. Kept so a
+    # teardown also cleans a cluster that was set up before that change.
     helm_uninstall_if_present loki-rustfs grafana "${CONTEXT_NAME}"
     helm_uninstall_if_present loki-seaweedfs grafana "${CONTEXT_NAME}"
+    # Only present if a `loki-bench.sh restore` was kept (LOKI_BENCH_RESTORE_KEEP=1) or interrupted.
+    helm_uninstall_if_present loki-restore grafana "${CONTEXT_NAME}"
     kubectl --context "${CONTEXT_NAME}" -n grafana delete secret \
-        loki-s3 loki-rustfs-s3 loki-seaweedfs-s3 --ignore-not-found
+        loki-s3 loki-rustfs-s3 loki-seaweedfs-s3 loki-restore-s3 --ignore-not-found
+    # Legacy bridge to the host SeaweedFS (Loki storage before bead j9wn).
+    kubectl --context "${CONTEXT_NAME}" -n grafana delete service,endpoints seaweedfs --ignore-not-found
 
-    # --- seaweedfs-ab (Loki-B storage, bead 8ti) ---
+    # --- seaweedfs-ab (Loki's storage) ---
     # The Seaweed CR goes first: deleting it lets the operator tear its
     # StatefulSets down before the secrets and the bridge they depend on vanish.
-    # The volume PVC is deliberately NOT deleted here — the monitoring loop is
-    # rerun constantly during the A/B/C PoC and re-seeding the mirror on every
-    # cycle would destroy the checkpoint the restart test depends on. A full
-    # scripts/teardown.sh removes it with the cluster.
+    # The volume PVC is deliberately NOT deleted here, so Loki's history (and
+    # the filer.backup mirror checkpoint) survive a monitoring teardown/setup
+    # cycle. A full scripts/teardown.sh removes it with the cluster.
     echo "🗑️  Removing Seaweed CR seaweedfs-ab from grafana namespace..."
     if kubectl --context "${CONTEXT_NAME}" get crd seaweeds.seaweed.seaweedfs.com &>/dev/null; then
         kubectl --context "${CONTEXT_NAME}" -n grafana delete seaweed seaweedfs-ab \

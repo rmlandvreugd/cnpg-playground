@@ -1,0 +1,60 @@
+# Restore-drill Loki (release "loki-restore") — reads the RustFS loki-mirror
+# bucket, the filer.backup copy of the platform Loki's store (seaweedfs-ab),
+# to prove the copy is usable.
+# Installed and removed by `scripts/loki-bench.sh restore`; never by setup.sh.
+#
+# Layered ON TOP of loki-values-common.yaml so the schema is exactly the platform Loki's
+# (a restore with a different schema_config would read nothing and prove
+# nothing). Everything below exists to make this Loki READ-ONLY toward the
+# mirror, which must stay a faithful copy:
+#   - credentials are a Get/List-only RustFS user (the drill refuses to start
+#     if that user can write), so no write can land even by accident;
+#   - retention is off, so the compactor never tries to delete from the mirror;
+#   - no writer is pointed at it (k8s-monitoring and the OTel collector send
+#     only to "loki"), so its ingester never has anything to flush.
+---
+# REQUIRED for a second Loki release in the namespace. The chart names its
+# config ConfigMap (and "<name>-runtime") from `loki.name`, which defaults to the
+# CHART name, not the release — so without this the install tries to take over
+# ConfigMap "loki" owned by the platform release and aborts on Helm ownership
+# metadata. Matching the release name keeps the StatefulSet/Service names.
+nameOverride: loki-restore
+
+loki:
+  storage:
+    type: s3
+    bucketNames:
+      chunks: loki-mirror
+      ruler: loki-mirror
+      admin: loki-mirror
+    s3:
+      # Bare name: the RustFS cert carries DNS:objectstore-local as a bare SAN.
+      endpoint: https://objectstore-local:9000
+      region: us-east-1
+      accessKeyId: ${S3_ACCESS_KEY_ID}
+      secretAccessKey: ${S3_SECRET_ACCESS_KEY}
+      s3ForcePathStyle: true
+      insecure: false
+      http_config:
+        ca_file: /etc/ssl/step-ca/ca-certificates.crt
+
+  compactor:
+    retention_enabled: false
+
+  # Would try to (re)write loki_cluster_seed.json into the mirror.
+  analytics:
+    reporting_enabled: false
+
+singleBinary:
+  # Throwaway: no PVC left behind after `helm uninstall`.
+  persistence:
+    enabled: false
+  extraEnvFrom:
+    - secretRef:
+        name: loki-restore-s3
+
+monitoring:
+  # Its metrics would land in Mimir next to the platform Loki's and pollute
+  # its dashboards.
+  serviceMonitor:
+    enabled: false

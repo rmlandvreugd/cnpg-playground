@@ -280,14 +280,101 @@ Caveat: every store shares one WSL2 VM and one disk (`/dev/sdd`). "Outside" mean
 
 ---
 
-## 5a. Results & verdict — bead `t9p7.3` (2026-09-24)
+## 5a. Results & verdict — bead `t9p7.3`
+
+### Final verdict — soak 3, RustFS 1.0.0 (2026-09-25)
+
+This supersedes the soak-2 verdict further down for **arm A** and the **RustFS mirror**. That verdict
+rejected the alpha.99 build (see *Root cause* below), not RustFS as a store.
+
+**Run:** full rebuild on RustFS 1.0.0 (pinned digest), bootstrap via `rustfs/rc`. Soak t0
+`2026-09-24T12:30:06Z`, `flog` 2×~50 lines/s. Clean for **27h03m**, until a Windows Update of WSL
+(2.9.13.0) powered the VM off at `2026-09-25T15:33Z`. That is past the ≥26h gate. Every figure
+below comes from that clean window. S3 latency and cost are over `[27h]` ending `15:30Z`.
+`scripts/loki-bench.sh health` was clean on every check inside it.
+
+**Correctness.** All three arms returned identical results, byte for byte, for every stored window
+checked: 1h windows ending 5, 10, 15, 20 and 23h ago. For example, at 5h each arm returned 353,690
+lines / 93,805,975 B. On alpha.99, arm A returned *empty* results.
+
+**Retention (24h + 2h delete delay).**
+- Chunk objects older than 30h: 0 in A, B, C and the mirror.
+- Chunk objects older than 28h: 0 in B and the mirror, 5 each in A and C at 28.2h. The compactors
+  of A and C were down during the outage (15:33–17:29Z), so those deletes ran late.
+- Compactor: 108 successful retention runs per arm, 0 failures.
+- Every arm is empty for windows ending 29h and 30h ago.
+
+**Restore drill — PASS.** `scripts/loki-bench.sh restore` ran a throwaway Loki with arm B's schema
+against `loki-mirror`, using a read-only RustFS user. It returned 16/16 identical counts versus
+`loki-seaweedfs` (4 queries × 1h windows ending 5, 10, 15, 20h ago). The mirror held every source
+object and nothing stale (the alpha.99 soak left ~500 stale objects).
+
+**Query latency** (fixed LogQL set, 7 windows ending 5–20h ago, none inside the 00:00Z backup;
+n = 21 per cell, median ms [p90]):
+
+| query | A RustFS | B in-cluster SeaweedFS | C host SeaweedFS |
+|---|---|---|---|
+| `label_only` | 65 [177] | 77 [134] | 68 [229] |
+| `filter_404` | 316 [4407] | 408 [4338] | 370 [4145] |
+| `count_5m` | 713 [1525] | 830 [1616] | 862 [1452] |
+| `bytes_by_pod` | 835 [1875] | 818 [1756] | 862 [1852] |
+
+No arm is reliably faster. The `filter_404` order flipped between the interim run (n = 9) and this
+one, and all three arms share the same 4.1–4.6 s tails. The only signal consistent across both runs
+is A being about 15% faster on `count_5m`, which is too small to act on.
+
+**S3 operation latency** (Loki client side, p50 / p99 ms):
+
+| op | A RustFS | B in-cluster SeaweedFS | C host SeaweedFS |
+|---|---|---|---|
+| GetObject | 17 / 99 | 21 / 230 | 17 / 161 |
+| List | 13 / 25 | 14 / 71 | 13 / 47 |
+| PutObject | 18 / 97 | 20 / 148 | 19 / 96 |
+| DeleteObject | **57 / 487** | 29 / 256 | 21 / 232 |
+
+- Operation counts are equal across arms: ~880 Delete, ~1945 Put, ~2700 List. B shows 1714 Get
+  against ~1065 on A and C. The extra Gets are the two restore-drill runs, which query only
+  `loki-seaweedfs` as the source.
+- Max flush queue: A 6, B 7, C 3. In soak 2 it was 36 / 49 / 18.
+- RustFS is **2–3× slower on DeleteObject**, as it was in soak 2 (65 / 492). Deletes only happen in
+  background retention, never on the query path.
+- A has the best read and list tails. B, the only store inside the cluster, has the worst.
+
+**Resource cost** (in-cluster, 27h averages):
+- Each Loki: ~0.027–0.029 cores and 350–372 MB (max ~490–520 MB). This is the same for all arms.
+- **B additionally runs its store in the cluster**: ~0.024 cores and ~380 MB (filer 131, S3 116,
+  volume 102, master 33 MB), plus the seaweedfs-operator.
+- The RustFS and host SeaweedFS containers are outside the cluster and were not measured.
+
+**Verdict.** The question in §1 was *outside vs inside*.
+- **Performance:** no difference that matters. Query latency is indistinguishable across the arms.
+  The in-cluster store (B) costs extra CPU and memory and has the worst S3 read tails.
+- **A (RustFS direct): viable on 1.0.0.** It is correct, retention works, and it has the best read
+  and list latency. It is 2–3× slower on background deletes. One point is not proven *in-cluster*:
+  that it survives a real host stall. No stall happened during the 27h window, and the outage cut
+  the second 06:00Z chance. The standalone freeze test passes (`scripts/rustfs-disk-stall-test.sh`).
+- **Mirror to RustFS: viable.** The restore drill passes and the mirror carries no stale data.
+- **B (in-cluster SeaweedFS + mirror):** the only arm that yields a DR copy. That copy costs an
+  in-cluster store, the operator, and the worst S3 tails, and buys no latency.
+- **C (host SeaweedFS):** equivalent to A on everything measured, and already the platform default.
+
+Choosing between them is now an architecture decision, not a performance one (bead `j9wn`).
+
+**Decision (2026-09-26): keep B, decommission A and C.** B's in-cluster SeaweedFS with its RustFS
+DR mirror is now the platform Loki, running as release `loki`. See decision log #24.
+Caveat, as before: every store shares one WSL2 VM and one disk. "Outside" is a Docker hop, and the
+"DR" copy is logical, not geographic.
+
+---
+
+### Soak 2 — RustFS 1.0.0-alpha.99 (2026-09-24; superseded for A and the mirror)
 
 **Run:** soak t0 `2026-09-22T12:39:21Z`, `flog` 2×~50 lines/s, clean for ~41h (health clean on every
 check). RustFS then failed at `2026-09-24T06:01:51Z` (bead `e84t`), ~15h after the ≥26h window
 closed. All numbers below come from the clean window unless marked otherwise. Raw data was kept
 with the session; the headline figures are also recorded on bead `t9p7.3`.
 
-### Correctness and retention
+#### Correctness and retention
 
 - **Fan-out parity:** byte-identical across all three arms on every settled window checked
   during the soak (e.g. 46,267,826 bytes / 174,546 lines per 30m on each).
@@ -299,7 +386,7 @@ with the session; the headline figures are also recorded on bead `t9p7.3`.
   over 40h. **Zero** chunk objects older than 28h in A, B or C. All three return empty at 25h
   and 30h, so retention is verified from both the bucket and the query side.
 
-### Latency
+#### Latency
 
 S3 operations as seen by each Loki's client (`loki_s3_request_duration_seconds`, 40h, ms):
 
@@ -329,14 +416,14 @@ has no valid query latency: every A run after 06:01Z measured a store returning 
 query-route p99 (~2.48s on every arm) is not usable either, because it is dominated by the soak's
 own ingester-served checks.
 
-### Resource cost
+#### Resource cost
 
 Each Loki pod averaged ~0.037–0.038 cores and 335–380 MB. Arm B's in-cluster SeaweedFS adds
 another **~0.037 cores and ~320 MB** (master, volume, filer + sidecar, s3). The host stores behind
 A and C were **not** measured: method item 5 (`docker stats`) was not collected, so no
 store-level cost comparison with B is possible.
 
-### Restore drill — **FAIL**
+#### Restore drill — **FAIL**
 
 Not run to completion. RustFS lists **0** objects in `loki-mirror` while 2,298 sit on disk, so a
 restore Loki would see nothing. The failure is attributed to RustFS (`e84t`), not to the
@@ -344,7 +431,7 @@ restore Loki would see nothing. The failure is attributed to RustFS (`e84t`), no
 deleted by retention were still in `loki-mirror`, because RustFS DeleteObject was failing. A
 RustFS mirror target therefore both hides its data and silently accumulates stale data.
 
-### Verdict
+#### Verdict
 
 - **A — RustFS direct: REJECTED on reliability, for the alpha.99 build.** This is
   provisional: the cause is fixed in 1.0.0 (see *Root cause* below), and a 1.0.0 re-run is
@@ -362,7 +449,7 @@ RustFS mirror target therefore both hides its data and silently accumulates stal
 
 This verdict is a recommendation from this data, not a production benchmark.
 
-### Caveats
+#### Caveats
 
 - One WSL2 VM, one disk: relative overhead only.
 - Arm C had **no store-side metrics** in this soak: the host SeaweedFS ServiceMonitors were
@@ -417,7 +504,8 @@ device, keeps PUT + LIST traffic going, and uses `fsfreeze` to stall the disk:
 online. It also adds `RUSTFS_DRIVE_TIMEOUT_PROFILE=high_latency` (60 s budgets) and
 `RUSTFS_DRIVE_TIMEOUT_HEALTH_ACTION=ignore_scanner`. Neither setting was needed to recover.
 
-**To finish the A/B/C comparison:**
+**To finish the A/B/C comparison** (done 2026-09-25 on a 27h soak; results in *Final verdict* at
+the top of §5a. Step 2's two 06:00Z stall windows were not reached, see there):
 
 1. Rebuild with `RUSTFS_IMAGE` pinned to the 1.0.0 digest (`scripts/common.sh`). Use a **full**
    rebuild so there is no in-place alpha → GA data migration.
@@ -489,6 +577,7 @@ online. It also adds `RUSTFS_DRIVE_TIMEOUT_PROFILE=high_latency` (60 s budgets) 
 | 21 | Keep today's label shape (`pod` as label, `job="k8s-events"`); dashboards unchanged | 2026-09-18 (rev 4) |
 | 22 | Tenant Grafana keeps Loki-C only; no tenant datasources for Loki-A/B | 2026-09-18 (rev 4) |
 | 23 | Tenant isolation for **logs, metrics and traces** is a separate **P1** epic; not part of this PoC. If Loki auth lands first, apply it identically to all three Lokis. | 2026-09-18 (rev 4) |
+| 24 | **Keep B, decommission A and C** (user decision, bead `j9wn`). B's storage (seaweedfs-ab + `filer.backup` mirror to RustFS `loki-mirror`) becomes the platform Loki under release name **`loki`**, so every consumer of `loki.grafana.svc` is unchanged. Removed: `loki-rustfs` + RustFS `loki-direct` bucket/user; C's store (host SeaweedFS `loki` bucket + identity, grafana-ns bridge); the PoC fan-out (extra datasources, k8s-monitoring destinations, OTel exporters, `loki-storage-abc` dashboard). Host SeaweedFS stays (CNPG backups, zot). | 2026-09-26 |
 
 ---
 

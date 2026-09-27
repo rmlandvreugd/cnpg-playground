@@ -38,8 +38,6 @@ render() {
         "${GIT_REPO_ROOT}/monitoring/k8s-monitoring/k8s-monitoring-values.yaml.tpl" \
         "${GIT_REPO_ROOT}/monitoring/platform/traefik-servicemonitor.yaml.tpl" \
         "${GIT_REPO_ROOT}/monitoring/grafana/grafana_datasource_loki.yaml.tpl" \
-        "${GIT_REPO_ROOT}/monitoring/grafana/grafana_datasource_loki_rustfs.yaml.tpl" \
-        "${GIT_REPO_ROOT}/monitoring/grafana/grafana_datasource_loki_seaweedfs.yaml.tpl" \
         "${GIT_REPO_ROOT}/monitoring/grafana/grafana_datasource_tempo.yaml.tpl" \
         "${GIT_REPO_ROOT}/monitoring/grafana/grafana_datasource_mimir_tempo.yaml.tpl" >/dev/null
     echo "${RENDER_DIR}"
@@ -51,8 +49,6 @@ apply() {
 
     # Grafana datasources (platform view: platform + every tenant org).
     kc apply -f "${RENDER_DIR}/grafana_datasource_loki.yaml" \
-             -f "${RENDER_DIR}/grafana_datasource_loki_rustfs.yaml" \
-             -f "${RENDER_DIR}/grafana_datasource_loki_seaweedfs.yaml" \
              -f "${RENDER_DIR}/grafana_datasource_tempo.yaml" \
              -f "${RENDER_DIR}/grafana_datasource_mimir_tempo.yaml"
 

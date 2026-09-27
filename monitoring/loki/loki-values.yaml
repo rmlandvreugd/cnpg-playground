@@ -1,12 +1,25 @@
-# Loki-C (release "loki") — storage arm C, the CONTROL: the host SeaweedFS
-# container. Same software as arm B, same location as arm A, which is what makes
-# it the control for both comparisons.
+# Loki (release "loki") — storage: in-cluster SeaweedFS "seaweedfs-ab", managed
+# by seaweedfs-operator, with a filer.backup mirror into the RustFS loki-mirror
+# bucket outside the cluster for DR.
 #
-# Layered ON TOP of loki-values-common.yaml. Everything that is not storage now
-# lives there, so this arm cannot drift from the other two.
+# This was arm B of the storage PoC (epic t9p7). The PoC measured no latency
+# difference between the stores; this arm was kept because it is the only one
+# with a proven DR copy (`scripts/loki-bench.sh restore` passes against the
+# mirror), and arms A (RustFS direct) and C (host SeaweedFS) were
+# decommissioned (bead j9wn). Verdict: docs/plans/2026-09-17-loki-seaweedfs-dr-fanout-design.md §5a.
 #
-# NOTE: this release keeps the name "loki" and the bucket "loki" it has always
-# had, so existing datasources and dashboards keep working while the PoC runs.
+# Layered ON TOP of loki-values-common.yaml, which the restore-drill Loki
+# (loki-values-restore.yaml) also uses, so the drill reads with this exact schema.
+#
+# Endpoint is seaweedfs-ab-s3-HTTPS, not the operator's own seaweedfs-ab-s3
+# Service. The operator derives its Service from spec.s3.port and publishes only
+# the HTTP port (8334); the TLS listener on 8333 is exposed by the companion
+# Service created in monitoring/seaweedfs-ab/s3-tls.yaml. Pointing at
+# seaweedfs-ab-s3:8333 would simply have no such port.
+#
+# The gateway cert is vault-pki issued, but vault-pki is itself step-ca signed
+# and the gateway serves its intermediate, so step-ca-external-bundle validates
+# it — verified against the live endpoint.
 ---
 loki:
   storage:
@@ -16,10 +29,10 @@ loki:
       ruler: loki
       admin: loki
     s3:
-      endpoint: https://seaweedfs.grafana.svc.cluster.local:8333
+      endpoint: https://seaweedfs-ab-s3-https.grafana.svc.cluster.local:8333
       region: us-east-1
-      # Previously injected with --set, which wrote the secret in PLAINTEXT into
-      # ConfigMap 'loki'. Now expanded at runtime from the Secret below.
+      # Expanded at runtime from the Secret below via -config.expand-env=true
+      # (set in loki-values-common.yaml) so no credential lands in the ConfigMap.
       accessKeyId: ${S3_ACCESS_KEY_ID}
       secretAccessKey: ${S3_SECRET_ACCESS_KEY}
       s3ForcePathStyle: true

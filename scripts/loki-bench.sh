@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
 #
-# A/B/C Loki storage benchmark harness (bead cnpg-playground-t9p7.3).
+# Loki storage harness: health, DR restore drill, and the load/query tools of
+# the storage PoC (epic t9p7).
 #
-#   scripts/loki-bench.sh query   [region] [hours-ago]  # fixed LogQL set vs each arm
-#   scripts/loki-bench.sh ingest  [region]              # ingest parity across arms
+#   scripts/loki-bench.sh health  [region]              # is Loki's storage (and the DR mirror) healthy?
 #   scripts/loki-bench.sh restore [region]              # restore drill from the RustFS mirror
+#   scripts/loki-bench.sh query   [region] [hours-ago]  # fixed LogQL set vs each Loki in LOKI_BENCH_ARMS
+#   scripts/loki-bench.sh ingest  [region]              # ingest parity across LOKI_BENCH_ARMS
 #   scripts/loki-bench.sh status  [region]              # soak progress at a glance
-#   scripts/loki-bench.sh start   [region]              # start the soak and record t0
-#   scripts/loki-bench.sh health  [region]              # is the soak still VALID?
+#   scripts/loki-bench.sh start   [region]              # start a soak (flog load) and record t0
 #   scripts/loki-bench.sh elapsed [region]              # how far into the soak are we?
 #
-# The three arms:
-#   A loki-rustfs     -> RustFS directly       (bucket loki-direct)
-#   B loki-seaweedfs  -> in-cluster SeaweedFS  (bucket loki, mirrored to RustFS)
-#   C loki            -> host SeaweedFS        (bucket loki, the control)
+# Loki ("loki"): storage in the in-cluster SeaweedFS seaweedfs-ab (bucket loki),
+# mirrored by filer.backup into the RustFS bucket loki-mirror for DR. The PoC's
+# other two arms (loki-rustfs, and the old loki on the host SeaweedFS) were
+# decommissioned in bead j9wn; compare against extra releases again with e.g.
+#   LOKI_BENCH_ARMS="loki loki-candidate" scripts/loki-bench.sh query
 #
 set -euo pipefail
 
@@ -24,8 +26,8 @@ region="${2:-local}"
 CONTEXT="$(get_cluster_context "${region}")"
 kc() { kubectl --context "${CONTEXT}" "$@"; }
 
-ARMS="loki loki-rustfs loki-seaweedfs"
-# Platform view: platform plus every tenant org, so all three arms are compared
+ARMS="${LOKI_BENCH_ARMS:-loki}"
+# Platform view: platform plus every tenant org, so all arms are compared
 # over the SAME data. A single-org read would compare different line sets.
 ORG="${LOKI_BENCH_ORG:-platform}"
 
@@ -46,19 +48,19 @@ count_5m|sum(count_over_time({namespace="loki-bench"}[5m]))
 bytes_by_pod|sum by (pod) (bytes_over_time({namespace="loki-bench"}[5m]))
 '
 
-# The nightly Barman backup of verstappen at 00:00 writes into the HOST SeaweedFS
-# that backs arm C, so a window overlapping it would penalise C for unrelated IO.
+# The nightly Barman backup of verstappen at 00:00 writes heavily to the host
+# SeaweedFS on the same VM disk, so a window overlapping it measures that IO too.
 warn_if_backup_window() {
     local h; h=$(date -u -d "${HOURS_AGO} hours ago" +%H 2>/dev/null || echo "")
     if [[ "${h}" == "00" ]]; then
         echo "  ⚠️  window overlaps the 00:00-00:30 Barman backup of verstappen, which" >&2
-        echo "      writes to the host SeaweedFS behind arm C. Pick another -hours-ago." >&2
+        echo "      writes to the host SeaweedFS on the same disk. Pick another -hours-ago." >&2
     fi
 }
 
-runner_pod() {  # <name> <script>
+runner_pod() {  # <name> <script> [image]
     kc -n grafana delete pod "$1" --ignore-not-found >/dev/null 2>&1
-    kc -n grafana run "$1" --restart=Never --image=curlimages/curl:8.8.0 \
+    kc -n grafana run "$1" --restart=Never --image="${3:-curlimages/curl:8.8.0}" \
         --pod-running-timeout=300s --command -- sh -ec "$2" >/dev/null 2>&1
     kc -n grafana wait "pod/$1" --for=jsonpath='{.status.phase}'=Succeeded --timeout=600s >/dev/null 2>&1 || true
     kc -n grafana logs "$1" 2>&1
@@ -155,7 +157,7 @@ cmd_health() {
     local pat='InvalidAccessKeyId|AccessDenied|NoSuchBucket|bucket does not exist|failed to flush|500 Internal Server Error'
 
     echo "=== Loki arms: object-store errors in the last ${since} ==="
-    for arm in loki loki-rustfs loki-seaweedfs; do
+    for arm in ${ARMS}; do
         n=$(kc -n grafana logs "${arm}-0" -c loki --since="${since}" 2>/dev/null | grep -ciE "${pat}" || true)
         if [ "${n:-0}" -gt 0 ]; then
             printf '  ❌ %-16s %s store errors\n' "${arm}" "${n}"; bad=$((bad + 1))
@@ -171,7 +173,7 @@ cmd_health() {
     if [ "${n:-0}" -gt 0 ]; then printf '  ❌ filer.backup    %s errors\n' "${n}"; bad=$((bad + 1))
     else printf '  ✅ filer.backup    clean\n'; fi
 
-    # Mimir and Tempo share RustFS with arm A. In the second soak they reported
+    # Mimir and Tempo store on RustFS, which also holds the DR mirror. In soak 2 they reported
     # the RustFS failure ("bucket does not exist") while this check only looked
     # at Loki, so the failure went unnoticed until verdict time.
     echo
@@ -202,7 +204,15 @@ cmd_health() {
         done
     ")
     printf '%s\n' "${ans}" | sed 's/^/  /'
-    if [ "$(printf '%s\n' "${ans}" | awk 'NF==2 {print $2}' | sort -u | wc -l)" -gt 1 ]; then
+    if [ "$(wc -w <<<"${ARMS}")" -lt 2 ]; then
+        # One Loki: nothing to compare against. An empty stored window is only
+        # expected on a cluster younger than ~6h, so warn rather than fail.
+        if printf '%s\n' "${ans}" | awk 'NF==2 && $2==0 {z=1} END {exit !z}'; then
+            echo "  ⚠️  stored window is EMPTY (expected only on a cluster younger than ~6h)"
+        else
+            echo "  ✅ stored window served"
+        fi
+    elif [ "$(printf '%s\n' "${ans}" | awk 'NF==2 {print $2}' | sort -u | wc -l)" -gt 1 ]; then
         echo "  ❌ arms DISAGREE on the same stored window"; bad=$((bad + 1))
     else
         echo "  ✅ arms agree"
@@ -236,7 +246,7 @@ cmd_start() {
     notrunning=$(kc get pods -A --no-headers 2>/dev/null | grep -vcE 'Running|Completed' || true)
     echo "  pods not Running/Completed : ${notrunning}"
     [ "${notrunning:-0}" -gt 0 ] && bad=1
-    for arm in loki loki-rustfs loki-seaweedfs; do
+    for arm in ${ARMS}; do
         r=$(kc -n grafana get sts "${arm}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null)
         printf '  %-16s ready=%s\n' "${arm}" "${r:-0}"
         [ "${r:-0}" = "1" ] || bad=1
@@ -253,7 +263,7 @@ cmd_start() {
     kc -n loki-bench rollout status deploy/flog --timeout=300s
 
     echo
-    echo "=== confirming all three arms are ingesting it ==="
+    echo "=== confirming every arm is ingesting it ==="
     sleep 90
     if ! LOKI_BENCH_SETTLE=30 LOKI_BENCH_WINDOW=1m cmd_ingest; then
         echo
@@ -302,21 +312,147 @@ cmd_status() {
     cmd_ingest || true
 }
 
-# Restore drill: does the RustFS mirror actually hold a usable copy of arm B?
-# Compares the fixed query set against loki-seaweedfs (source) and a throwaway
-# Loki reading the mirror bucket. PASS requires identical counts.
+# Restore drill (design doc §5, pass/fail gate): does the RustFS loki-mirror
+# bucket actually hold a USABLE copy of Loki's store (seaweedfs-ab)?
+#
+# Stands up a throwaway Loki ("loki-restore", the platform Loki's exact schema)
+# that reads loki-mirror through a Get/List-only RustFS user, asks it and "loki"
+# the same count questions over store-served windows, then removes everything
+# it created. PASS = every window answers identically, with data in it.
+#
+# Safe to run DURING a soak: the drill never writes to the mirror (read-only
+# user, verified before Loki starts; retention off; no writer points at it) and
+# does not touch the platform Loki.
+#
+#   LOKI_BENCH_RESTORE_AGES="5 10 15 20"  window END ages in hours (1h windows)
+#   LOKI_BENCH_RESTORE_KEEP=1            leave loki-restore running afterwards
 cmd_restore() {
-    echo "Restore drill: RustFS loki-mirror vs loki-seaweedfs"
+    # A non-zero exit here is a RESULT (drill FAIL), not a script failure. Drop
+    # errexit as well as common.sh's ERR trap: under `set -eo pipefail` any
+    # failing pipeline (e.g. `kc logs` of a pod that never started) would end
+    # the script before restore_cleanup, stranding loki-restore and its user.
+    trap - ERR
+    set +e
+    local ages="${LOKI_BENCH_RESTORE_AGES:-5 10 15 20}" keep="${LOKI_BENCH_RESTORE_KEEP:-0}"
+    local mirror="${RUSTFS_LOKI_MIRROR_BUCKET}" ro_key="${RUSTFS_LOKI_RESTORE_ACCESS_KEY}"
+    local ro_secret="${RUSTFS_LOKI_RESTORE_SECRET_KEY}" out
+
+    echo "Restore drill: RustFS ${mirror} (via loki-restore) vs loki, org=${ORG}"
+    echo "  1h windows ending ${ages// /h, }h ago"
+    # The source answers from ingester memory + store; the restore sees only
+    # what has been flushed AND whose TSDB index has been shipped (chunks flush
+    # at max_chunk_age 2h). Younger windows DIFF by design, not by mirror loss:
+    # a 2h-old window measured 22100 (source) vs 15145 (copy) on 2026-09-24.
+    local a
+    for a in ${ages}; do
+        if (( a < 4 )); then
+            echo "  ⚠️  ${a}h is younger than ~4h: the source still serves part of that window"
+            echo "      from ingester memory, so a DIFF there says nothing about the mirror."
+            break
+        fi
+    done
     echo
-    echo "  NOTE: the filer.backup mirror follows LIVE filer events and does not"
-    echo "  reconcile. If arm B's store was rebuilt while the sidecar was down, the"
-    echo "  mirror can hold keys the source no longer has. Re-seed first with:"
-    echo "    SEAWEEDFS_AB_INITIAL_SNAPSHOT=-initialSnapshot monitoring/setup.sh ${region}"
+
+    restore_cleanup() {
+        [[ "${keep}" == "1" ]] && { echo "  (LOKI_BENCH_RESTORE_KEEP=1: leaving loki-restore + ${ro_key} in place)"; return; }
+        echo "=== cleanup ==="
+        helm uninstall loki-restore -n grafana --kube-context "${CONTEXT}" --wait >/dev/null 2>&1 \
+            && echo "  helm release loki-restore removed" || echo "  (no loki-restore release)"
+        kc -n grafana delete secret loki-restore-s3 --ignore-not-found >/dev/null
+        runner_pod loki-restore-iam-rm "
+            rc alias set store https://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' --insecure >/dev/null
+            rc admin policy detach store ${mirror}-ro --user '${ro_key}' >/dev/null 2>&1 || true
+            rc admin user rm store '${ro_key}' >/dev/null 2>&1 && echo '  RustFS user ${ro_key} removed' || echo '  (RustFS user ${ro_key} not removed)'
+            rc admin policy rm store ${mirror}-ro >/dev/null 2>&1 && echo '  RustFS policy ${mirror}-ro removed' || echo '  (RustFS policy ${mirror}-ro not removed)'" "${RC_IMAGE}"
+    }
+
+    # 1. Read-only RustFS user. The mirror's own user is read-write (filer.backup
+    #    writes and deletes through it), so it must not be what the restore uses.
+    echo "=== 1. read-only RustFS user ${ro_key} ==="
+    out=$(runner_pod loki-restore-iam "
+        rc alias set store https://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' --insecure >/dev/null
+        printf '%s' '{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\",\"s3:ListBucket\",\"s3:GetBucketLocation\"],\"Resource\":[\"arn:aws:s3:::${mirror}\",\"arn:aws:s3:::${mirror}/*\"]}]}' > /tmp/ro.json
+        rc admin policy create store ${mirror}-ro /tmp/ro.json >/dev/null
+        rc admin user add store '${ro_key}' '${ro_secret}' >/dev/null
+        rc admin policy attach store ${mirror}-ro --user '${ro_key}' >/dev/null
+        rc alias set ro https://objectstore-local:9000 '${ro_key}' '${ro_secret}' --insecure >/dev/null
+        echo READ_OK objects=\$(rc --json object list -r ro/${mirror}/ | grep -c '\"key\"')
+        if echo x | rc pipe ro/${mirror}/zz-restore-ro-probe >/dev/null 2>&1; then
+            rc object remove store/${mirror}/zz-restore-ro-probe >/dev/null 2>&1
+            echo WRITE_ALLOWED
+        else
+            echo WRITE_DENIED
+        fi" "${RC_IMAGE}")
+    echo "${out}" | sed 's/^/  /'
+    if ! grep -q '^READ_OK' <<<"${out}" || ! grep -q '^WRITE_DENIED' <<<"${out}"; then
+        echo "  ❌ ${ro_key} cannot read ${mirror}, or CAN write to it. Not starting a Loki on it."
+        restore_cleanup
+        return 1
+    fi
+
+    # 2. The restore Loki.
     echo
-    echo "  NOT IMPLEMENTED. The 2026-09-24 drill was recorded as FAIL without being"
-    echo "  run: RustFS (bead e84t) listed 0 objects in loki-mirror while 2,298 sat on"
-    echo "  disk, and the mirror held ~500 objects its source had already deleted."
-    echo "  Verdict and evidence: docs/plans/2026-09-17-loki-seaweedfs-dr-fanout-design.md §5a."
+    echo "=== 2. loki-restore (the platform Loki's schema, reading ${mirror}) ==="
+    kc -n grafana create secret generic loki-restore-s3 \
+        --from-literal=S3_ACCESS_KEY_ID="${ro_key}" \
+        --from-literal=S3_SECRET_ACCESS_KEY="${ro_secret}" \
+        --dry-run=client -o yaml | kc apply -f - >/dev/null
+    if ! helm_upgrade_install loki-restore oci://ghcr.io/grafana-community/helm-charts/loki \
+            grafana "${CONTEXT}" "${LOKI_CHART_VERSION}" \
+            --values "${GIT_REPO_ROOT}/monitoring/loki/loki-values-common.yaml" \
+            --values "${GIT_REPO_ROOT}/monitoring/loki/loki-values-restore.yaml" >/dev/null; then
+        echo "  ❌ loki-restore did not become ready"
+        kc -n grafana logs loki-restore-0 -c loki --tail=20 2>&1 | sed 's/^/    /'
+        restore_cleanup
+        return 1
+    fi
+    echo "  loki-restore ready"
+
+    # 3. Same questions to source and copy. Counts, not log lines: a log query
+    #    returns at most `limit` lines, so equal line lists would prove little.
+    echo
+    echo "=== 3. source vs restored copy ==="
+    out=$(runner_pod loki-restore-compare "
+        q() {  # <host> <logql> <time>
+          curl -sS --get \"http://\$1.grafana.svc.cluster.local:3100/loki/api/v1/query\" \
+            -H 'X-Scope-OrgID: ${ORG}' --data-urlencode \"query=\$2\" --data-urlencode \"time=\$3\" 2>/dev/null \
+            | tr ',' '\n' | grep -A1 '\"value\"' | tail -1 | tr -dc '0-9'
+        }
+        NOW=\$(date +%s)
+        printf '  %-6s %-12s %14s %14s\n' AGE QUERY loki loki-restore
+        for h in ${ages}; do
+          T=\$(( NOW - h*3600 ))
+          for spec in \
+            'all_lines|sum(count_over_time({namespace=~\".+\"}[1h]))' \
+            'bench_lines|sum(count_over_time({namespace=\"loki-bench\"}[1h]))' \
+            'bench_404|sum(count_over_time({namespace=\"loki-bench\"} |= \" 404 \" [1h]))' \
+            'bench_bytes|sum(bytes_over_time({namespace=\"loki-bench\"}[1h]))'; do
+            name=\${spec%%|*}; logql=\${spec#*|}
+            src=\$(q loki \"\$logql\" \$T); dst=\$(q loki-restore \"\$logql\" \$T)
+            src=\${src:-0}; dst=\${dst:-0}
+            if [ \"\$src\" = \"\$dst\" ]; then
+              if [ \"\$src\" = 0 ]; then v=EMPTY; else v=MATCH; fi
+            else v=DIFF; fi
+            printf '  %-6s %-12s %14s %14s  %s\n' \"\${h}h\" \"\$name\" \"\$src\" \"\$dst\" \"\$v\"
+          done
+        done")
+    echo "${out}"
+
+    restore_cleanup
+
+    echo
+    local diff match
+    diff=$(grep -c ' DIFF$' <<<"${out}" || true)
+    match=$(grep -c ' MATCH$' <<<"${out}" || true)
+    if [[ "${diff}" -eq 0 && "${match}" -gt 0 ]]; then
+        echo "  ✅ RESTORE DRILL: PASS — ${match} non-empty comparisons, all identical."
+        return 0
+    elif [[ "${diff}" -eq 0 ]]; then
+        echo "  ⚠️  RESTORE DRILL: INCONCLUSIVE — every window is empty in the source."
+        echo "      Pick older windows (LOKI_BENCH_RESTORE_AGES) once the soak has data there."
+        return 1
+    fi
+    echo "  ❌ RESTORE DRILL: FAIL — ${diff} comparison(s) differ between source and copy."
     return 1
 }
 
@@ -328,5 +464,5 @@ case "${mode}" in
     ingest)  cmd_ingest ;;
     restore) cmd_restore ;;
     status)  cmd_status ;;
-    *) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+    *) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

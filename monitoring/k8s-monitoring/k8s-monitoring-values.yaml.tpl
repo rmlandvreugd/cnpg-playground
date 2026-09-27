@@ -1,6 +1,5 @@
 # grafana/k8s-monitoring 4.5.2 — replaces the hand-written Alloy release
-# (monitoring/alloy/alloy-config.river.tpl) and fans every log line out to all
-# three Loki storage arms of the A/B/C PoC.
+# (monitoring/alloy/alloy-config.river.tpl) and ships every log line to Loki.
 #
 # TENANT ISOLATION IS LOAD-BEARING HERE. The release this replaces carried all
 # per-tenant log routing from beads bd3d.1/.5/.10. Two rules keep it working:
@@ -20,8 +19,9 @@
 cluster:
   name: ${K8S_CLUSTER_NAME}
 
-# All three arms receive identical copies. The PoC compares object stores, so
-# the write path must be byte-for-byte the same into each.
+# One destination. During the storage PoC (epic t9p7) this fanned out to three
+# Loki arms; A and C were decommissioned (bead j9wn) and the kept arm now runs
+# as the "loki" release, so this URL did not change.
 destinations:
   loki:
     type: loki
@@ -29,22 +29,6 @@ destinations:
     # tenantId deliberately unset — see header.
     # Default clusterLabels is [cluster, k8s.cluster.name]; `cluster` would
     # collide with the CNPG cluster label that the pgaudit dashboards filter on.
-    clusterLabels: [k8s.cluster.name]
-    batchSize: 1MiB
-    batchWait: 2s
-    writeAheadLog:
-      enabled: true
-  lokiRustfs:
-    type: loki
-    url: http://loki-rustfs.grafana.svc.cluster.local:3100/loki/api/v1/push
-    clusterLabels: [k8s.cluster.name]
-    batchSize: 1MiB
-    batchWait: 2s
-    writeAheadLog:
-      enabled: true
-  lokiSeaweedfs:
-    type: loki
-    url: http://loki-seaweedfs.grafana.svc.cluster.local:3100/loki/api/v1/push
     clusterLabels: [k8s.cluster.name]
     batchSize: 1MiB
     batchWait: 2s
@@ -88,8 +72,8 @@ podLogsViaLoki:
       target_label  = "tenant"
     }
 
-  # Injected inside loki.process "pod_logs", immediately before the fan-out to
-  # all three destinations.
+  # Injected inside loki.process "pod_logs", immediately before the write to
+  # the destination.
   #
   # EVERY ported stage is wrapped in its own stage.match. The old config had
   # three independent pipelines (cnpg / all_pods / traefik); k8s-monitoring

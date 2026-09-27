@@ -457,7 +457,6 @@ EOF
 
         # Static S3 identities (-s3.config). Machine creds only; humans use OIDC/STS (-s3.iam.config, wired post-Traefik).
         #   admin  — full Admin, used only to bootstrap buckets during setup (not handed to any workload)
-        #   loki   — RW on the 'loki' bucket only (blanket Admin removed)
         #   barman — RW/List on the backup buckets (CNPG/Barman, migrated off RustFS)
         #   zot    — RW/List/Tagging on the 'zot' bucket only (registry blob storage)
         sudo tee "${SEAWEEDFS_CFG_DIR}/identities.json" > /dev/null <<JSON
@@ -467,11 +466,6 @@ EOF
       "name": "admin",
       "credentials": [{"accessKey": "${SEAWEEDFS_ADMIN_ACCESS_KEY}", "secretKey": "${SEAWEEDFS_ADMIN_SECRET_KEY}"}],
       "actions": ["Admin"]
-    },
-    {
-      "name": "loki",
-      "credentials": [{"accessKey": "${SEAWEEDFS_ACCESS_KEY}", "secretKey": "${SEAWEEDFS_SECRET_KEY}"}],
-      "actions": ["Read:loki", "Write:loki", "List:loki", "Tagging:loki"]
     },
     {
       "name": "barman",

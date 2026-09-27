@@ -254,56 +254,14 @@ for region in "${REGIONS[@]}"; do
             "$(render_tenant_file "${CONTEXT_NAME}" "monitoring/grafana/grafana_datasource_${_ds}.yaml.tpl")"
     done
 
-    # --- Loki + Alloy (pgaudit log aggregation) ---
-    echo "📊 Wiring SeaweedFS into grafana namespace for Loki..."
-    SEAWEEDFS_IP=$(${CONTAINER_PROVIDER} inspect "${SEAWEEDFS_CONTAINER_NAME}" \
-        --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
-    kubectl --context "${CONTEXT_NAME}" apply -f - <<EOF
-apiVersion: v1
-kind: Service
-metadata:
-  name: seaweedfs
-  namespace: grafana
-spec:
-  ports:
-    - name: s3
-      port: 8333
-      targetPort: 8333
----
-apiVersion: v1
-kind: Endpoints
-metadata:
-  name: seaweedfs
-  namespace: grafana
-subsets:
-  - addresses:
-      - ip: ${SEAWEEDFS_IP}
-    ports:
-      - name: s3
-        port: 8333
-EOF
-
-    echo "🪣 Creating Loki S3 bucket in SeaweedFS..."
-    kubectl --context "${CONTEXT_NAME}" -n grafana delete pod loki-bucket-init --ignore-not-found
-    kubectl run loki-bucket-init --restart=Never \
-        --context "${CONTEXT_NAME}" \
-        -n grafana \
-        --image="${RC_IMAGE}" \
-        --pod-running-timeout=180s \
-        --command -- sh -c "rc alias set store https://seaweedfs:8333 '${SEAWEEDFS_ADMIN_ACCESS_KEY}' '${SEAWEEDFS_ADMIN_SECRET_KEY}' --insecure 2>&1 \
-            && rc bucket create --ignore-existing store/loki \
-            && echo '✅ Bucket loki ready'"
-    kubectl --context "${CONTEXT_NAME}" -n grafana wait pod/loki-bucket-init \
-        --for=jsonpath='{.status.phase}'=Succeeded --timeout=180s \
-        && kubectl --context "${CONTEXT_NAME}" -n grafana logs pod/loki-bucket-init \
-        || echo "  ⚠️  Bucket init may have failed — verify: kubectl run rc ... rc bucket create store/loki"
-    kubectl --context "${CONTEXT_NAME}" -n grafana delete pod loki-bucket-init --ignore-not-found
-
-    # --- Loki-B storage: in-cluster SeaweedFS + mirror to RustFS (bead 8ti) ---
-    # Loki-B itself is installed by bead dfe; this stands up the storage it will
-    # use, plus the filer.backup mirror into the RustFS loki-mirror bucket.
+    # --- Loki storage: in-cluster SeaweedFS + DR mirror to RustFS ---
+    # The storage PoC (epic t9p7) kept this arm (B) and decommissioned the other
+    # two (bead j9wn): Loki's chunks live in the operator-managed SeaweedFS
+    # "seaweedfs-ab", and a filer.backup sidecar mirrors them into the RustFS
+    # loki-mirror bucket outside the cluster. `scripts/loki-bench.sh restore`
+    # proves that copy is usable.
     # Requires the seaweedfs-operator that scripts/setup.sh installs on the hub.
-    echo "🌱 Wiring seaweedfs-ab (Loki-B storage) into the grafana namespace..."
+    echo "🌱 Wiring seaweedfs-ab (Loki storage) into the grafana namespace..."
     RUSTFS_CONTAINER_NAME="${RUSTFS_BASE_NAME}-${region}"
     OBJECTSTORE_IP=$(${CONTAINER_PROVIDER} inspect "${RUSTFS_CONTAINER_NAME}" \
         --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
@@ -311,10 +269,9 @@ EOF
         < "${GIT_REPO_ROOT}/monitoring/seaweedfs-ab/objectstore-bridge.yaml.tpl" \
         | kubectl --context "${CONTEXT_NAME}" apply -f -
 
-    # RustFS buckets + per-bucket IAM users. Each user gets an explicit policy
-    # covering ONLY its own bucket, so neither Loki-A nor the mirror sidecar ever
-    # holds the RustFS root credential.
-    echo "🪣 Creating RustFS buckets + scoped IAM users (loki-direct, loki-mirror)..."
+    # RustFS mirror bucket + its own IAM user. The policy covers ONLY that
+    # bucket, so the filer.backup sidecar never holds the RustFS root credential.
+    echo "🪣 Creating RustFS bucket + scoped IAM user (loki-mirror)..."
     kubectl --context "${CONTEXT_NAME}" -n grafana delete pod rustfs-iam-init --ignore-not-found
     kubectl run rustfs-iam-init --restart=Never \
         --context "${CONTEXT_NAME}" \
@@ -323,9 +280,7 @@ EOF
         --pod-running-timeout=180s \
         --command -- sh -c "set -e
             rc alias set store https://objectstore-local:9000 '${RUSTFS_ROOT_USER}' '${RUSTFS_ROOT_PASSWORD}' --insecure >/dev/null 2>&1
-            for b in ${RUSTFS_LOKI_DIRECT_BUCKET} ${RUSTFS_LOKI_MIRROR_BUCKET}; do
-                rc bucket create --ignore-existing store/\$b
-            done
+            rc bucket create --ignore-existing store/${RUSTFS_LOKI_MIRROR_BUCKET}
             add_user() {  # <bucket> <access> <secret>
                 cat > /tmp/\$1.json <<POLICY
 {\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:*\"],\"Resource\":[\"arn:aws:s3:::\$1\",\"arn:aws:s3:::\$1/*\"]}]}
@@ -334,14 +289,13 @@ POLICY
                 rc admin user add store \$2 \$3 2>/dev/null || true
                 rc admin policy attach store \$1-rw --user \$2 2>/dev/null || true
             }
-            add_user ${RUSTFS_LOKI_DIRECT_BUCKET} '${RUSTFS_LOKI_DIRECT_ACCESS_KEY}' '${RUSTFS_LOKI_DIRECT_SECRET_KEY}'
             add_user ${RUSTFS_LOKI_MIRROR_BUCKET} '${RUSTFS_LOKI_MIRROR_ACCESS_KEY}' '${RUSTFS_LOKI_MIRROR_SECRET_KEY}'
             rc admin user list store
-            echo '✅ RustFS buckets + IAM users ready'"
+            echo '✅ RustFS mirror bucket + IAM user ready'"
     kubectl --context "${CONTEXT_NAME}" -n grafana wait pod/rustfs-iam-init \
         --for=jsonpath='{.status.phase}'=Succeeded --timeout=180s \
         && kubectl --context "${CONTEXT_NAME}" -n grafana logs pod/rustfs-iam-init \
-        || echo "  ⚠️  RustFS bucket/IAM init may have failed"
+        || echo "  ⚠️  RustFS mirror bucket/IAM init may have failed"
     kubectl --context "${CONTEXT_NAME}" -n grafana delete pod rustfs-iam-init --ignore-not-found
 
     # S3 identities for the in-cluster gateway. The secret KEY is also the
@@ -405,46 +359,46 @@ POLICY
         || echo "  ⚠️  seaweedfs-ab bucket init may have failed"
     kubectl --context "${CONTEXT_NAME}" -n grafana delete pod seaweedfs-ab-bucket-init --ignore-not-found
 
-    # --- The three Loki storage arms (bead dfe) ---
-    # A loki-rustfs      -> RustFS directly           (outside the cluster)
-    # B loki-seaweedfs   -> in-cluster SeaweedFS      (mirrored to RustFS)
-    # C loki             -> host SeaweedFS container  (control)
+    # --- Loki (single binary) on seaweedfs-ab ---
+    # Release name stays "loki", so every consumer of loki.grafana.svc (Grafana
+    # datasources, tenant datasources, k8s-monitoring, the OTel collector) is
+    # unchanged by the storage move.
     #
+    # Remove the storage-PoC arms first (bead j9wn). loki-seaweedfs in particular
+    # wrote to the SAME seaweedfs-ab bucket this release now uses: two Lokis with
+    # their own compactors on one bucket would each apply retention and compact
+    # the other's index. Its data stays in the bucket and is served by "loki".
+    echo "🗑️  Removing decommissioned Loki PoC arms (loki-rustfs, loki-seaweedfs) if present..."
+    helm_uninstall_if_present loki-rustfs grafana "${CONTEXT_NAME}"
+    helm_uninstall_if_present loki-seaweedfs grafana "${CONTEXT_NAME}"
+    kubectl --context "${CONTEXT_NAME}" -n grafana delete secret \
+        loki-rustfs-s3 loki-seaweedfs-s3 --ignore-not-found
+    # Arm C's bridge to the host SeaweedFS; nothing in grafana uses it any more.
+    kubectl --context "${CONTEXT_NAME}" -n grafana delete service,endpoints seaweedfs --ignore-not-found
+    # The PoC's Grafana objects are no longer applied, but applying does not
+    # delete: without this they would linger, pointing at releases that are gone.
+    if kubectl --context "${CONTEXT_NAME}" get crd grafanadatasources.grafana.integreatly.org &>/dev/null; then
+        kubectl --context "${CONTEXT_NAME}" -n grafana delete grafanadatasource \
+            loki-rustfs loki-seaweedfs --ignore-not-found
+        kubectl --context "${CONTEXT_NAME}" -n grafana delete grafanadashboard \
+            loki-storage-abc --ignore-not-found
+    fi
+
     # Credentials go in a Secret and reach the config as ${S3_*} via
     # -config.expand-env=true, set in loki-values-common.yaml. Passing them with
-    # --set (as this did before) writes them in PLAINTEXT into the release's
-    # ConfigMap, where `kubectl get cm loki -o yaml` shows the secret key.
-    echo "🔐 Creating per-arm Loki S3 credential Secrets..."
-    create_loki_s3_secret() {  # <secret-name> <access-key> <secret-key>
-        kubectl --context "${CONTEXT_NAME}" -n grafana create secret generic "$1" \
-            --from-literal=S3_ACCESS_KEY_ID="$2" \
-            --from-literal=S3_SECRET_ACCESS_KEY="$3" \
-            --dry-run=client -o yaml | kubectl --context "${CONTEXT_NAME}" apply -f -
-    }
-    create_loki_s3_secret loki-s3            "${SEAWEEDFS_ACCESS_KEY}"            "${SEAWEEDFS_SECRET_KEY}"
-    create_loki_s3_secret loki-rustfs-s3     "${RUSTFS_LOKI_DIRECT_ACCESS_KEY}"   "${RUSTFS_LOKI_DIRECT_SECRET_KEY}"
-    create_loki_s3_secret loki-seaweedfs-s3  "${SEAWEEDFS_AB_S3_ACCESS_KEY}"      "${SEAWEEDFS_AB_S3_SECRET_KEY}"
+    # --set writes them in PLAINTEXT into the release's ConfigMap, where
+    # `kubectl get cm loki -o yaml` shows the secret key.
+    echo "🔐 Creating the Loki S3 credential Secret..."
+    kubectl --context "${CONTEXT_NAME}" -n grafana create secret generic loki-s3 \
+        --from-literal=S3_ACCESS_KEY_ID="${SEAWEEDFS_AB_S3_ACCESS_KEY}" \
+        --from-literal=S3_SECRET_ACCESS_KEY="${SEAWEEDFS_AB_S3_SECRET_KEY}" \
+        --dry-run=client -o yaml | kubectl --context "${CONTEXT_NAME}" apply -f -
 
-    # Every arm layers the shared file first so they cannot drift: the PoC
-    # compares object stores, so any non-storage difference would masquerade as
-    # a storage result.
-    echo "📊 Installing Loki-C (control, host SeaweedFS) ${LOKI_CHART_VERSION}..."
+    echo "📊 Installing Loki ${LOKI_CHART_VERSION} (storage: seaweedfs-ab)..."
     helm_upgrade_install loki oci://ghcr.io/grafana-community/helm-charts/loki \
         grafana "${CONTEXT_NAME}" "${LOKI_CHART_VERSION}" \
         --values "${GIT_REPO_ROOT}/monitoring/loki/loki-values-common.yaml" \
         --values "${GIT_REPO_ROOT}/monitoring/loki/loki-values.yaml"
-
-    echo "📊 Installing Loki-A (loki-rustfs, RustFS direct) ${LOKI_CHART_VERSION}..."
-    helm_upgrade_install loki-rustfs oci://ghcr.io/grafana-community/helm-charts/loki \
-        grafana "${CONTEXT_NAME}" "${LOKI_CHART_VERSION}" \
-        --values "${GIT_REPO_ROOT}/monitoring/loki/loki-values-common.yaml" \
-        --values "${GIT_REPO_ROOT}/monitoring/loki/loki-values-rustfs.yaml"
-
-    echo "📊 Installing Loki-B (loki-seaweedfs, in-cluster SeaweedFS) ${LOKI_CHART_VERSION}..."
-    helm_upgrade_install loki-seaweedfs oci://ghcr.io/grafana-community/helm-charts/loki \
-        grafana "${CONTEXT_NAME}" "${LOKI_CHART_VERSION}" \
-        --values "${GIT_REPO_ROOT}/monitoring/loki/loki-values-common.yaml" \
-        --values "${GIT_REPO_ROOT}/monitoring/loki/loki-values-seaweedfs.yaml"
 
     # k8s-monitoring replaces the hand-written 'alloy' release. It carries ALL
     # per-tenant log routing (beads bd3d.1/.5/.10) in its extraLogProcessingStages,
@@ -452,8 +406,7 @@ POLICY
     # see the header of the template for the two rules that must hold.
     #
     # Uninstall the old release first: it tails the same pods via the API and
-    # would double-write every line into all three Lokis, which would silently
-    # break the parity gate the PoC measures.
+    # would double-write every line into Loki.
     echo "🗑️  Removing the superseded 'alloy' release..."
     helm_uninstall_if_present alloy grafana "${CONTEXT_NAME}"
 
@@ -537,10 +490,10 @@ fi
     kubectl --context "${CONTEXT_NAME}" apply \
         -f "${GIT_REPO_ROOT}/monitoring/platform/zot-servicemonitor.yaml"
 
-    # Host SeaweedFS metrics (arm C's store). A static target on the kind
+    # Host SeaweedFS metrics (CNPG backups + zot store). A static target on the kind
     # bridge, so the container IP is resolved at apply time. Server only: the
     # maintenance worker is not on the kind network (see the template header).
-    echo "📊 Applying host SeaweedFS ServiceMonitor (arm C store)..."
+    echo "📊 Applying host SeaweedFS ServiceMonitor..."
     SEAWEEDFS_IP=$(${CONTAINER_PROVIDER} inspect "${SEAWEEDFS_CONTAINER_NAME}" \
         --format '{{.NetworkSettings.Networks.kind.IPAddress}}' 2>/dev/null || echo "")
     # Validate the shape, not just non-emptiness: a container missing from the
@@ -552,10 +505,10 @@ fi
             < "${GIT_REPO_ROOT}/monitoring/platform/seaweedfs-host-servicemonitor.yaml.tpl" \
             | kubectl --context "${CONTEXT_NAME}" apply -f -
     else
-        echo "  ⚠️  host SeaweedFS has no kind-network IP (got '${SEAWEEDFS_IP}') — skipping arm C store metrics"
+        echo "  ⚠️  host SeaweedFS has no kind-network IP (got '${SEAWEEDFS_IP}') — skipping host SeaweedFS metrics"
     fi
 
-    # NOTE: arm B needs NO ServiceMonitor here. seaweedfs-operator creates one
+    # NOTE: seaweedfs-ab (Loki's store) needs NO ServiceMonitor here. The operator creates one
     # per component (master/volume/filer/s3, ownerReferences: Seaweed) as soon as
     # a metricsPort is set on the CR. Adding our own selected the same Services
     # and produced a second scrape of the same endpoints under an IDENTICAL job

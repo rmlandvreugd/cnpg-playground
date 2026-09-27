@@ -73,13 +73,12 @@ spec:
 ---
 # --- Observability backends ---------------------------------------------------------------
 # Loki (namespace grafana, :3100): Alloy and Grafana are same-namespace; add the collector.
-# Selects on COMPONENT, not name. The A/B/C storage arms set a per-release
-# nameOverride (required so three Loki releases can share one namespace without
-# fighting over the same ConfigMap), which makes app.kubernetes.io/name
-# loki-rustfs / loki-seaweedfs. A name=='loki' match therefore silently excluded
-# arms A and B, and the collector's OTLP log writes to them were dropped by the
-# default-deny — visible only in `scripts/flowlogs.sh denied`, because the Alloy
-# DaemonSet path kept working and the parity numbers still looked right.
+# Selects on COMPONENT, not name. Any second Loki release in this namespace must
+# set a nameOverride (the chart otherwise fights over ConfigMap "loki"), which
+# changes app.kubernetes.io/name. During the storage PoC a name=='loki' match
+# silently excluded the extra arms and the collector's OTLP writes to them were
+# dropped by the default-deny, visible only in `scripts/flowlogs.sh denied`. The
+# restore-drill Loki (`scripts/loki-bench.sh restore`) is such a release today.
 apiVersion: projectcalico.org/v3
 kind: GlobalNetworkPolicy
 metadata:
