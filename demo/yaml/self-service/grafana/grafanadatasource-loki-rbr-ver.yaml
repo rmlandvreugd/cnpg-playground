@@ -11,6 +11,12 @@ spec:
   datasource:
     access: proxy
     name: DS_LOKI
+    # Fixed uid: the tenant Tempo datasource links traces to logs by uid "loki". Without
+    # it the operator falls back to this object's metadata.uid, which is random and
+    # changes on every rebuild, so every trace->logs link pointed nowhere (bd3d.8).
+    # Same (deprecated) field as the sibling tempo/mimir-tempo datasources: spec.uid is
+    # immutable once absent, so moving to it would force a recreate.
+    uid: loki
     type: loki
     url: http://loki.grafana.svc.cluster.local:3100
     jsonData:
