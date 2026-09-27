@@ -17,8 +17,15 @@ spec:
       server: https://kubernetes.default.svc
     - namespace: rbr-ver-db
       server: https://kubernetes.default.svc
+    # Tenant-owned Grafana dashboards (bd3d.11). Kyverno restrict-tenant-grafana-objects
+    # holds them to the tenant's own Grafana instance and inline content - this project
+    # only decides WHERE they may go.
+    - namespace: rbr-ops
+      server: https://kubernetes.default.svc
   clusterResourceWhitelist: []
   namespaceResourceWhitelist:
+    - group: grafana.integreatly.org
+      kind: GrafanaDashboard
     - group: ''
       kind: ConfigMap
     - group: ''
@@ -46,10 +53,12 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  # Tenant Grafana objects in the platform namespace grafana: only the two Grafana
-  # CR kinds, so nothing here can create/overwrite Services, Deployments or ConfigMaps
-  # in grafana. The tenant may get/sync these apps but not create or edit them.
-  description: RBR tenant Grafana datasources and dashboards (platform-managed)
+  # Tenant Grafana DATASOURCES in the platform namespace grafana - only that kind, so
+  # nothing here can create/overwrite Services, Deployments or ConfigMaps in grafana.
+  # Datasources stay platform-owned because they carry the tenant's X-Scope-OrgID.
+  # Dashboards moved to the tenant-owned namespace rbr-ops (project rbr, bd3d.11).
+  # The tenant may get/sync these apps but not create or edit them.
+  description: RBR tenant Grafana datasources (platform-managed)
   sourceRepos:
     - https://github.com/rmlandvreugd/cnpg-playground.git
   destinations:
@@ -59,8 +68,6 @@ spec:
   namespaceResourceWhitelist:
     - group: grafana.integreatly.org
       kind: GrafanaDatasource
-    - group: grafana.integreatly.org
-      kind: GrafanaDashboard
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject

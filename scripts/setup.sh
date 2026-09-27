@@ -858,6 +858,10 @@ ${STEP_CA_INT_CERT}" \
         --values "${GIT_REPO_ROOT}/capsule/values.yaml" \
         --no-wait
     kubectl --context "${CONTEXT_NAME}" wait --for=condition=Available deployment/capsule-controller-manager -n capsule-system --timeout=300s
+    # Tenant owners may manage GrafanaDashboards in their own namespaces (bd3d.11); each
+    # Tenant binds it via additionalRoleBindings. Kyverno enforces what they may contain.
+    kubectl --context "${CONTEXT_NAME}" apply \
+        -f "${GIT_REPO_ROOT}/capsule/clusterrole-tenant-grafana-dashboards.yaml"
 
     echo "🔗 Installing capsule-proxy ${CAPSULE_PROXY_CHART_VERSION} in '${K8S_CLUSTER_NAME}'..."
     helm_upgrade_install capsule-proxy \

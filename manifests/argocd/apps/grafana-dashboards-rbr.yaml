@@ -1,0 +1,31 @@
+# Tenant-owned Grafana dashboards (bd3d.11). Project rbr is tenant-controlled, so the
+# tenant can add, change and remove dashboards here without the platform. What a
+# dashboard may do is not decided here: Kyverno restrict-tenant-grafana-objects holds
+# every GrafanaDashboard in a tenant namespace to the tenant's own Grafana instance and
+# inline/ConfigMap content, on this path and on kubectl alike. Datasources stay in the
+# platform-managed app grafana-rbr-ver (project rbr-grafana).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: grafana-dashboards-rbr
+  namespace: argocd
+  annotations:
+    # After grafana-rbr-ver (wave 2): the instance and its datasources exist first.
+    argocd.argoproj.io/sync-wave: "3"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: rbr
+  source:
+    repoURL: https://github.com/rmlandvreugd/cnpg-playground.git
+    targetRevision: vault
+    path: demo/yaml/self-service/rbr-ops
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: rbr-ops
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
