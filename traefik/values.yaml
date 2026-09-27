@@ -41,6 +41,12 @@ accessLog:
         X-Forwarded-For: keep
 
 tracing:
+  # Same name as Traefik's LOG stream (service_name="traefik", derived from the
+  # app label), so Grafana's trace->logs link (Tempo datasource maps span
+  # service.name -> Loki service_name) finds this Traefik's lines. It used to be
+  # overridden per install to "traefik-<region>", which matched nothing in Loki
+  # (bead apgi). The region is on every span as resource attribute `cluster`
+  # (tracing.resourceAttributes.cluster, set by scripts/setup.sh).
   serviceName: traefik
   sampleRate: 1.0       # 100% sampling — playground; tune for prod
   otlp:
