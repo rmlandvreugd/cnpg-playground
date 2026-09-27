@@ -21,12 +21,17 @@ spec:
         datasourceUid: loki
         spanStartTimeShift: '-1m'
         spanEndTimeShift: '1m'
+        # Map span -> Loki labels that actually exist (bd3d.8). Loki has service_name,
+        # not "service". There is no "cluster" mapping on purpose: the span attribute is
+        # the Kubernetes region ("local"), while Loki's "cluster" label is the CNPG
+        # cluster ("verstappen") or absent, and k8s_cluster_name is "k8s-local" - any
+        # span carrying "cluster" (Traefik's do) would otherwise query an empty set.
         tags:
           - key: service.name
-            value: service
-          - key: cluster
-            value: cluster
-        filterByTraceID: true
+            value: service_name
+        # demo-app does not write trace IDs into its log lines, so filtering on the
+        # trace ID always returned nothing; show the service's logs around the span.
+        filterByTraceID: false
       tracesToMetrics:
         datasourceUid: mimir-tempo
         tags:
