@@ -79,6 +79,19 @@ psql_primary() {
         "$(primary_pod)" -- psql -U postgres -d max -c "$1"
 }
 
+# ensure_role_sql <role> <options>
+# Emits SQL that CREATEs the role if it is missing and otherwise ALTERs it to
+# the same options, so `setup` can be re-run on an onboarded tenant (bead kcin).
+# A plain CREATE ROLE aborted the whole psql -c block (one implicit transaction)
+# with 'role "rbr_ver_ddl_owner" already exists'. ALTER rather than skip, so a
+# re-run's freshly generated PASSWORD matches what is then written to Vault.
+# The dollar-quote tag is escaped so bash does not expand it.
+ensure_role_sql() {
+    local role="$1" opts="$2"
+    printf 'DO $ensure_role$ BEGIN IF EXISTS (SELECT FROM pg_roles WHERE rolname = %s) THEN ALTER ROLE %s WITH %s; ELSE CREATE ROLE %s WITH %s; END IF; END $ensure_role$;\n' \
+        "'${role}'" "${role}" "${opts}" "${role}" "${opts}"
+}
+
 wait_for_external_secret() {
     local name="$1" namespace="$2" max_wait="${3:-120}" elapsed=0
     echo "  ⏳ Waiting for ExternalSecret/${name} in ${namespace}..."
@@ -391,9 +404,9 @@ EOF
     # --- Stable PostgreSQL roles ---
     echo "🗄️  Creating stable PostgreSQL roles..."
     psql_primary "
-        CREATE ROLE rbr_ver_ddl_owner  NOLOGIN;
-        CREATE ROLE rbr_ver_ddl_admin  NOLOGIN;
-        CREATE ROLE rbr_ver_ddl_reader NOLOGIN;
+        $(ensure_role_sql rbr_ver_ddl_owner  NOLOGIN)
+        $(ensure_role_sql rbr_ver_ddl_admin  NOLOGIN)
+        $(ensure_role_sql rbr_ver_ddl_reader NOLOGIN)
         GRANT CONNECT ON DATABASE max TO rbr_ver_ddl_admin;
         GRANT USAGE, CREATE ON SCHEMA public TO rbr_ver_ddl_admin;
         GRANT USAGE, CREATE ON SCHEMA public TO rbr_ver_ddl_owner;
@@ -403,13 +416,13 @@ EOF
         GRANT SELECT ON ALL TABLES IN SCHEMA public TO rbr_ver_ddl_reader;
         ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO rbr_ver_ddl_reader;
     "
-    echo "✅ Stable roles created"
+    echo "✅ Stable roles created (or already present)"
 
     # --- VDE admin role ---
     echo "🔑 Creating VDE admin PostgreSQL role (rbr_ver_vde_admin)..."
     VDE_ADMIN_PASS=$(openssl rand -hex 32)
     psql_primary "
-        CREATE ROLE rbr_ver_vde_admin WITH LOGIN CREATEROLE PASSWORD '${VDE_ADMIN_PASS}';
+        $(ensure_role_sql rbr_ver_vde_admin "LOGIN CREATEROLE PASSWORD '${VDE_ADMIN_PASS}'")
         GRANT CONNECT ON DATABASE max TO rbr_ver_vde_admin;
         GRANT rbr_ver_ddl_owner  TO rbr_ver_vde_admin WITH ADMIN OPTION;
         GRANT rbr_ver_ddl_admin  TO rbr_ver_vde_admin WITH ADMIN OPTION;
@@ -423,7 +436,7 @@ EOF
     echo "🔑 Creating Vault DB config PostgreSQL role (rbr_ver_vde_config)..."
     VDE_CONFIG_PASS=$(openssl rand -hex 32)
     psql_primary "
-        CREATE ROLE rbr_ver_vde_config WITH LOGIN CREATEROLE PASSWORD '${VDE_CONFIG_PASS}';
+        $(ensure_role_sql rbr_ver_vde_config "LOGIN CREATEROLE PASSWORD '${VDE_CONFIG_PASS}'")
         GRANT CONNECT ON DATABASE max TO rbr_ver_vde_config;
         GRANT rbr_ver_ddl_owner  TO rbr_ver_vde_config WITH ADMIN OPTION;
         GRANT rbr_ver_ddl_admin  TO rbr_ver_vde_config WITH ADMIN OPTION;
