@@ -9,9 +9,22 @@ spec:
   groups:
     - name: pki.cert_expiry
       rules:
+        # BOTH conditions must hold: little time left in absolute terms AND a
+        # small fraction of the cert's own lifetime left. The fraction is what
+        # keeps short-lived, auto-renewed certs quiet: step-ca reissues its own
+        # 24h "Step Online CA" TLS cert when ~1/3 of its lifetime remains (minus
+        # up to 1/20 jitter, i.e. at 28-33% left), so it always had < 7d and
+        # < 2d left and both alerts fired permanently (bead gq6c). With the
+        # fraction they fire only if renewal stalls (< 20% = ~4.8h, < 10% =
+        # ~2.4h before a 24h cert expires). Long-lived certs are unaffected:
+        # their 7d / 2d windows are well under 20% / 10% of their lifetime.
+        # Needs cert_not_before_seconds from the exporter (added with gq6c).
         - alert: CertExpiringWarning
           expr: |
             (cert_not_after_seconds - time()) < (7 * 24 * 3600)
+            and
+            (cert_not_after_seconds - time())
+              / (cert_not_after_seconds - cert_not_before_seconds) < 0.20
           for: 5m
           labels:
             severity: warning
@@ -24,6 +37,9 @@ spec:
         - alert: CertExpiringCritical
           expr: |
             (cert_not_after_seconds - time()) < (2 * 24 * 3600)
+            and
+            (cert_not_after_seconds - time())
+              / (cert_not_after_seconds - cert_not_before_seconds) < 0.10
           for: 5m
           labels:
             severity: critical

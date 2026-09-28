@@ -4,6 +4,9 @@ Revocation exporter — probes TLS endpoints for cert expiry and CRL revocation.
 
 Metrics exposed on PORT (default 9105):
   cert_not_after_seconds{endpoint, common_name}  — NotAfter Unix timestamp
+  cert_not_before_seconds{endpoint, common_name} — NotBefore Unix timestamp (lifetime
+                                                   = not_after - not_before; lets alerts
+                                                   judge short-lived certs by fraction)
   cert_revoked{endpoint, common_name}             — 1 if revoked, 0 if valid
   cert_probe_success{endpoint}                    — 1 if TLS probe succeeded
   crl_next_update_seconds{crl_url}                — CRL NextUpdate Unix timestamp
@@ -33,6 +36,11 @@ log = logging.getLogger(__name__)
 CERT_NOT_AFTER = Gauge(
     "cert_not_after_seconds",
     "Certificate expiry Unix timestamp",
+    ["endpoint", "common_name"],
+)
+CERT_NOT_BEFORE = Gauge(
+    "cert_not_before_seconds",
+    "Certificate validity start Unix timestamp",
     ["endpoint", "common_name"],
 )
 CERT_REVOKED = Gauge(
@@ -147,6 +155,9 @@ def probe_endpoint(
 
         CERT_NOT_AFTER.labels(endpoint=name, common_name=cn).set(
             cert.not_valid_after_utc.timestamp()
+        )
+        CERT_NOT_BEFORE.labels(endpoint=name, common_name=cn).set(
+            cert.not_valid_before_utc.timestamp()
         )
 
         revoked = check_crl_revoked(cert, ca_bundle, crl_cache)
