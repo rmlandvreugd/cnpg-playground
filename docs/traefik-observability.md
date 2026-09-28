@@ -19,15 +19,17 @@ unanchored `rbr` match would hand it to the tenant. Tenants are listed explicitl
 captured with a generic `^([a-z0-9]+)-`, so a platform namespace can never mint a tenant
 (`bd3d.7` will generate the list from the Capsule Tenants).
 
-Data with no router or service — entry-point metrics, 404s, redirects, the EntryPoint span —
-stays platform: it aggregates across tenants.
+Metrics and log lines with no router or service — entry-point metrics, 404s, redirects —
+stay platform: they aggregate across tenants. Traces are different: a trace goes to the
+tenant whole, entrypoint span included, as soon as one of its spans is the tenant's
+(`bd3d.9`, below).
 
 ## The three signals
 
 | Signal | Where | Tenant split |
 |---|---|---|
 | Access logs | `monitoring/alloy/alloy-config.river`, `loki.process "traefik_access"` | `stage.regex` on the line's `ServiceName`; `stage.labels` sets `tenant`, which `loki.process "tenant"` turns into the Loki `X-Scope-OrgID` |
-| Traces | `traefik/values.yaml` + `monitoring/otel-collector/otel-collector-values.yaml` | routing connector entry with `context: span` on `traefik.router.name` / `traefik.service.name` |
+| Traces | `traefik/values.yaml` + `monitoring/otel-collector/otel-collector-values.yaml.tpl` | per-org `tail_sampling/<org>` trace filter: the whole trace goes to the tenant if any span has `traefik.router.name` / `traefik.service.name` =~ `^<tenant>-` (or comes from a tenant namespace) |
 | Metrics | `traefik/values.yaml` (`metrics.prometheus`) + `monitoring/prometheus-instance/prometheus-cr.yaml.tpl` | ServiceMonitor `metricRelabelings` derive `tenant=`; the tenant remoteWrite keeps by namespace **or** that label |
 
 ### Traces needed two fixes
@@ -42,11 +44,15 @@ stays platform: it aggregates across tenants.
    `traefik.service.name` require `detailed`, set per entrypoint in `traefik/values.yaml`.
    A tenant can turn it down per route with `spec.routes[].observability.traceVerbosity`.
 
-Because all Traefik spans share the platform pod's resource, routing happens in span context.
-With move semantics the tenant's `Router`/`Service` spans go to the tenant's Tempo org while
-the entrypoint and `ReverseProxy` spans stay platform — the platform Grafana reads
-`platform|rbr`, so an admin still sees the whole trace, and the tenant sees a partial one
-(`bd3d.9`).
+Because all Traefik spans share the platform pod's resource, only the `Router` and
+`Service` spans name the tenant; the entrypoint, `Metrics` middleware and `ReverseProxy`
+spans carry nothing tenant-specific, yet sit between them and the app's spans. Routing span
+by span (the original `bd3d.10` design) therefore left the tenant three orphan fragments with
+no root. Since `bd3d.9` the collector routes **whole traces**: every sampled trace is fanned
+out to one pipeline per Tempo org, and each org keeps or drops it as a unit — see
+[Tenant telemetry routing](tenant-telemetry-routing.md#traces-whole-trace-routing). The
+tenant sees its requests end to end, the platform org no longer stores them, and the platform
+Grafana (`platform|rbr`) still shows them complete.
 
 ### Metrics gotcha
 
