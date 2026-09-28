@@ -34,7 +34,7 @@ config:
 
   processors:
     # Tag spans with the source pod's namespace and its Capsule tenant (namespace label
-    # capsule.clastix.io/tenant); the routing connector picks the Tempo tenant from it.
+    # capsule.clastix.io/tenant); the per-org trace filters below pick the Tempo org from it.
     k8s_attributes:
       extract:
         metadata:
@@ -53,6 +53,7 @@ config:
       limit_percentage: 75
       spike_limit_percentage: 25
 
+    # THE sampling decision - made once, for the whole trace, before the org split below.
     tail_sampling:
       decision_wait: 10s         # buffer window; tune up if Traefik spans arrive late
       num_traces: 1000           # circular buffer; sized as ~tps * decision_wait * 10x safety
@@ -75,17 +76,23 @@ config:
       send_batch_size: 1000      # low-traffic playground; full batch unlikely
       timeout: 5s                # snappier flush for live dashboards
 
+    # Tempo runs multi-tenant and tenancy belongs to the REQUEST, not the span: Traefik's
+    # entrypoint, middleware and ReverseProxy spans carry no tenant attribute, yet sit
+    # between the tenant's Router/Service spans and its app's spans (bead bd3d.9). So every
+    # sampled trace is fanned out to one pipeline per org, and each org keeps or drops the
+    # WHOLE trace with a second tail_sampling used as a pure 100% filter - never
+    # probabilistic, or two samplers could disagree about the same trace:
+    #   tail_sampling/<tenant>  keeps a trace if ANY span is the tenant's (source namespace
+    #                           tenant, or a Traefik router/service anchored at "<tenant>-");
+    #   tail_sampling/platform  keeps every trace that no tenant claims.
+    # The upstream sampler releases a trace's spans together, so a short decision_wait is
+    # enough; the decision cache sends late spans after the trace they belong to.
+    # >>> per-tenant: otel-org-filters (generated, see scripts/render-tenant-telemetry.py)
+    # <<< per-tenant
+
   connectors:
-    # Tempo runs multi-tenant: spans from a Capsule tenant's namespaces go to that
-    # tenant's org, everything else (traefik-edge, platform) to "platform".
-    routing:
-      default_pipelines: [traces/platform]
-      table:
-        # Per tenant: spans from the tenant's namespaces (k8s_attributes sets
-        # capsule.tenant), plus Traefik's Router/Service spans, which carry the platform
-        # pod's resource and are matched on the ANCHORED router/service name instead.
-        # >>> per-tenant: otel-routing-table (generated, see scripts/render-tenant-telemetry.py)
-        # <<< per-tenant
+    # Fan-out: every pipeline that receives from forward/orgs gets a copy of every trace.
+    forward/orgs: {}
 
   exporters:
     otlp/platform:
@@ -110,10 +117,11 @@ config:
     pipelines:
       traces:
         receivers: [otlp, otlp/cluster]
-        processors: [memory_limiter, k8s_attributes, tail_sampling, batch]
-        exporters: [routing]
+        processors: [memory_limiter, k8s_attributes, tail_sampling]
+        exporters: [forward/orgs]
       traces/platform:
-        receivers: [routing]
+        receivers: [forward/orgs]
+        processors: [tail_sampling/platform, batch]
         exporters: [otlp/platform]
       # >>> per-tenant: otel-pipelines (generated, see scripts/render-tenant-telemetry.py)
       # <<< per-tenant

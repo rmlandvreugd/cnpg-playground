@@ -843,7 +843,9 @@ Tenant telemetry **is** isolated server-side. The model is
 - **Writes.** Every log line, event, span and series is written to exactly **one**
   tenant org. For logs and events that is Alloy's `stage.tenant`, which turns the
   per-line `tenant` label into Loki's `X-Scope-OrgID`; for traces it is the OTel
-  routing connector; for metrics it is a per-tenant Prometheus `remoteWrite`.
+  per-org whole-trace filter after a single sampling decision (a trace that touches a
+  tenant goes to that tenant entirely, `bd3d.9`); for metrics it is a per-tenant
+  Prometheus `remoteWrite`.
   The tenant label itself comes from the source namespace's Capsule tenant label,
   defaulting to `platform`.
 - **Reads.** The **platform** datasources read the *union* via

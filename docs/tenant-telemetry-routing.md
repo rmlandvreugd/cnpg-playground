@@ -30,7 +30,7 @@ Each template carries a marked region that the renderer replaces:
 |---|---|---|
 | `monitoring/prometheus-instance/prometheus-cr.yaml.tpl` | `prometheus-remote-write` | one remoteWrite per tenant into its Mimir org |
 | `monitoring/grafana/grafana_datasource_{loki,tempo,mimir_tempo}.yaml.tpl` | `grafana-org-header` | `X-Scope-OrgID: platform\|<tenants>` |
-| `monitoring/otel-collector/otel-collector-values.yaml.tpl` | `otel-routing-table`, `otel-exporters`, `otel-pipelines` | trace routing per tenant |
+| `monitoring/otel-collector/otel-collector-values.yaml.tpl` | `otel-org-filters`, `otel-exporters`, `otel-pipelines` | whole-trace routing per tenant |
 | `monitoring/alloy/alloy-config.river.tpl` | `alloy-traefik-tenant`, `alloy-events-tenant` | Traefik access logs and Kubernetes events |
 | `monitoring/platform/traefik-servicemonitor.yaml.tpl` | `traefik-metric-relabelings` | `tenant=` on Traefik series |
 
@@ -46,6 +46,32 @@ scripts/tenant-telemetry.sh apply  local   # render + apply (datasources, Servic
 `demo/self-service-setup.sh` re-runs `apply` after creating the tenant namespaces, because
 monitoring ran before the tenant existed — the same hook point as `scripts/netpol.sh`
 (which already generated its per-tenant policies this way, see `docs/network-policy-allowlist.md`).
+
+## Traces: whole-trace routing
+
+Tenancy belongs to the request, not the span (`bd3d.9`). A request through `traefik-local`
+produces entrypoint, `Metrics` and `ReverseProxy` spans with no tenant attribute, between the
+tenant's `Router`/`Service` spans and its app's spans. So the collector does not route spans:
+
+```
+receivers → k8s_attributes → tail_sampling (THE sampling decision) → forward/orgs
+                                                                        ├─ traces/platform: tail_sampling/platform → Tempo org platform
+                                                                        └─ traces/<tenant>: tail_sampling/<tenant> → Tempo org <tenant>
+```
+
+- `tail_sampling/<tenant>` keeps a trace if **any** span has resource `capsule.tenant ==
+  <tenant>` or `traefik.router.name` / `traefik.service.name` =~ `^<tenant>-` (anchored, so
+  the platform-hosted `grafana-grafana-rbr-ver-*` stays platform).
+- `tail_sampling/platform` is `always_sample` plus a `drop` policy for any tenant's trace.
+  All tenants' conditions sit in **one** drop sub-policy: sub-policies are ANDed, so one per
+  tenant would drop nothing (measured on collector 0.160.0).
+- The org filters are 100% filters, never probabilistic: sampling happens once, upstream,
+  so two orgs cannot disagree about a trace.
+- The upstream sampler releases a trace's spans together, so the org filters wait only 2s;
+  their decision cache routes spans that arrive later the same way as their trace.
+
+Cost: about 2s more before spans reach Tempo, plus one small trace buffer per org. With no
+tenant, `tail_sampling/platform` is a plain `always_sample`.
 
 ## Adding a tenant
 

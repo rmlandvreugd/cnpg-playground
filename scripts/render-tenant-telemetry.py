@@ -3,7 +3,7 @@
 
 Every tenant-dependent block in the platform's observability config is generated here
 instead of naming a tenant in git: Prometheus remoteWrite, the Grafana datasource
-X-Scope-OrgID headers, the otel-collector trace routing, the Alloy log pipelines and the
+X-Scope-OrgID headers, the otel-collector trace-level org filters, the Alloy log pipelines and the
 Traefik metrics ServiceMonitor.
 
 Each template carries a marked region:
@@ -76,29 +76,67 @@ def org_header(tenants: list[str], _: str) -> list[str]:
     return [f"httpHeaderValue1: {'|'.join(['platform'] + tenants)}"]
 
 
-def otel_routing_table(tenants: list[str], _: str) -> list[str]:
-    """Route spans to a tenant's Tempo org either by the source pod's Capsule tenant
-    (k8s_attributes) or, for Traefik, by the anchored router/service span attribute —
-    every Traefik span carries the platform pod's resource."""
-    if not tenants:
-        # No tenant yet (monitoring/setup.sh runs before onboarding): everything is
-        # platform. The table cannot be left empty — the routing connector refuses to
-        # start on one ("invalid routing table: the routing table is empty") and the
-        # collector crash-loops — so state the platform case explicitly.
-        return [
-            "- condition: 'true'",
-            "  pipelines: [traces/platform]",
+def _tenant_span_conditions(t: str) -> list[str]:
+    """OTTL span conditions (OR'd) that make a span the tenant's: its source pod is in a
+    tenant namespace (k8s_attributes), or it is a Traefik span of the tenant's router or
+    service - every Traefik span carries the platform pod's resource, so those match on the
+    ANCHORED name ("^rbr-" never matches the platform's grafana-grafana-rbr-ver-*)."""
+    return [
+        f"'resource.attributes[\"capsule.tenant\"] == \"{t}\"'",
+        f"'IsMatch(attributes[\"traefik.router.name\"], \"^{t}-\")'",
+        f"'IsMatch(attributes[\"traefik.service.name\"], \"^{t}-\")'",
+    ]
+
+
+def _trace_filter(org: str, policies: list[str]) -> list[str]:
+    """A tail_sampling used as a whole-trace filter: the upstream sampler already decided
+    and releases a trace's spans together, so a short wait suffices; the decision cache
+    sends late spans the way their trace went."""
+    return [
+        f"tail_sampling/{org}:",
+        "  decision_wait: 2s",
+        "  num_traces: 1000",
+        "  expected_new_traces_per_sec: 10",
+        "  decision_cache:",
+        "    sampled_cache_size: 10000",
+        "    non_sampled_cache_size: 10000",
+        "  policies:",
+    ] + [f"    {ln}" for ln in policies]
+
+
+def otel_org_filters(tenants: list[str], _: str) -> list[str]:
+    """Trace-level routing (bd3d.9): every org pipeline receives every sampled trace and
+    keeps it whole or not at all. A tenant keeps the traces with ANY span of its own; the
+    platform keeps every trace no tenant claims (a drop policy beats always_sample). With no
+    tenant, the platform filter is a plain always_sample - still a valid collector.
+
+    The drop policy holds ONE sub-policy with every tenant's conditions (OR'd): its
+    sub-policies are ANDed - one sub-policy per tenant would drop only a trace that
+    belongs to all tenants at once, i.e. none (measured, collector 0.160.0)."""
+    platform = ["- name: all", "  type: always_sample"]
+    if tenants:
+        platform += [
+            "- name: tenant-traces",
+            "  type: drop",
+            "  drop:",
+            "    drop_sub_policy:",
+            "      - name: any-tenant",
+            "        type: ottl_condition",
+            "        ottl_condition:",
+            "          error_mode: ignore",
+            "          span:",
         ]
-    out: list[str] = []
+        for t in tenants:
+            platform += [f"            - {c}" for c in _tenant_span_conditions(t)]
+    out = _trace_filter("platform", platform)
     for t in tenants:
-        out += [
-            f'- condition: resource.attributes["capsule.tenant"] == "{t}"',
-            f"  pipelines: [traces/{t}]",
-            "- context: span",
-            f'  condition: IsMatch(attributes["traefik.router.name"], "^{t}-") or '
-            f'IsMatch(attributes["traefik.service.name"], "^{t}-")',
-            f"  pipelines: [traces/{t}]",
-        ]
+        out += _trace_filter(t, [
+            f"- name: tenant-{t}",
+            "  type: ottl_condition",
+            "  ottl_condition:",
+            "    error_mode: ignore",
+            "    span:",
+        ] + [f"      - {c}" for c in _tenant_span_conditions(t)])
     return out
 
 
@@ -121,7 +159,8 @@ def otel_pipelines(tenants: list[str], _: str) -> list[str]:
     for t in tenants:
         out += [
             f"traces/{t}:",
-            "  receivers: [routing]",
+            "  receivers: [forward/orgs]",
+            f"  processors: [tail_sampling/{t}, batch]",
             f"  exporters: [otlp/{t}]",
         ]
     return out
@@ -175,7 +214,7 @@ def traefik_metric_relabelings(tenants: list[str], _: str) -> list[str]:
 BLOCKS = {
     "prometheus-remote-write": prometheus_remote_write,
     "grafana-org-header": org_header,
-    "otel-routing-table": otel_routing_table,
+    "otel-org-filters": otel_org_filters,
     "otel-exporters": otel_exporters,
     "otel-pipelines": otel_pipelines,
     "alloy-traefik-tenant": alloy_traefik_tenant,
